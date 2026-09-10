@@ -37,7 +37,7 @@ def test_passes_resolved_archetype_and_rejection_reasons_to_the_critic():
     review_lead = FakeReviewLead(StoryCritique(issues=[]))
     from llm.budget import BudgetCounter, DEFAULT_TIERS
 
-    critique_story(make_plan(), make_narration(), review_lead, BudgetCounter(tier=DEFAULT_TIERS["longform"]))
+    critique_story(make_plan(), make_narration(), review_lead, BudgetCounter(tier=DEFAULT_TIERS["longform"]), source_units=[])
 
     payload = review_lead.calls[0]["payload"]
     assert payload["archetype"] == "foundation"
@@ -64,7 +64,7 @@ def test_returns_a_critical_archetype_issue_when_the_critic_challenges_the_resol
     }]))
     from llm.budget import BudgetCounter, DEFAULT_TIERS
 
-    issues = critique_story(make_plan(), make_narration(), review_lead, BudgetCounter(tier=DEFAULT_TIERS["longform"]))
+    issues = critique_story(make_plan(), make_narration(), review_lead, BudgetCounter(tier=DEFAULT_TIERS["longform"]), source_units=[])
 
     assert len(issues) == 1
     assert issues[0].category == "archetype"
@@ -80,7 +80,7 @@ def test_critic_never_returns_replacement_prose_only_intent():
     }]))
     from llm.budget import BudgetCounter, DEFAULT_TIERS
 
-    issues = critique_story(make_plan(), make_narration(), review_lead, BudgetCounter(tier=DEFAULT_TIERS["longform"]))
+    issues = critique_story(make_plan(), make_narration(), review_lead, BudgetCounter(tier=DEFAULT_TIERS["longform"]), source_units=[])
     assert "replacement_text" not in type(issues[0]).model_fields
 
 
@@ -88,15 +88,42 @@ def test_uses_pass_id_c1_and_story_critic_mode():
     review_lead = FakeReviewLead(StoryCritique(issues=[]))
     from llm.budget import BudgetCounter, DEFAULT_TIERS
 
-    critique_story(make_plan(), make_narration(), review_lead, BudgetCounter(tier=DEFAULT_TIERS["longform"]))
+    critique_story(make_plan(), make_narration(), review_lead, BudgetCounter(tier=DEFAULT_TIERS["longform"]), source_units=[])
     call = review_lead.calls[0]
     assert call["pass_id"] == "C1"
     assert call["mode"] == "STORY_CRITIC"
+
+
+def test_passes_real_source_units_so_the_critic_can_cross_check_the_archetype():
+    """Real gap found 2026-09-10: C1 never saw any source content at all --
+    only the plan's own self-description -- so it could only judge internal
+    consistency, never independently re-test the archetype against the
+    actual material (e.g. an author's own production notes)."""
+    from facts.models import SourceUnit
+    from llm.budget import BudgetCounter, DEFAULT_TIERS
+
+    review_lead = FakeReviewLead(StoryCritique(issues=[]))
+    units = [SourceUnit(id="production_notes", heading="Production notes",
+                         text="[0:00] Problem: ... [4:15] Score creates a new problem: ...")]
+
+    critique_story(make_plan(), make_narration(), review_lead,
+                    BudgetCounter(tier=DEFAULT_TIERS["longform"]), source_units=units)
+
+    payload = review_lead.calls[0]["payload"]
+    assert payload["source_units"][0]["id"] == "production_notes"
+    assert "Score creates a new problem" in payload["source_units"][0]["text"]
+
+
+def test_prompt_instructs_weighing_production_notes_as_direct_evidence():
+    from review.story_critic import TASK_PROMPT
+
+    assert "source_units" in TASK_PROMPT
+    assert "production notes" in TASK_PROMPT.lower()
 
 
 def test_no_issues_is_a_valid_clean_result():
     review_lead = FakeReviewLead(StoryCritique(issues=[]))
     from llm.budget import BudgetCounter, DEFAULT_TIERS
 
-    issues = critique_story(make_plan(), make_narration(), review_lead, BudgetCounter(tier=DEFAULT_TIERS["longform"]))
+    issues = critique_story(make_plan(), make_narration(), review_lead, BudgetCounter(tier=DEFAULT_TIERS["longform"]), source_units=[])
     assert issues == []

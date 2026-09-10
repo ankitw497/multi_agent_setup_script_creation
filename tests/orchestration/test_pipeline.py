@@ -154,6 +154,43 @@ def test_replan_budget_exhaustion_fails_rather_than_looping_forever():
     assert any("replan budget exhausted" in line for line in result.log)
 
 
+def test_source_units_reach_both_a2_replan_and_c1_critique():
+    """Real gap found 2026-09-10: neither A2 nor C1 ever saw the source's
+    real content (e.g. an author's own production notes) -- only A1's
+    compressed brief. This proves the plumbing carries source_units through
+    the orchestrator to both the A2 replan call and the C1 critique call."""
+    from editing.models import RevisionPlan
+    from facts.models import SourceUnit
+
+    bad_plan = make_plan(scene_words=30, n_scenes=2)
+    good_plan = make_plan()
+    units = [SourceUnit(id="production_notes", heading="Production notes", text="Problem -> Mini payoff")]
+
+    agents = make_agents(
+        story_lead_responses={StoryPlan: [good_plan], "RevisionPlan": [RevisionPlan(run_id="r", story_replan_required=True)]},
+        narration_responses=[make_empty_narration_response(), make_empty_narration_response()],
+        review_responses={
+            "cm": [ClaimMapperOutput(sentences=[]), ClaimMapperOutput(sentences=[])],
+            "c1": [StoryCritique(issues=[]), StoryCritique(issues=[])],
+            "c2b": [GroundingReview(issues=[]), GroundingReview(issues=[])],
+        },
+    )
+    from planning.models import SourceBrief
+
+    run_story_and_narration_loop(
+        source_brief=SourceBrief(topic="t", core_question="q", viewer_problem="p", central_insight="i"),
+        claims=[], ledger=AssumptionLedger(), all_source_unit_ids=["u1"],
+        target_duration_seconds=600.0, agents=agents, budget=make_budget(),
+        source_units=units, initial_plan=bad_plan,
+    )
+
+    a2_call = next(c for c in agents.story_lead.calls if c["pass_id"] == "A2")
+    assert a2_call["payload"]["source_units"][0]["id"] == "production_notes"
+
+    c1_call = next(c for c in agents.review_lead.calls if c["pass_id"] == "C1")
+    assert c1_call["payload"]["source_units"][0]["id"] == "production_notes"
+
+
 def test_a_critical_non_archetype_issue_routes_to_targeted_rewrite_not_replan():
     """A critical issue that ISN'T structural (e.g. a grounding fidelity
     problem) should let A3 choose targeted rewrite over a full replan."""

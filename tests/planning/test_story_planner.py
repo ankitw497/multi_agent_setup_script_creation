@@ -36,7 +36,7 @@ def test_passes_archetype_reference_table_to_the_model():
     plan_story(
         SourceBrief(topic="t", core_question="q", viewer_problem="p", central_insight="i"),
         [], AssumptionLedger(), story_lead, BudgetCounter(tier=DEFAULT_TIERS["longform"]),
-        target_duration_seconds=600,
+        target_duration_seconds=600, source_units=[],
     )
     payload = story_lead.calls[0]["payload"]
     assert "mystery" in payload["archetype_reference"]
@@ -50,7 +50,7 @@ def test_archetype_override_is_passed_through_as_a_pin():
     plan_story(
         SourceBrief(topic="t", core_question="q", viewer_problem="p", central_insight="i"),
         [], AssumptionLedger(), story_lead, BudgetCounter(tier=DEFAULT_TIERS["longform"]),
-        target_duration_seconds=600, archetype_override="mystery",
+        target_duration_seconds=600, source_units=[], archetype_override="mystery",
     )
     assert story_lead.calls[0]["payload"]["archetype_override"] == "mystery"
 
@@ -64,7 +64,7 @@ def test_raises_if_the_model_switches_away_from_a_pinned_archetype():
         plan_story(
             SourceBrief(topic="t", core_question="q", viewer_problem="p", central_insight="i"),
             [], AssumptionLedger(), story_lead, BudgetCounter(tier=DEFAULT_TIERS["longform"]),
-            target_duration_seconds=600, archetype_override="mystery",
+            target_duration_seconds=600, source_units=[], archetype_override="mystery",
         )
 
 
@@ -75,7 +75,7 @@ def test_auto_mode_accepts_whatever_archetype_the_model_resolves():
     result = plan_story(
         SourceBrief(topic="t", core_question="q", viewer_problem="p", central_insight="i"),
         [], AssumptionLedger(), story_lead, BudgetCounter(tier=DEFAULT_TIERS["longform"]),
-        target_duration_seconds=600,  # archetype_override=None -> auto
+        target_duration_seconds=600, source_units=[],  # archetype_override=None -> auto
     )
     assert result.archetype == "derivation"
 
@@ -103,6 +103,37 @@ def test_prompt_instructs_populating_source_unit_ids():
     assert "never leave this empty" in TASK_PROMPT
 
 
+def test_passes_real_source_units_not_just_the_compressed_brief():
+    """Real gap found 2026-09-10: A2 only ever saw A1's lossy SourceBrief
+    summary, never the source's real content -- so it had no way to weigh an
+    author's own production notes as direct archetype evidence (the user's
+    own separate render pipeline had already correctly resolved this source
+    as 'build' from exactly that content). A2 must now receive the raw
+    source_units alongside the brief."""
+    from facts.models import SourceUnit
+    from planning.models import SourceBrief
+
+    story_lead = FakeStoryLead(make_plan())
+    units = [SourceUnit(id="production_notes", heading="Production notes",
+                         text="[0:00] Problem: ... [0:35] Mini payoff: ...")]
+
+    plan_story(
+        SourceBrief(topic="t", core_question="q", viewer_problem="p", central_insight="i"),
+        [], AssumptionLedger(), story_lead, BudgetCounter(tier=DEFAULT_TIERS["longform"]),
+        target_duration_seconds=600, source_units=units,
+    )
+    payload = story_lead.calls[0]["payload"]
+    assert payload["source_units"][0]["id"] == "production_notes"
+    assert "Mini payoff" in payload["source_units"][0]["text"]
+
+
+def test_prompt_instructs_weighing_production_notes_as_direct_evidence():
+    from planning.story_planner import TASK_PROMPT
+
+    assert "source_units" in TASK_PROMPT
+    assert "production notes" in TASK_PROMPT.lower()
+
+
 def test_passes_target_duration_and_planning_wpm():
     story_lead = FakeStoryLead(make_plan())
     from planning.models import SourceBrief
@@ -110,7 +141,7 @@ def test_passes_target_duration_and_planning_wpm():
     plan_story(
         SourceBrief(topic="t", core_question="q", viewer_problem="p", central_insight="i"),
         [], AssumptionLedger(), story_lead, BudgetCounter(tier=DEFAULT_TIERS["longform"]),
-        target_duration_seconds=900,
+        target_duration_seconds=900, source_units=[],
     )
     payload = story_lead.calls[0]["payload"]
     assert payload["target_duration_seconds"] == 900

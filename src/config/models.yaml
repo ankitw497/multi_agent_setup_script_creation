@@ -32,7 +32,12 @@ paid_api_lane:
                               # for this tier). NOTE: "-preview" in the id means Google
                               # can retire/rename this one too; re-verify via the
                               # ListModels probe below if it starts 404ing again.
-    reasoning_effort: null    # leave reasoning on for this tier — that's the point of it
+    reasoning_effort: "low"   # bounded, not unlimited (2026-09-10 cost-discipline pass):
+                              # leaving this null means "provider default" reasoning
+                              # depth, which is unbounded and was driving real cost on
+                              # every C1/C2a/C2b call in the live e2e run ($0.22 for 11
+                              # calls). "low" keeps judgement quality for adversarial
+                              # review while capping reasoning-token spend.
   gemini_review_flash:
     resolved: "gemini/gemini-3.6-flash"
     verified: true            # confirmed 2026-09-10, $0.00000825 for a 6 in/1 out call

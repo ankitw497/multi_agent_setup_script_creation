@@ -16,7 +16,7 @@ from pathlib import Path
 
 from agents.base import Agent
 from editing.revision_planner import plan_revision
-from facts.models import AssumptionLedger, Claim
+from facts.models import AssumptionLedger, Claim, SourceUnit
 from llm.budget import BudgetCounter
 from narration.generator import generate_narration
 from narration.models import SceneNarration
@@ -59,14 +59,14 @@ class PipelineResult:
 def _run_review_block(
     plan: StoryPlan, narration: list[SceneNarration], claims: list[Claim],
     all_source_unit_ids: list[str], target_duration_seconds: float,
-    agents: PipelineAgents, budget: BudgetCounter,
+    agents: PipelineAgents, budget: BudgetCounter, source_units: list[SourceUnit],
 ) -> tuple[list[SceneNarration], ReviewBundle]:
     structural = check_structure(plan, target_duration_seconds, all_source_unit_ids)
 
     narration = map_claims(narration, claims, agents.cm_agent, budget)
     grounding_violations = check_grounding_policy(narration, claims)
     grounding_issues = verify_grounding(narration, claims, agents.review_lead, budget)
-    story_issues = critique_story(plan, narration, agents.review_lead, budget)
+    story_issues = critique_story(plan, narration, agents.review_lead, budget, source_units)
 
     bundle = aggregate_review(
         run_id="pipeline",
@@ -86,18 +86,24 @@ def run_story_and_narration_loop(
     target_duration_seconds: float,
     agents: PipelineAgents,
     budget: BudgetCounter,
+    source_units: list[SourceUnit] | None = None,
     initial_plan: StoryPlan | None = None,
     archetype_override: str | None = None,
 ) -> PipelineResult:
     """The bounded loop. `initial_plan` lets a caller reuse an already-produced
-    A2 result (e.g. for cost-free re-testing) instead of always calling A2 fresh."""
+    A2 result (e.g. for cost-free re-testing) instead of always calling A2 fresh.
+    `source_units` is the source's real content -- given to A2 and C1 directly
+    (not just A1's SourceBrief summary) so the archetype call and its review
+    can both be cross-checked against the actual material, including any
+    author production notes (a real gap found 2026-09-10)."""
     log: list[str] = []
     story_replans_used = 0
     major_revisions_used = 0
+    source_units = source_units or []
 
     plan = initial_plan or plan_story(
         source_brief, claims, ledger, agents.story_lead, budget,
-        target_duration_seconds, archetype_override,
+        target_duration_seconds, source_units, archetype_override,
     )
     log.append(f"A2: archetype={plan.archetype}, beats={len(plan.beats)}, scenes={len(plan.scene_plan)}")
 
@@ -106,7 +112,7 @@ def run_story_and_narration_loop(
 
     while True:
         narration, bundle = _run_review_block(
-            plan, narration, claims, all_source_unit_ids, target_duration_seconds, agents, budget,
+            plan, narration, claims, all_source_unit_ids, target_duration_seconds, agents, budget, source_units,
         )
         log.append(f"review: {len(bundle.hard_failures)} hard failures, {len(bundle.issues)} issues")
 
@@ -139,7 +145,7 @@ def run_story_and_narration_loop(
             story_replans_used += 1
             plan = plan_story(
                 source_brief, claims, ledger, agents.story_lead, budget,
-                target_duration_seconds, archetype_override,
+                target_duration_seconds, source_units, archetype_override,
             )
             narration = generate_narration(plan, claims, agents.narration_lead)
             log.append(f"A2 replan #{story_replans_used}: archetype={plan.archetype}")

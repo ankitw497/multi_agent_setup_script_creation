@@ -35,6 +35,30 @@ def visible_text(tag) -> str:
     return re.sub(r"\s+", " ", tag.get_text(" ", strip=True)).strip()
 
 
+def extract_pipeline_steps(container) -> list[dict]:
+    """`.pipeline-step` (timestamp + title + guidance) is a real component of
+    this markup family -- found both inside numbered sections and, in one
+    real source, entirely inside a footer that chrome-stripping used to
+    delete outright (a real bug found 2026-09-10: it happened to hold the
+    single most decisive piece of story-planning evidence in the document,
+    an author's own "Problem -> Mini payoff -> new problem" production
+    notes, silently discarded before any archetype decision ever saw it).
+
+    Returns [{"timestamp", "title", "text"}, ...] in document order.
+    """
+    steps = []
+    for step in container.select(".pipeline-step"):
+        dot = step.select_one(".pipeline-dot")
+        title_el = step.select_one(".pipeline-content h4, .pipeline-content h3")
+        body_el = step.select_one(".pipeline-content p")
+        steps.append({
+            "timestamp": visible_text(dot) if dot else "",
+            "title": visible_text(title_el) if title_el else "",
+            "text": visible_text(body_el) if body_el else "",
+        })
+    return steps
+
+
 class ExtractionProfile(Protocol):
     name: str
 

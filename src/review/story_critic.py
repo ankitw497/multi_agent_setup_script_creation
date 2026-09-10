@@ -10,6 +10,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 from agents.base import Agent
+from facts.models import SourceUnit
 from llm.budget import BudgetCounter
 from narration.models import SceneNarration
 from planning.models import StoryPlan
@@ -27,13 +28,18 @@ Check, in order:
    actually behave like it? If the resolved archetype is `foundation` or
    `framework`, be especially skeptical -- these are the easy defaults an
    LLM reaches for even when the source genuinely supports a causal shape.
-   Re-test the source evidence yourself: is there really no violated
-   expectation (mystery), no problem->fix->new-problem chain (build), no
-   real comparison (experiment), no equation the story is built around
-   (derivation)? If ANY of those fits better than what was chosen, raise a
-   `category: archetype`, `severity: critical` issue naming the better fit
-   and the specific scenes that show it -- this is the single most
-   important thing to get right.
+   Re-test the source evidence yourself against the real `source_units`
+   given below -- not just the plan's own self-description -- is there
+   really no violated expectation (mystery), no problem->fix->new-problem
+   chain (build), no real comparison (experiment), no equation the story is
+   built around (derivation)? If any source unit is the author's own
+   production notes, storyboard plan, or pacing outline, weigh it heavily --
+   it is the author's own account of the intended structure, not something
+   you have to infer. If ANY of those fits better than what was chosen,
+   raise a `category: archetype`, `severity: critical` issue naming the
+   better fit, the specific source evidence for it, and the specific scenes
+   that show the mismatch -- this is the single most important thing to get
+   right.
 
 2. HOOK. Does it create a real knowledge gap, or does it announce a
    syllabus ("in this video we will cover...")? Does it reveal too much,
@@ -68,8 +74,17 @@ def _scene_payload(scene: SceneNarration) -> dict:
     return {"scene_id": scene.scene_id, "text": " ".join(s.text for s in scene.sentences)}
 
 
+def _source_unit_payload(unit: SourceUnit) -> dict:
+    return {
+        "id": unit.id, "heading": unit.heading, "text": unit.text,
+        "equations": unit.equations, "callouts": unit.callouts,
+        "code": unit.code, "numbers": unit.numbers,
+    }
+
+
 def critique_story(
     plan: StoryPlan, narration: list[SceneNarration], review_lead: Agent, budget: BudgetCounter,
+    source_units: list[SourceUnit],
 ) -> list[CritiqueIssue]:
     payload = {
         "archetype": plan.archetype,
@@ -79,6 +94,7 @@ def critique_story(
         "beats": [b.model_dump() for b in plan.beats],
         "ending": plan.ending.model_dump(),
         "narration": [_scene_payload(s) for s in narration],
+        "source_units": [_source_unit_payload(u) for u in source_units],
     }
     critique = review_lead.run(
         pass_id="C1", mode="STORY_CRITIC", task_prompt=TASK_PROMPT,

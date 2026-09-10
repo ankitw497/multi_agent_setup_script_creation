@@ -92,6 +92,25 @@ All pydantic v2, with golden fixtures, before any prompt is written.
 
 ## V1A — Script intelligence (plan §8, §17 — the core thesis)
 
+### Cost-discipline fix: strong-tier Gemini reasoning was unbounded (2026-09-10)
+
+Following a direct steer to keep GPT/Gemini calls cost-conscious: `gemini_review_strong`
+(C1/C2a/C2b) had `reasoning_effort: null` -- "provider default," which is **unbounded**
+reasoning depth, not a deliberately-sized one. The completed live e2e run spent $0.218 across
+11 paid calls partly because of this.
+
+Fixed: `reasoning_effort: "low"`. Verified with two minimal calls (not a full run) rather than
+re-running the expensive pipeline:
+- First attempt used `max_tokens=20` and was a **misleading test** — too small a budget for a
+  fair comparison, since the model can burn its entire tiny allowance on reasoning regardless
+  of effort level. Caught before drawing a conclusion from it.
+- Second attempt at `max_tokens=300` (representative of real calls) gave an honest, useful
+  answer: `"low"` used **261 reasoning tokens vs 285 for default** — and, more importantly,
+  **completed its answer** ("...because its only positive divisors are 1 and itself.") while
+  default **ran out of budget mid-sentence** ("...is a prime number because it"). `"low"` isn't
+  just cheaper here; it's more reliable, because a shorter reasoning phase leaves more room for
+  the actual output within a fixed token cap.
+
 ### A second major finding: repair wiring was never actually connected (2026-09-10)
 
 The first live end-to-end orchestrator run (against the real saved v02 plan) crashed with a
@@ -144,6 +163,51 @@ to be right on the first try; the pipeline's job is to catch it when it isn't. B
 are preserved on disk (`project/attention_series/video-01-attention-coherent-story/runs/v01/`,
 `v02/`) as permanent, real evidence for this finding, and as fixtures for testing C1/A3 routing
 next.
+
+### Root cause found and fixed: A2/C1 never saw the source's real content (2026-09-10)
+
+Direct user steer: give the LLM that decides the story archetype (A2) — and its reviewer (C1) —
+the actual source content, not just A1's compressed `SourceBrief`. This traced back to the
+archetype-instability finding above: three live A2 runs gave three different archetypes for a
+source the user's own separate, existing render pipeline had *already* independently classified
+as `build`. That was the real signal something upstream was starving A2 of evidence, not that A2
+was simply unreliable.
+
+Two compounding gaps, both fixed:
+
+1. **Extraction was silently deleting the strongest evidence in the document.** The source's
+   `<footer class="page-footer">` holds an author-written "Production notes · target pacing"
+   section — a timestamped `.pipeline-step` plan (`Problem → Mini payoff → Why attention
+   existed → ... → New limitations → ... → Payoff and Part 2 bridge`) that is, in effect, the
+   author's own account of the story's `build` shape. `.page-footer` is chrome-stripped
+   wholesale (`extraction/html_parser.py::_strip_chrome`) because on this same source it's
+   *mostly* nav-adjacent captions — but that one blanket rule discarded the production notes
+   right along with the chrome, before A1 or A2 ever got to see it. Fixed with
+   `_extract_production_notes()`, which runs on the *unstripped* soup, pulls any
+   `.pipeline-step` content out as its own `production_notes` `SourceUnit` (using a new shared
+   `extract_pipeline_steps()` helper in `extraction/profiles/base.py`), and only then lets
+   `_strip_chrome()` remove the rest of the footer. Locked in with three regression tests
+   (`tests/extraction/test_html_parser.py`), including one against the real source file
+   asserting the exact real section headings survive.
+2. **A2 and C1 only ever received compressed summaries, never raw source content.** Even with
+   the footer bug fixed, `plan_story()` (A2) only took A1's `SourceBrief` (a lossy distillation)
+   and `critique_story()` (C1) took no source content at all — only the plan's own
+   self-description. Both now take a `source_units: list[SourceUnit]` parameter and receive the
+   real content directly (`planning/story_planner.py`, `review/story_critic.py`), and
+   `orchestration/pipeline.py` threads it through both the initial A2 call, the A2 replan call,
+   and the C1 critique call. Both task prompts now explicitly instruct weighing an author's own
+   production notes / storyboard plan as strong direct archetype evidence, not something to
+   infer from the raw material.
+
+**Live-verified with one minimal, targeted call** (not a full e2e re-run, per the standing
+cost-discipline steer): re-ran A2 against the real source with the fixed extraction and the new
+`source_units` payload (reusing the existing saved `source_brief.json`/`claims.json` from
+`runs/v01` — free, no need to re-run A1). Result: `archetype: build` —
+*"The source is structured around a problem-solution paradigm, accumulating understanding of
+self-attention's mechanism piece by piece, solving issues such as context retrieval, variance
+scaling, masking, and multi-head attention."* — correctly matching the user's own independent
+pipeline's classification, and every rejected alternative given a real, specific reason. Cost:
+**$0.0505** for the single call.
 
 **In progress (this session):** building every remaining V1A stage in one continuous push,
 each with real tests and live validation against the actual `video-01-attention-coherent-story.html`

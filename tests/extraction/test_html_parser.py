@@ -40,6 +40,53 @@ def test_a_single_byte_change_changes_the_hash():
     assert r1.source_hash != r2.source_hash
 
 
+def test_plain_page_footer_produces_no_production_notes_unit():
+    """.page-footer with no .pipeline-step content is pure chrome and stays
+    fully stripped -- only a footer that actually holds production notes
+    gets a unit carved out of it."""
+    result = parse_html(FIXTURES / "guide_sample.html")
+    assert "production_notes" not in {u.id for u in result.units}
+
+
+def test_production_notes_survive_page_footer_chrome_stripping():
+    """Real bug (2026-09-10): .page-footer is chrome-stripped wholesale, which
+    was silently deleting an author's own "Production notes" production plan
+    -- the single most direct piece of story-archetype evidence in a real
+    source -- before A1/A2 ever saw it. It must now survive as its own unit."""
+    result = parse_html(FIXTURES / "guide_sample_with_production_notes.html")
+    assert result.profile_name == "guide"
+    notes = [u for u in result.units if u.id == "production_notes"]
+    assert len(notes) == 1
+    unit = notes[0]
+    assert "Problem" in unit.text
+    assert "Mini payoff" in unit.text
+    assert "Open on the unresolved question" in unit.text
+    assert "0:00" in unit.text
+
+
+REAL_SOURCE = (
+    Path(__file__).parent.parent.parent
+    / "project" / "attention_series" / "input" / "video-01-attention-coherent-story.html"
+)
+
+
+def test_real_source_production_notes_carry_the_build_archetype_signal():
+    """The real regression this fix exists for: on the actual attention-series
+    source, the author's own Production notes are a Problem -> Mini payoff ->
+    new-problem chain (the "build" archetype's shape) -- and before this fix
+    they never reached A1/A2 at all because .page-footer was chrome-stripped
+    wholesale (see IMPLEMENTATION_PLAN.md build-plan notes, 2026-09-10)."""
+    result = parse_html(REAL_SOURCE)
+    notes = [u for u in result.units if u.id == "production_notes"]
+    assert len(notes) == 1
+    text = notes[0].text
+    assert "Problem" in text
+    assert "Score creates a new problem" in text
+    assert "Payoff and Part 2 bridge" in text
+    # the 11 numbered sections must still be present alongside the new unit
+    assert len(result.units) == 12
+
+
 def test_js_literals_are_extracted_and_attached_to_the_result():
     result = parse_html(FIXTURES / "js_literals_sample.html")
     assert result.js_literals["HIDDEN"] == 3584

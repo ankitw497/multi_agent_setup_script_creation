@@ -18,6 +18,7 @@ from facts.models import SourceUnit
 
 from .js_literal_extractor import LiteralExtractionResult, extract_literals_from_scripts
 from .profiles import ALL_PROFILES, FALLBACK_PROFILE
+from .profiles.base import extract_pipeline_steps, visible_text
 
 # Chrome that carries no story content — stripped before any profile sees the
 # document, so nav text/link labels never leak into a SourceUnit's prose.
@@ -30,6 +31,11 @@ _CHROME_SELECTORS = [
 # both render as <footer> tags) -- a blanket "footer" selector silently
 # deleted them. Found by running against a real source (project/
 # attention_series/input/video-01-*.html), not assumed from markup lists.
+#
+# .page-footer itself IS mostly chrome (nav-adjacent captions), but on that
+# same real source it also held "Production notes" -- see
+# _extract_production_notes(), which runs BEFORE this strip and pulls that
+# content out as its own SourceUnit so _strip_chrome() only discards the rest.
 
 MIN_PROFILE_CONFIDENCE = 0.4
 
@@ -62,6 +68,37 @@ def _strip_chrome(soup: BeautifulSoup) -> None:
         tag.decompose()
 
 
+def _extract_production_notes(soup: BeautifulSoup) -> SourceUnit | None:
+    """`.page-footer` is stripped as chrome (see _CHROME_SELECTORS), but on at
+    least one real source it holds the author's own "Production notes" — a
+    timestamped .pipeline-step plan (Problem -> Mini payoff -> new problem ->
+    ...) that is itself direct evidence of the intended story archetype. A
+    real bug (found 2026-09-10): this was being silently discarded before A1/
+    A2 ever saw it, and A2 then had to guess the archetype blind. Must run on
+    the UNSTRIPPED soup, before _strip_chrome() removes .page-footer.
+    """
+    footer = soup.select_one(".page-footer")
+    if footer is None:
+        return None
+    steps = extract_pipeline_steps(footer)
+    if not steps:
+        return None
+
+    heading_el = footer.select_one(".content h3") or footer.find(["h2", "h3"])
+    heading = visible_text(heading_el) if heading_el else "Production notes"
+    text = " ".join(f"[{s['timestamp']}] {s['title']}: {s['text']}" for s in steps if s["title"] or s["text"])
+
+    return SourceUnit(
+        id="production_notes",
+        heading=heading,
+        level=1,
+        text=text,
+        callouts=[f"{s['title']} ({s['timestamp']})" for s in steps if s["title"]],
+        dom_path=".page-footer .pipeline",
+        structure_confidence=1.0,
+    )
+
+
 def parse_html(path: str | Path) -> ExtractionResult:
     html = Path(path).read_text(encoding="utf-8")
     return parse_html_string(html)
@@ -76,7 +113,9 @@ def parse_html_string(html: str) -> ExtractionResult:
     js_result: LiteralExtractionResult = extract_literals_from_scripts(script_texts)
 
     # Pass 2: a fresh soup, chrome and scripts removed, for profile matching + extraction.
+    # Production notes must be pulled BEFORE chrome-stripping removes .page-footer.
     soup = BeautifulSoup(html, "lxml")
+    production_notes = _extract_production_notes(soup)
     _strip_chrome(soup)
 
     scored = [(profile, profile.confidence(soup)) for profile in ALL_PROFILES]
@@ -91,6 +130,8 @@ def parse_html_string(html: str) -> ExtractionResult:
         chosen_confidence = best_confidence
 
     units = chosen_profile.extract(soup)
+    if production_notes is not None:
+        units.append(production_notes)
 
     return ExtractionResult(
         units=units,

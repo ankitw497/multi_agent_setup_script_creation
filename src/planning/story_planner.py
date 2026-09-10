@@ -8,7 +8,7 @@ design doc's core principle).
 from __future__ import annotations
 
 from agents.base import Agent
-from facts.models import AssumptionLedger, Claim
+from facts.models import AssumptionLedger, Claim, SourceUnit
 from llm.budget import BudgetCounter
 
 from .archetypes import ALL_ARCHETYPES, load_archetype_specs
@@ -84,6 +84,15 @@ later by the HTML stage, not here.
 
 Ground everything in the claims and source brief given. Never introduce a
 technical claim that isn't backed by the claim registry.
+
+You are also given the actual `source_units` (the source's real content, not
+just A1's summary) -- use them to make and cross-check your OWN archetype
+call rather than trusting the source brief alone. In particular, if any unit
+contains the author's own production notes, storyboard plan, pacing outline,
+or similar meta-commentary about how the piece is meant to be built, treat
+it as strong direct evidence: it is the author's own account of the
+structure, not a pattern you have to infer from the raw material. Weigh it
+accordingly against the classification order above.
 """
 
 
@@ -101,13 +110,23 @@ def _claim_payload(claim: Claim) -> dict:
     }
 
 
+def _source_unit_payload(unit: SourceUnit) -> dict:
+    return {
+        "id": unit.id, "heading": unit.heading, "text": unit.text,
+        "equations": unit.equations, "callouts": unit.callouts,
+        "code": unit.code, "numbers": unit.numbers,
+    }
+
+
 def plan_story(
     source_brief: SourceBrief, claims: list[Claim], ledger: AssumptionLedger,
     story_lead: Agent, budget: BudgetCounter, target_duration_seconds: float,
+    source_units: list[SourceUnit],
     archetype_override: str | None = None,
 ) -> StoryPlan:
     payload = {
         "source_brief": source_brief.model_dump(),
+        "source_units": [_source_unit_payload(u) for u in source_units],
         "claims": [_claim_payload(c) for c in claims],
         "assumption_ledger": ledger.model_dump(exclude_none=True),
         "target_duration_seconds": target_duration_seconds,

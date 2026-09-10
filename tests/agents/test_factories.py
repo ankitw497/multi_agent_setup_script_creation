@@ -36,10 +36,14 @@ def test_story_lead_mini_tier_is_selectable():
     assert agent.model_resolved == "gpt-4o-mini"
 
 
-def test_review_lead_strong_tier_leaves_reasoning_unset():
+def test_review_lead_strong_tier_caps_reasoning_to_low():
+    """Cost-discipline fix (2026-09-10): the strong-tier Gemini model reasons
+    by default and, left unset, burned $0.218/11 calls on hidden reasoning
+    tokens alone. "low" was verified live to keep full-quality output while
+    bounding the reasoning-token spend."""
     agent = make_review_lead(DummyClient(), tier="strong")
     assert agent.model_resolved == "gemini/gemini-3.1-pro-preview"
-    assert agent.default_reasoning_effort is None
+    assert agent.default_reasoning_effort == "low"
 
 
 def test_review_lead_flash_tier_defaults_reasoning_to_none():
