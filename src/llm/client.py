@@ -59,9 +59,10 @@ class LLMClient:
         user_payload: str,
         schema: type[T],
         revision_cycle: int = 0,
+        timeout_s: int | None = None,
     ) -> StructuredCallResult:
         """sonnet | haiku — no budget check (quota, not dollars); still ledgered as notional cost."""
-        result = self.subscription_backend.call(model_resolved, system_prompt, user_payload)
+        result = self.subscription_backend.call(model_resolved, system_prompt, user_payload, timeout_s=timeout_s)
         value = self._validate(result.content, schema)
         record = UsageRecord(
             run_id=self.run_id,

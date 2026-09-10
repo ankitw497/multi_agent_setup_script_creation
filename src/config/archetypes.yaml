@@ -1,0 +1,33 @@
+# Core vs optional roles per archetype (plan §9) -- core roles are hard-gated,
+# optional roles are diagnostics only. driver is the forward-momentum concept
+# a beat advances toward (plan §10.2) -- replaces a numeric "energy" score.
+
+mystery:
+  core_roles: [expectation, contradiction, mechanism, resolution]
+  optional_roles: [suspects, investigation_steps]
+  driver: "unanswered cause"
+
+build:
+  core_roles: [desired_capability, "problem_to_solution_pair", assembled_system]
+  optional_roles: [further_limitation_fix_round]
+  driver: "unresolved capability/limitation"
+
+experiment:
+  core_roles: [decision_question, baseline, "method_and_result", decision_rule]
+  optional_roles: [second_method, tradeoff_table]
+  driver: "unresolved decision"
+
+derivation:
+  core_roles: [real_problem, justified_step, usable_result]
+  optional_roles: [concrete_example, simplification_step]
+  driver: "unresolved mathematical objective"
+
+foundation:
+  core_roles: ["prerequisite_to_capability_link", capstone]
+  optional_roles: [intermediate_concept]
+  driver: "dependency toward capstone"
+
+framework:
+  core_roles: [organizing_principle, useful_distinction, compressed_model]
+  optional_roles: [grouping]
+  driver: "remaining organizing dimension"

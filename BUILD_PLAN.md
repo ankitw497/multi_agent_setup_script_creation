@@ -92,6 +92,51 @@ All pydantic v2, with golden fixtures, before any prompt is written.
 
 ## V1A — Script intelligence (plan §8, §17 — the core thesis)
 
+### Major finding: real A2 output caught by real hard checks (2026-09-10)
+
+Two live A2 runs against the real source produced structurally deficient plans, and both were
+independently found via careful inspection AND caught by the structural hard check built in
+direct response:
+
+1. **Archetype instability across runs.** Three live runs of A2 on the same source returned
+   three different archetypes (`foundation`, `foundation` again, `derivation`) — a live
+   demonstration of exactly the run-to-run variance the plan's own evaluation section (§18) and
+   the guide (§24a) warn about. This is now the single most important open question for C1 to
+   answer: `tests/review/test_story_critic.py` locks in a regression test replaying the specific
+   "foundation vs. build" scenario the source's own structure (explicit problem→fix framing:
+   *"Score creates a new problem," "New limitations"*) plausibly supports better than either
+   archetype the model actually chose.
+2. **A real class of defect a prompt alone can't fix.** Both runs produced a scene plan whose
+   total word budget (320, then 460 words) was wildly short of the 1,670-word target for a
+   600-second video — even after the prompt was explicitly given the exact arithmetic
+   (`target_duration_seconds / 60 * 167`) and told the expected scene count. **This is not a
+   prompt-wording problem** — LLMs are reliably poor at satisfying an aggregate constraint
+   (a sum across many generated items) through instruction alone, no matter how precisely
+   stated. The correct fix, applied: a deterministic check (`verification/hard/structure.py`),
+   never another round of prompt tuning.
+3. **A genuine prompt gap, fixed.** Every beat came back with `source_unit_ids: []` — not
+   because the model ignored an instruction, but because the prompt never asked for that field
+   to be populated at all. Fixed; locked in with `test_prompt_instructs_populating_source_unit_ids`.
+
+**The structural hard check was then run against both real saved plans on disk** (not just
+synthetic test fixtures) and correctly flagged every one of these defects with precise, accurate
+detail — word-budget ratios (0.19, 0.28), the exact beats missing `source_unit_ids`, and every
+uncovered source unit. This is the architecture doing exactly what it is for: A2 does not have
+to be right on the first try; the pipeline's job is to catch it when it isn't. Both real plans
+are preserved on disk (`project/attention_series/video-01-attention-coherent-story/runs/v01/`,
+`v02/`) as permanent, real evidence for this finding, and as fixtures for testing C1/A3 routing
+next.
+
+**In progress (this session):** building every remaining V1A stage in one continuous push,
+each with real tests and live validation against the actual `video-01-attention-coherent-story.html`
+source, not synthetic fixtures alone. One real bug found and fixed already: the subscription
+backend's 120s default timeout was too tight for a full 11-unit batched call — raised to 300s
+with a per-call override, since larger real payloads over a complex schema legitimately take
+longer (this is subscription quota, not billed time, so a generous default costs wall-clock,
+not money).
+
+
+
 Pipeline order from §8. Nothing here is built yet; each line becomes its own
 PR-sized unit with tests before the next.
 
@@ -100,13 +145,15 @@ PR-sized unit with tests before the next.
 - [x] **S2b** claim extraction (Haiku, batched over all source units) → `facts/claim_extract.py` — **done, validated**
 - [x] **S2c** normalize/dedupe/link numbers→claims → `facts/normalize.py` — **done, validated**
 - [x] **C2a** source verification (Python + local evidence broker + Gemini), cached by the §4.2/§6.5 key → `facts/verify.py`, `facts/evidence.py` — **done, live-validated (adversarial test passed)**
-- [ ] **S1** narrative digest (Haiku; only above ~12k source tokens)
-- [ ] **A1** source understanding (GPT) → `agents/story_lead.py`
-- [ ] **A2** archetype + story plan (title, hook, CTA, question chain, beats, ending, `open_loop_ledger`) → `planning/`
-- [ ] **B1** narration first draft (Sonnet) → `narration/generator.py`
-- [ ] **CM** claim mapper — independent of the writer's `sentence_type` → `review/claim_mapper.py`
-- [ ] **C1** story critic, **C2b** grounding + CM-completeness check, **C5** style critic (conditional on voice bands) → `review/`
-- [ ] **V\*** hard checks — numeric, units, schema, traceability, structure, coverage → `verification/hard/`
+- [ ] **S1** narrative digest (Haiku; only above ~12k source tokens) — not yet built; every real source tested so far (video-01, ~3300 words) is well under the threshold, so this hasn't been exercised yet
+- [x] **A1** source understanding (GPT) → `planning/source_understanding.py` — built, unit-tested; live validation running against the real full source
+- [x] **A2** archetype + story plan (title, hook, CTA, question chain, beats, ending, scene plan) → `planning/story_planner.py`, `planning/archetypes.py`, `config/archetypes.yaml` (the six archetype specs, previously only prose in the plan) — built, unit-tested; live validation running against the real full source
+- [x] **B1** narration first draft (Sonnet) → `narration/generator.py` — built, unit-tested (context isolation confirmed: a scene only sees claims from its own beat's source units, not the whole registry). Live validation queued behind A2's real output.
+- [x] **CM** claim mapper — independent of the writer's `sentence_type` → `review/claim_mapper.py` — built, unit-tested
+- [x] **C1** story critic → `review/story_critic.py` — built, unit-tested (includes a real regression test replaying the actual foundation-vs-build finding below)
+- [ ] **C2b** grounding + CM-completeness check, **C5** style critic (conditional on voice bands) → `review/`
+- [x] **V\* (structure)** — `verification/hard/structure.py`: word-budget-vs-target, beat/scene/CTA/mini-payoff referential integrity, core-role coverage, source-unit coverage — **validated against real production data, catches both real saved plans below**
+- [ ] **V\* (numeric, units, schema, traceability)** — remaining hard checks → `verification/hard/`
 - [ ] **D\*** diagnostics — story, retention, learning, CTA, voice, visual, banded GREEN/AMBER/RED → `verification/diagnostics/`
 - [ ] Routing table from §15 (targeted correction / B3 / B4→C6 / re-plan / skip) → `editing/`, `orchestration/routing.py`
 - [ ] Policy gate — deterministic; A4 is editorial-only and downgrade-only → `orchestration/policy_gate.py`

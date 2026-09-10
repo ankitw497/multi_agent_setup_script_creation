@@ -55,7 +55,12 @@ class ClaudeCliBackend:
 
     lane = "subscription"
 
-    def __init__(self, cwd: str | None = None, timeout_s: int = 120):
+    def __init__(self, cwd: str | None = None, timeout_s: int = 300):
+        # 300s default: a real 11-unit/~3300-word batched extraction call was
+        # observed to exceed the previous 120s default (2026-09-10) -- larger
+        # batched payloads over a complex schema legitimately take longer.
+        # This is subscription quota, not billed API time, so a generous
+        # default costs wall-clock, not money.
         self.cwd = cwd
         self.timeout_s = timeout_s
 
@@ -77,15 +82,18 @@ class ClaudeCliBackend:
             "--output-format", "json",
         ]
 
-    def call(self, model_id: str, system_prompt: str, user_payload: str) -> CliCallResult:
+    def call(
+        self, model_id: str, system_prompt: str, user_payload: str, timeout_s: int | None = None,
+    ) -> CliCallResult:
         env = self._build_env()
         assert "ANTHROPIC_API_KEY" not in env, "ANTHROPIC_API_KEY leaked into the subscription lane"
 
         cmd = self._build_command(model_id, system_prompt, user_payload)
+        effective_timeout = timeout_s if timeout_s is not None else self.timeout_s
 
         start = time.monotonic()
         proc = subprocess.run(
-            cmd, env=env, cwd=self.cwd, capture_output=True, text=True, timeout=self.timeout_s,
+            cmd, env=env, cwd=self.cwd, capture_output=True, text=True, timeout=effective_timeout,
         )
         latency_ms = int((time.monotonic() - start) * 1000)
 
