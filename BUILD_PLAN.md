@@ -97,8 +97,8 @@ PR-sized unit with tests before the next.
 
 - [x] **S0** extraction — DOM + JS-literal AST (Acorn via a Node bridge; literals only, never `node:vm`) → `extraction/` — **done, validated against real content**
 - [x] **S2a** deterministic seeds — numbers, equations, JS constants → `AssumptionLedger`, formulas → `NumericClaim.expression` — **done, cross-validated against real corpus values**
-- [ ] **S2b** claim extraction (Haiku, batched over all source units) → `facts/claim_extract.py`
-- [ ] **S2c** normalize/dedupe/link numbers→claims → `facts/normalize.py`, `facts/ledger.py`
+- [x] **S2b** claim extraction (Haiku, batched over all source units) → `facts/claim_extract.py` — **done, validated**
+- [x] **S2c** normalize/dedupe/link numbers→claims → `facts/normalize.py` — **done, validated**
 - [ ] **C2a** source verification (Python + local evidence broker + Gemini), cached by the §4.2/§6.5 key → `facts/verify.py`, `facts/evidence.py` — **blocked on the Gemini key fix**
 - [ ] **S1** narrative digest (Haiku; only above ~12k source tokens)
 - [ ] **A1** source understanding (GPT) → `agents/story_lead.py`
@@ -116,6 +116,24 @@ PR-sized unit with tests before the next.
 **Done when (plan):** *"a rough HTML becomes one coherent, verified, human-sounding script; every mutation test caught"* (mutation suite: §18).
 
 ---
+
+### S2b + S2c status detail
+
+Built: `facts/claim_extract.py` (Worker/Haiku, ids assigned by Python — never trusted from the
+model, batched by word count per plan §6.3), `facts/normalize.py` (`normalize_number()` — the
+exact plan §9 traceability example, `"175B" == "175 billion" == "175,000,000,000"`; `dedupe_claims()`;
+`link_numeric_claims()` connecting a `NumericClaim`'s computed product back to whichever `Claim`
+mentions that value).
+
+**Live-validated end to end against the real source** (`video-01-attention-coherent-story.html`,
+all 11 units, one batched call): 74 claims extracted, correctly typed (mechanism 43, definition 10,
+causal 7, complexity 5, implementation 5, historical 3, comparison 1), correctly weighted
+(47 CORE / 27 SUPPORTING), **0 duplicates** — a first read of two units alone (before the full run)
+already showed correct number tagging (`5`, `50`, `2014`) and correct historical/mechanism
+classification. Notional cost for the whole file: **$0.063** (subscription quota, never billed).
+This source has no JS data object (unlike `video-1.1`), so S2a's ledger/numeric-claim counts are
+correctly empty here — confirmed as expected behavior, not a bug, by re-running against
+`video-1.1` separately.
 
 ### S2a status detail
 

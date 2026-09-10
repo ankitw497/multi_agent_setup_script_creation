@@ -19,6 +19,17 @@ T = TypeVar("T", bound=BaseModel)
 MAX_SCHEMA_REPAIRS = 2  # plan §14 revision budgets
 
 
+def schema_prompt(schema: type[BaseModel]) -> str:
+    """Renders instructions + a schema's JSON Schema for in-prompt structured
+    output (plan §3.4: "schema in prompt on both lanes"). Both backends see
+    the same instruction shape regardless of lane."""
+    return (
+        "Respond with ONLY a single JSON object matching this schema — no "
+        "prose, no markdown fences, no explanation before or after it.\n\n"
+        f"JSON Schema:\n{schema.model_json_schema()}"
+    )
+
+
 class SchemaRepairFailed(RuntimeError):
     """Malformed output survived MAX_SCHEMA_REPAIRS attempts. Fail loudly — never let it through."""
 
