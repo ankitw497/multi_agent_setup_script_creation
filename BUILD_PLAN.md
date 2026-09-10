@@ -190,6 +190,16 @@ are gitignored working content and must not be a dependency of the committed tes
 
 ---
 
+## Project folder layout — ✅ DONE
+
+`orchestration/paths.py` — `project/<playlist>/input/` for sources you add;
+`project/<playlist>/<video_slug>/final/` for stable, publishable deliverables;
+`project/<playlist>/<video_slug>/runs/vNN/` for the full plan §16 working tree per attempt
+(nothing overwritten, version numbers never reused even across gaps). `promote_to_final()`
+copies a run's `final/` into the video's `final/` — will be called by the orchestrator
+(not yet built) only after a PASS/PASS_WARN policy-gate result, never on REVISE/FAIL.
+Documented as plan **Appendix D, ADR D12**. 13 tests.
+
 ## Cross-cutting (build alongside, not a separate phase)
 
 - [ ] Mutation test suite (§18) — grows with each stage as it lands, not written all at once

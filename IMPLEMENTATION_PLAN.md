@@ -4,7 +4,9 @@
 v3 applies the second and third review rounds. Appendix A records deviations from the original
 design doc; B, C and E record the responses to each review; **D holds the architecture decision
 records**. **v3.1** adds the shorts/reels format (§20) as an additive *format profile*; **v3.2** applies
-the final hygiene review (Appendix G) — contracts, cache keys, budget tiers, naming. No further architecture changes before V1A runs — the next
+the final hygiene review (Appendix G) — contracts, cache keys, budget tiers, naming. **v3.3** relocates
+the run root from a generic `runs/<id>/` to a `project/<playlist>/<video>/` layout (ADR D12) —
+additive, no change to what a run contains. No further architecture changes before V1A runs — the next
 information comes from experiments, not design.
 
 **Goal:** take a content HTML — clean or rough — and produce a **video-script HTML**: one
@@ -908,6 +910,12 @@ A degraded run must *look* degraded. A run that silently skipped its style criti
 
 ## 16. Artifacts and layout
 
+**Run root, superseded by ADR D12:** the tree below is written under
+`project/<playlist>/<video_slug>/runs/vNN/`, not a standalone `runs/<id>/` —
+`vNN` plays the role `<id>` played here, and `<video_slug>/final/` is the
+promoted copy of whichever run's `final/` last reached PASS/PASS_WARN
+(`orchestration/paths.py`). The internal shape below is unchanged.
+
 ```
 runs/<id>/  input/ extraction/ facts/{claims,numbers,assumptions}.json analysis/ planning/
             drafts/narration_v0N.json reviews/{story,technical,style,voice,retention,learning,
@@ -1424,6 +1432,23 @@ becomes worth OpenRouter's margin or the proxy's operations.
 caching, diffability, cost; a critic that sees the writer's reasoning defends it. **Cost:** no
 emergent negotiation between models. **Revisit when:** a controlled debate stage is shown, on
 the benchmark, to beat artifact passing on a specific failure class.
+
+### D12 · `project/<playlist>/<video>/` layout, not a generic `runs/<id>/` root
+**Context:** the user organizes work as a project of playlists, each with an `input/` of rough
+sources; a video's outputs should live next to its source, browsable and publishable directly,
+not in an opaque run-id-keyed directory elsewhere. **Alternatives:** the plan's original generic
+`runs/<id>/` at the repo root; a flat `output/` mirroring `input/`. **Why:** `<video_slug>/final/`
+gives a stable, always-current path to publish from (`page.html` especially — plan §12.0)
+without hunting for the latest run id; `<video_slug>/runs/vNN/` keeps the full plan §16 working
+tree per attempt for audit, with nothing overwritten and gaps in numbering never reused
+(`orchestration/paths.py::next_run_dir`). **Cost:** one more layer of indirection between a
+run and its promoted output; `promote_to_final` must only ever be called after a PASS/PASS_WARN
+policy-gate result (plan §14) — a REVISE/FAIL run's `runs/vNN/final/` is real output but must
+never overwrite the last good `final/`, tested explicitly
+(`test_a_failed_runs_own_final_never_touches_the_video_final`). **Revisit when:** multiple
+playlists need to share one video (a crossover) -- then `video_slug` alone won't be a unique key
+and will need to be namespaced by playlist explicitly in cross-references, not just by directory
+nesting.
 
 ### D11 · Shorts derive the parent's knowledge, not its storytelling
 **Context:** the channel makes shorts from its videos; they must grow the channel.
