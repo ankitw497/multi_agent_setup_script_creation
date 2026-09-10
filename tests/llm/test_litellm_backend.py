@@ -23,17 +23,23 @@ class FakeChoice:
         self.message = FakeMessage(content)
 
 
+class FakeCompletionTokensDetails:
+    def __init__(self, reasoning_tokens=None):
+        self.reasoning_tokens = reasoning_tokens
+
+
 class FakeUsage:
-    def __init__(self, prompt_tokens, completion_tokens):
+    def __init__(self, prompt_tokens, completion_tokens, reasoning_tokens=None):
         self.prompt_tokens = prompt_tokens
         self.completion_tokens = completion_tokens
+        self.completion_tokens_details = FakeCompletionTokensDetails(reasoning_tokens)
 
 
 class FakeResponse:
-    def __init__(self, content, model, prompt_tokens, completion_tokens):
+    def __init__(self, content, model, prompt_tokens, completion_tokens, reasoning_tokens=None):
         self.choices = [FakeChoice(content)]
         self.model = model
-        self.usage = FakeUsage(prompt_tokens, completion_tokens)
+        self.usage = FakeUsage(prompt_tokens, completion_tokens, reasoning_tokens)
 
 
 def test_call_reads_public_cost_interface_not_hidden_params(monkeypatch):
@@ -77,6 +83,59 @@ def test_call_degrades_to_zero_cost_when_completion_cost_raises(monkeypatch):
     assert result.billed_microusd == 0
 
 
+def test_reasoning_effort_is_forwarded_to_litellm_when_given(monkeypatch):
+    fake_response = FakeResponse("OK", "gemini-3.6-flash", 6, 1)
+    captured = {}
+
+    def fake_completion(**kwargs):
+        captured.update(kwargs)
+        return fake_response
+
+    monkeypatch.setattr("litellm.completion", fake_completion)
+    monkeypatch.setattr("litellm.completion_cost", lambda completion_response: 0.0)
+
+    backend = LiteLLMBackend()
+    backend.call("gemini/gemini-3.6-flash", "sys", "user", reasoning_effort="none")
+
+    assert captured.get("reasoning_effort") == "none"
+
+
+def test_reasoning_effort_is_omitted_by_default(monkeypatch):
+    """Strong-tier calls leave reasoning on by not passing the param at all —
+    litellm/the provider then uses its own default, not an explicit override."""
+    fake_response = FakeResponse("OK", "gemini-3.1-pro-preview", 6, 93, reasoning_tokens=92)
+    captured = {}
+
+    def fake_completion(**kwargs):
+        captured.update(kwargs)
+        return fake_response
+
+    monkeypatch.setattr("litellm.completion", fake_completion)
+    monkeypatch.setattr("litellm.completion_cost", lambda completion_response: 0.0)
+
+    backend = LiteLLMBackend()
+    backend.call("gemini/gemini-3.1-pro-preview", "sys", "user")
+
+    assert "reasoning_effort" not in captured
+
+
+def test_call_result_reports_reasoning_tokens_separately_from_output_tokens(monkeypatch):
+    """Regression test for the real finding (2026-09-10): a cheap-tier call with no
+    reasoning_effort override can spend nearly its whole output budget on hidden
+    reasoning tokens instead of visible text. This must be visible in CallResult,
+    not silently folded into output_tokens."""
+    fake_response = FakeResponse("", "gemini-3.6-flash", 6, 96, reasoning_tokens=95)
+    monkeypatch.setattr("litellm.completion", lambda **kw: fake_response)
+    monkeypatch.setattr("litellm.completion_cost", lambda completion_response: 0.0003645)
+
+    backend = LiteLLMBackend()
+    result = backend.call("gemini/gemini-3.6-flash", "sys", "user")
+
+    assert result.output_tokens == 96
+    assert result.reasoning_tokens == 95
+    assert result.content == ""  # the real, costly failure mode this documents
+
+
 @pytest.mark.integration
 def test_live_openai_smoke():
     """Real API call, minimal tokens. Costs a fraction of a cent. Run with: pytest -m integration"""
@@ -95,16 +154,40 @@ def test_live_openai_smoke():
 
 @pytest.mark.integration
 def test_live_gemini_smoke():
-    """Real API call. As of 2026-09-10 this fails with 403 API_KEY_SERVICE_BLOCKED —
-    the Generative Language API is disabled/restricted for this key's GCP project.
-    Not a code issue. Fix at aistudio.google.com/apikey, then re-run this test."""
+    """Real API call, using the exact ids pinned in config/models.yaml after two
+    real findings on 2026-09-10: (1) gemini-1.5-flash/pro are fully retired --
+    Google's 404 responses named the exact replacements; (2) the replacement
+    flash model reasons by default and needs reasoning_effort="none" or a cheap
+    call becomes an expensive empty one. See models.yaml for the full story."""
     from dotenv import load_dotenv
 
     load_dotenv(dotenv_path=".env")
     assert os.environ.get("GEMINI_API_KEY"), "GEMINI_API_KEY not set"
 
-    backend = LiteLLMBackend(max_tokens=5)
-    result = backend.call("gemini/gemini-1.5-flash", "You are terse.", "Reply with exactly: OK")
+    backend = LiteLLMBackend(max_tokens=10)
+    result = backend.call(
+        "gemini/gemini-3.6-flash", "You are terse.", "Reply with exactly: OK",
+        reasoning_effort="none",
+    )
     assert "OK" in result.content
-    print(f"\n[live gemini] tokens in={result.input_tokens} out={result.output_tokens} "
-          f"cost=${result.billed_microusd / 1_000_000:.6f}")
+    assert result.reasoning_tokens == 0
+    print(f"\n[live gemini flash] tokens in={result.input_tokens} out={result.output_tokens} "
+          f"reasoning={result.reasoning_tokens} cost=${result.billed_microusd / 1_000_000:.6f}")
+
+
+@pytest.mark.integration
+def test_live_gemini_strong_smoke():
+    """Real API call against the strong tier, reasoning left on (that's the point
+    of this tier) -- confirms gemini-3.1-pro-preview still resolves."""
+    from dotenv import load_dotenv
+
+    load_dotenv(dotenv_path=".env")
+    assert os.environ.get("GEMINI_API_KEY"), "GEMINI_API_KEY not set"
+
+    backend = LiteLLMBackend(max_tokens=100)
+    result = backend.call(
+        "gemini/gemini-3.1-pro-preview", "You are terse.", "Reply with exactly: OK"
+    )
+    assert "OK" in result.content
+    print(f"\n[live gemini strong] tokens in={result.input_tokens} out={result.output_tokens} "
+          f"reasoning={result.reasoning_tokens} cost=${result.billed_microusd / 1_000_000:.6f}")

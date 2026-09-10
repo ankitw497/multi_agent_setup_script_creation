@@ -94,11 +94,16 @@ class LLMClient:
         budget: BudgetCounter,
         estimated_usd: float,
         revision_cycle: int = 0,
+        reasoning_effort: str | None = None,
     ) -> StructuredCallResult:
-        """gpt | gemini — hard-gated by a local BudgetCounter (plan §3.2)."""
+        """gpt | gemini — hard-gated by a local BudgetCounter (plan §3.2).
+
+        reasoning_effort should be sourced from config/models.yaml per alias
+        (e.g. "none" for the cheap cascade tier — see litellm_backend.py for why).
+        """
         budget.preflight_check(estimated_usd)
 
-        result = self.paid_backend.call(model, system_prompt, user_payload)
+        result = self.paid_backend.call(model, system_prompt, user_payload, reasoning_effort)
         budget.record_spend(result.billed_microusd)  # raises BudgetExceeded past hard_cap
 
         value = self._validate(result.content, schema)

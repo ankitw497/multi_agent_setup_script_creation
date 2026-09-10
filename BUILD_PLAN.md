@@ -23,10 +23,23 @@ Legend: `[x]` done · `[~]` partial/in progress · `[ ]` not started.
 - [x] **API keys tested against real endpoints**: OpenAI **working** ($0.0000024 for a 12/1-token call); Gemini **blocked** — `403 API_KEY_SERVICE_BLOCKED` (action needed on your end: generate a key at aistudio.google.com/apikey, or enable the Generative Language API for the existing GCP project — not a code issue)
 - [x] Live Haiku + live Sonnet smoke tests through the new backend, both passing end to end
 - [ ] Direct unit test for `llm/client.py` (currently only exercised through its parts, not as a whole)
-- [ ] Re-run `test_live_gemini_smoke` once the Gemini key is fixed
+- [x] Re-run `test_live_gemini_smoke` once the Gemini key is fixed — **fixed, and two more real issues found in the process**
 
-**Status: 51/51 unit tests passing** (`pytest`, 3 integration tests excluded by default; all 3 have now
-been run at least once — 2 pass, 1 blocked on the Gemini key, not on code).
+**Status: 54/54 unit tests passing** (`pytest`, 5 integration tests excluded by default; all 5 have now
+been run and pass — OpenAI, Gemini flash, Gemini strong, Sonnet, Haiku, all live-verified end to end).
+
+**Follow-up finding (same day, after the Gemini key was fixed on the Google Cloud side):** the key
+started authenticating, but both pinned model ids from the original `models.yaml` (`gemini-1.5-flash`,
+`gemini-1.5-pro`) turned out to be **fully retired** — Google's 404 responses named the exact
+replacements each time (`gemini-3.6-flash`, `gemini-3.1-pro-preview`), found via one live
+`ListModels` probe rather than guessing. A second issue surfaced immediately after: the new flash
+model **reasons by default**, and a small `max_tokens` budget can be consumed almost entirely by
+hidden reasoning tokens — one throwaway call spent 95 of 96 output tokens on reasoning and returned
+empty `content` for $0.0003645. Fixed by adding `reasoning_effort` support to
+`LiteLLMBackend.call()` (`"none"` for the cheap cascade tier, left unset for the strong tier where
+reasoning is wanted) and by tracking `reasoning_tokens` separately on `CallResult` so this failure
+mode is visible, not silent. Three regression tests added; `models.yaml` documents the ListModels
+probe for next time a Gemini id 404s.
 
 **A real bug was found and fixed while running the live tests** (exactly the kind of thing spending
 real calls is for): a single `claude -p --model sonnet` call logs **two** entries in the envelope's
@@ -41,12 +54,14 @@ in `llm/backends/claude_cli.py`), which is unambiguous. Two regression tests loc
 exact ids (`claude-sonnet-5`, `claude-haiku-4-5-20251001`) with a comment explaining why the exact
 id — not the `sonnet`/`haiku` shorthand — must be what's actually passed to the CLI.
 
-**Cost actually spent verifying this phase:**
+**Cost actually spent verifying this phase (cumulative):**
 | | amount | billed? |
 |---|---:|---|
 | OpenAI (paid lane, 2 test calls) | $0.0000064 | yes — real dollars |
-| Gemini (paid lane, blocked, 2 attempts) | $0.00 | no — rejected before generation |
-| Claude subscription (several debug + 2 final verified calls) | ≈ $0.006 notional | **no** — subscription quota only, never billed |
+| Gemini, first pass (blocked key, 2 attempts) | $0.00 | no — rejected before generation |
+| Gemini, second pass (model-drift + reasoning discovery, 9 calls incl. 2 free ListModels probes) | $0.0026905 | yes — real dollars |
+| Claude subscription (several debug + 4 final verified calls) | ≈ $0.006 notional | **no** — subscription quota only, never billed |
+| **Total real API dollars spent, Phase 0** | **≈ $0.0027** | — |
 
 **Plan's "done when":** *"one smoke call per lane logged; `ANTHROPIC_API_KEY` leak test fails loudly."*
 → **met.** Key-leak test passes; OpenAI verified live; Sonnet + Haiku verified live through this

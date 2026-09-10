@@ -26,15 +26,30 @@ paid_api_lane:
     resolved: "gpt-4o-mini"
     verified: true          # confirmed working 2026-09-10: 12 in / 1 out tokens, $0.0000024
   gemini_review_strong:
-    resolved: "gemini/gemini-1.5-pro"
-    verified: false
+    resolved: "gemini/gemini-3.1-pro-preview"
+    verified: true            # confirmed 2026-09-10, $0.001128 for a 6 in/93 out call
+                              # (92 of those were reasoning tokens — expected and wanted
+                              # for this tier). NOTE: "-preview" in the id means Google
+                              # can retire/rename this one too; re-verify via the
+                              # ListModels probe below if it starts 404ing again.
+    reasoning_effort: null    # leave reasoning on for this tier — that's the point of it
   gemini_review_flash:
-    resolved: "gemini/gemini-1.5-flash"
-    verified: false          # BLOCKED 2026-09-10: 403 API_KEY_SERVICE_BLOCKED — the
-                              # Generative Language API is disabled/restricted for this
-                              # key's GCP project. Not a code issue. Fix: generate a plain
-                              # key at aistudio.google.com/apikey, or enable
-                              # "Generative Language API" for the existing project.
+    resolved: "gemini/gemini-3.6-flash"
+    verified: true            # confirmed 2026-09-10, $0.00000825 for a 6 in/1 out call
+                              # WITH reasoning_effort: none. Without it, this model
+                              # reasons by default and burned 95 of 96 output tokens on
+                              # hidden reasoning for a one-word answer ($0.0003645 for
+                              # nothing) — always set reasoning_effort for this tier.
+    reasoning_effort: "none"  # required for cheap-tier cost to actually be cheap
+
+  # Both ids above replace what this plan originally guessed (gemini-1.5-*), which
+  # turned out to be fully retired. Google's own 404 responses named the exact
+  # replacement each time (self-documenting deprecation — nice). If Gemini calls
+  # start 404ing in the future, re-run this probe rather than guessing a model id:
+  #   GET https://generativelanguage.googleapis.com/v1beta/models?key=$GEMINI_API_KEY
+  #   -> filter supportedGenerationMethods for "generateContent"
+  # The original 403 API_KEY_SERVICE_BLOCKED (2026-09-10, before the key was fixed
+  # on the Google Cloud side) is a separate, now-resolved issue — see git history.
 
 # Escalation pairs (plan §4.1 tiering: cheap by default, escalate on a flagged issue).
 escalation:
