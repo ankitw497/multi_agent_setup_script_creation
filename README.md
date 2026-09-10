@@ -12,7 +12,7 @@ Build tracking lives in [`BUILD_PLAN.md`](BUILD_PLAN.md).
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
-cp .env.example .env   # fill in OPENAI_API_KEY, GEMINI_API_KEY
+# create .env with OPENAI_API_KEY=... and GEMINI_API_KEY=...
 ```
 
 The subscription lane (Sonnet/Haiku) needs no key — it shells out to the
