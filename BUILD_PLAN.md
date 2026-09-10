@@ -155,10 +155,10 @@ PR-sized unit with tests before the next.
 - [x] **V\* (structure)** — `verification/hard/structure.py`: word-budget-vs-target, beat/scene/CTA/mini-payoff referential integrity, core-role coverage, source-unit coverage — **validated against real production data, catches both real saved plans below**
 - [ ] **V\* (numeric, units, schema, traceability)** — remaining hard checks → `verification/hard/`
 - [ ] **D\*** diagnostics — story, retention, learning, CTA, voice, visual, banded GREEN/AMBER/RED → `verification/diagnostics/`
-- [ ] Routing table from §15 (targeted correction / B3 / B4→C6 / re-plan / skip) → `editing/`, `orchestration/routing.py`
-- [ ] Policy gate — deterministic; A4 is editorial-only and downgrade-only → `orchestration/policy_gate.py`
+- [x] Routing table from §15 (targeted correction / re-plan / skip; B3/B4/C6 not yet wired — no revision candidates for them yet) → `editing/revision_planner.py` (A3), `orchestration/routing.py` — built, unit-tested
+- [x] Policy gate — deterministic; A4 hook present (`apply_editorial_downgrade`, cannot upgrade or clear a failure) → `orchestration/policy_gate.py` — built, unit-tested
 - [ ] **R\*** emit `narration.json`, `script.md`, `cost_report.json`, `review_summary.md`
-- [ ] `orchestration/pipeline.py`, `state.py` — the `@stage` decorator (cache + checkpoint + usage), wiring the run end to end
+- [x] `orchestration/pipeline.py` — the bounded revision loop (A2→B1→[CM,C1,C2b,structural]→aggregate→policy gate→A3→route→replan-or-rewrite, bounded MAX_STORY_REPLANS=1/MAX_MAJOR_REVISIONS=2) — built, unit-tested, **and run live end-to-end against the real saved plan** (see below). The `@stage` caching decorator is deferred; the loop itself is proven first.
 
 **Done when (plan):** *"a rough HTML becomes one coherent, verified, human-sounding script; every mutation test caught"* (mutation suite: §18).
 

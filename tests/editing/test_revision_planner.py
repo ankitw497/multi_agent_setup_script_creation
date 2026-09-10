@@ -1,0 +1,84 @@
+"""Tests for editing/revision_planner.py -- A3 (design doc §36, plan §15)."""
+from editing.models import RevisionPlan
+from editing.revision_planner import plan_revision
+from planning.models import (
+    CTAContract, EndingContract, HookContract, StoryBeat, StoryPlan, TitleContract,
+)
+from verification.hard.grounding import GroundingViolation
+from verification.hard.structure import StructuralIssue
+
+
+def make_plan() -> StoryPlan:
+    return StoryPlan(
+        archetype="foundation", selection_reason="x", story_promise="x", central_question="x",
+        title=TitleContract(chosen="t", promise="p"),
+        hook=HookContract(viewer_problem="x", tension="y", promise="z"),
+        cta=CTAContract(primary_after_beat="B01"),
+        ending=EndingContract(resolve_hook="x", compressed_mental_model="y", capstone_payoff="z", viewer_can_now="do x"),
+        beats=[StoryBeat(beat_id="B01", purpose="x")],
+    )
+
+
+class FakeStoryLead:
+    def __init__(self, response: RevisionPlan):
+        self._response = response
+        self.calls = []
+
+    def run(self, **kwargs):
+        self.calls.append(kwargs)
+        return self._response
+
+
+def test_real_scenario_word_budget_and_coverage_defects_route_to_replan():
+    """Replays the real 2026-09-10 finding: a word-budget mismatch plus
+    uncovered source units. A3 should be ABLE to set story_replan_required
+    -- this test proves the plumbing carries that decision through."""
+    story_lead = FakeStoryLead(RevisionPlan(
+        run_id="r1", revision_level="replan", story_replan_required=True,
+        preserve=["hook", "ending"],
+    ))
+    structural = [
+        StructuralIssue("word_budget_mismatch", "320 words vs target 1670"),
+        StructuralIssue("source_units_uncovered", "9 of 11 units never used"),
+    ]
+    from llm.budget import BudgetCounter, DEFAULT_TIERS
+
+    plan = plan_revision(make_plan(), structural, [], [], story_lead,
+                          BudgetCounter(tier=DEFAULT_TIERS["longform"]))
+
+    assert plan.story_replan_required is True
+    payload = story_lead.calls[0]["payload"]
+    codes = {i["code"] for i in payload["structural_issues"]}
+    assert codes == {"word_budget_mismatch", "source_units_uncovered"}
+
+
+def test_a_single_minor_issue_does_not_have_to_trigger_a_replan():
+    story_lead = FakeStoryLead(RevisionPlan(
+        run_id="r1", revision_level="targeted", story_replan_required=False,
+        rewrite_beats=[{"beat_id": "B01", "reason": "weak transition", "intent": "add a causal bridge"}],
+    ))
+    from llm.budget import BudgetCounter, DEFAULT_TIERS
+
+    plan = plan_revision(make_plan(), [], [], [], story_lead, BudgetCounter(tier=DEFAULT_TIERS["longform"]))
+    assert plan.story_replan_required is False
+    assert plan.rewrite_beats[0].beat_id == "B01"
+
+
+def test_grounding_violations_are_passed_through_by_scene():
+    story_lead = FakeStoryLead(RevisionPlan(run_id="r1"))
+    violations = [GroundingViolation("s1", 0, "grounding_policy_violation", "claim REJECTED")]
+    from llm.budget import BudgetCounter, DEFAULT_TIERS
+
+    plan_revision(make_plan(), [], violations, [], story_lead, BudgetCounter(tier=DEFAULT_TIERS["longform"]))
+    payload = story_lead.calls[0]["payload"]
+    assert payload["grounding_violations"][0]["scene_id"] == "s1"
+
+
+def test_uses_pass_id_a3_and_revision_planner_mode():
+    story_lead = FakeStoryLead(RevisionPlan(run_id="r1"))
+    from llm.budget import BudgetCounter, DEFAULT_TIERS
+
+    plan_revision(make_plan(), [], [], [], story_lead, BudgetCounter(tier=DEFAULT_TIERS["longform"]))
+    call = story_lead.calls[0]
+    assert call["pass_id"] == "A3"
+    assert call["mode"] == "REVISION_PLANNER"
