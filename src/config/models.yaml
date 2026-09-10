@@ -1,0 +1,45 @@
+# Model aliases — never hard-code a provider model id in story logic (plan §2.3).
+# `resolved` is what the backend actually calls; `verified` records whether we
+# have observed a real successful call against this exact id (plan Appendix E #8:
+# pin the exact model, assert the resolved id, never trust a moving alias).
+
+subscription_lane:
+  sonnet:
+    resolved: "claude-sonnet-5"
+    verified: true          # confirmed 2026-09-10 via llm/backends/claude_cli.py.
+                            # IMPORTANT: pass the exact id below, never the shorthand
+                            # "sonnet" — a single `-p --model sonnet` call was observed
+                            # to also log an internal claude-haiku-4-5-20251001 entry
+                            # in the envelope's modelUsage; the backend now identifies
+                            # the real resolved model from top-level usage token counts
+                            # (not dict order), but the CLI must still be CALLED with
+                            # this exact id for the pinning assertion to hold.
+  haiku:
+    resolved: "claude-haiku-4-5-20251001"
+    verified: true          # confirmed 2026-09-10 via llm/backends/claude_cli.py
+
+paid_api_lane:
+  openai_story_strong:
+    resolved: "gpt-4o"
+    verified: false
+  openai_story_mini:
+    resolved: "gpt-4o-mini"
+    verified: true          # confirmed working 2026-09-10: 12 in / 1 out tokens, $0.0000024
+  gemini_review_strong:
+    resolved: "gemini/gemini-1.5-pro"
+    verified: false
+  gemini_review_flash:
+    resolved: "gemini/gemini-1.5-flash"
+    verified: false          # BLOCKED 2026-09-10: 403 API_KEY_SERVICE_BLOCKED — the
+                              # Generative Language API is disabled/restricted for this
+                              # key's GCP project. Not a code issue. Fix: generate a plain
+                              # key at aistudio.google.com/apikey, or enable
+                              # "Generative Language API" for the existing project.
+
+# Escalation pairs (plan §4.1 tiering: cheap by default, escalate on a flagged issue).
+escalation:
+  A3: { default: openai_story_mini, escalate_to: openai_story_strong }
+  A4: { default: openai_story_mini, escalate_to: openai_story_strong }
+  C3: { default: gemini_review_flash, escalate_to: gemini_review_strong }
+  C4b: { default: gemini_review_flash, escalate_to: gemini_review_strong }
+  C5: { default: gemini_review_flash, escalate_to: gemini_review_strong }
