@@ -368,6 +368,35 @@ session to design deliberately, not patched reactively under time pressure.
 
 ---
 
+## ERR-023 — Two full live re-runs, two FAILs: ERR-010 (word-budget under-generation) is still the primary blocker, not ERR-022
+**Date:** 2026-09-10 · **Severity:** open finding, not a code bug (yet) · **Status:** open · **Component:** `planning/story_planner.py` (A2)
+
+Two live e2e runs against the real source (`runs/v05`, `runs/v06`, ~$0.28 + $0.26 = $0.54
+combined) after ERR-014/ERR-021's fixes, both attempting one clean PASS. Both FAILed, and
+both times A2's **first** attempt correctly resolved `archetype: build` (ERR-014's fix is
+solid and reproducible) — but both times A2 generated a drastically under-scoped
+`scene_plan`: `v06` returned only **5 scenes / ~525 words** against the ~1670-word target
+for a 600s video, even with the explicit calibration text already in the prompt
+(`target_duration_seconds / 60 * 167`, "20-30 scenes... NOT 4-6 scenes"). This is
+`ERR-010` recurring, not a new defect — the deterministic word-budget hard check
+(`check_word_budget_matches_target`) caught it correctly both times, exactly as
+designed, and that structural failure is what actually forces the replan — the
+archetype dispute (ERR-022) is a **secondary, compounding** problem that shows up once a
+replan is already underway, not the primary blocker to a clean PASS.
+
+**Why this isn't being patched reactively:** ERR-010's own original conclusion already
+ruled out further prompt tuning as the fix ("LLMs are reliably poor at satisfying an
+aggregate constraint... The correct fix, applied: a deterministic check, never another
+round of prompt tuning") — and that check is doing exactly its job. Reaching a clean
+live PASS reliably would need an actual structural change to A2 (e.g., splitting scene
+expansion into a second, per-beat call so each individual call's aggregate-counting
+burden is much smaller — the same principle behind why a smaller, scoped call succeeds
+where a big aggregate one doesn't), not another retry. That is a real design decision
+with cost/scope implications of its own, left for deliberate discussion rather than
+built unprompted mid-validation.
+
+---
+
 ## Open items (not yet bugs, flagged for future attention)
 
 - **`review_lead` and `cm_agent` share one `agent` name in cost reporting.**
