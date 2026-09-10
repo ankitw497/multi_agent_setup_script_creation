@@ -425,5 +425,15 @@ Documented as plan **Appendix D, ADR D12**. 13 tests.
 ## Cross-cutting (build alongside, not a separate phase)
 
 - [ ] Mutation test suite (§18) — grows with each stage as it lands, not written all at once
-- [ ] `reporting/cost_report.py`, `cost_cli.py` — scaffold once V1A produces its first real run to report on
+- [x] `reporting/cost_report.py` — built during V1A (`CostReport.from_ledger()`, live-reconciled against a real `usage.jsonl`). `cost_cli.py` (a small CLI wrapper over it) — not started.
 - [ ] Repeated-run stability harness (§18, guide §24a) — once V1A is stable enough to run 20×
+- [ ] **End-to-end orchestrator / CLI entry point** (2026-09-11 — a real gap, not yet its own module anywhere). Every stage from S0 through H/HV is built, unit-tested, and individually live-verified, but only ever driven by one-off scratch scripts written per validation run, not a single committed, callable pipeline. Needs one real entry point that wires, in order:
+  `extraction.html_parser.parse_html` → `facts.seeds`/`facts.claim_extract`/`facts.normalize` (S2a-c)
+  → `facts.verify.verify_claims` (C2a, cached per plan §4.2's key)
+  → `planning.source_understanding.understand_source` (A1, + `planning.narrative_digest` above the token threshold)
+  → `orchestration.pipeline.run_story_and_narration_loop` (the bounded A2→B1→review→A3 loop)
+  → `orchestration.html_pipeline.synthesize_video_html` (H + HV static)
+  → `orchestration.policy_gate` for the final PASS/PASS_WARN/FAIL decision
+  → `reporting.emit`/`reporting.emit_html` writing into `orchestration.paths.next_run_dir()`
+  → `orchestration.paths.promote_to_final()` **only** on PASS/PASS_WARN, never on REVISE/FAIL.
+  Should also drive the V1A-S shorts run (`orchestration.shorts_pipeline.run_short` + `reporting.emit_short`) off the same finished long-form run, per plan §20.6's "runs only after the parent's plan is final, keyed to `final_plan_hash`." Until this exists, "running the pipeline" means assembling and wiring these calls by hand each time, which is exactly the failure mode a real entry point removes.
