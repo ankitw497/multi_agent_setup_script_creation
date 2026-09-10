@@ -21,7 +21,14 @@ subscription_lane:
 paid_api_lane:
   openai_story_strong:
     resolved: "gpt-4o"
-    verified: false
+    verified: true          # confirmed 2026-09-10 across several real A2/A3 calls.
+                            # Not a reasoning model (litellm.supports_reasoning("gpt-4o")
+                            # is False, unlike e.g. "o3-mini") -- no reasoning_effort
+                            # to set, and a real truncation found on this call (ERR-021)
+                            # was genuine output-length truncation, fixed by raising
+                            # max_tokens, not a hidden-reasoning-budget issue. Re-check
+                            # supports_reasoning() if this alias is ever repointed at a
+                            # reasoning-capable model.
   openai_story_mini:
     resolved: "gpt-4o-mini"
     verified: true          # confirmed working 2026-09-10: 12 in / 1 out tokens, $0.0000024

@@ -211,15 +211,17 @@ scaling, masking, and multi-head attention."* — correctly matching the user's 
 pipeline's classification, and every rejected alternative given a real, specific reason. Cost:
 **$0.0505** for the single call.
 
-**In progress (this session):** building every remaining V1A stage in one continuous push,
-each with real tests and live validation against the actual `video-01-attention-coherent-story.html`
-source, not synthetic fixtures alone. One real bug found and fixed already: the subscription
-backend's 120s default timeout was too tight for a full 11-unit batched call — raised to 300s
-with a per-call override, since larger real payloads over a complex schema legitimately take
-longer (this is subscription quota, not billed time, so a generous default costs wall-clock,
-not money).
-
-
+**V1A is now feature-complete** (2026-09-10): every remaining stage from the checklist below
+was built in one continuous push — B2 targeted rewrite, S1 narrative digest, the remaining V*
+hard checks (promise chain, CTA placement, numeric fidelity), D* diagnostics (retention, CTA
+position, a provisional voice signal), C5 style critic, and R* final emission — each with real
+unit tests and, where a new LLM call path was introduced, live validation against the actual
+`video-01-attention-coherent-story.html` source, not synthetic fixtures alone. Full details,
+including two more real bugs found live (a global 2048-token cap truncating A2's output, and an
+open architectural finding about C1 disagreements), are in `ERROR_LOG.md` (ERR-016, ERR-021,
+ERR-022). Not yet built: visual/learning diagnostics (need V1C screenshots / more corpus work
+respectively), B3 precision editor and B4 humanize (no voice corpus to guard against drift yet),
+C4/C4c cold-viewer cascades, and H/HV (HTML synthesis and render verification — V1B/V1C scope).
 
 Pipeline order from §8. Nothing here is built yet; each line becomes its own
 PR-sized unit with tests before the next.
@@ -229,20 +231,22 @@ PR-sized unit with tests before the next.
 - [x] **S2b** claim extraction (Haiku, batched over all source units) → `facts/claim_extract.py` — **done, validated**
 - [x] **S2c** normalize/dedupe/link numbers→claims → `facts/normalize.py` — **done, validated**
 - [x] **C2a** source verification (Python + local evidence broker + Gemini), cached by the §4.2/§6.5 key → `facts/verify.py`, `facts/evidence.py` — **done, live-validated (adversarial test passed)**
-- [ ] **S1** narrative digest (Haiku; only above ~12k source tokens) — not yet built; every real source tested so far (video-01, ~3300 words) is well under the threshold, so this hasn't been exercised yet
-- [x] **A1** source understanding (GPT) → `planning/source_understanding.py` — built, unit-tested; live validation running against the real full source
-- [x] **A2** archetype + story plan (title, hook, CTA, question chain, beats, ending, scene plan) → `planning/story_planner.py`, `planning/archetypes.py`, `config/archetypes.yaml` (the six archetype specs, previously only prose in the plan) — built, unit-tested; live validation running against the real full source
-- [x] **B1** narration first draft (Sonnet) → `narration/generator.py` — built, unit-tested (context isolation confirmed: a scene only sees claims from its own beat's source units, not the whole registry). Live validation queued behind A2's real output.
+- [x] **S1** narrative digest (Haiku; only above ~12k source tokens) → `planning/narrative_digest.py` — built, unit-tested, live-validated (free, subscription lane) against the real source with the gate forced open; every real source tested so far is still under the threshold in normal operation, so the gate itself has never fired live, only the underlying call
+- [x] **A1** source understanding (GPT) → `planning/source_understanding.py` — built, unit-tested, live-validated; now also accepts an optional `narrative_digest` from S1
+- [x] **A2** archetype + story plan (title, hook, CTA, question chain, beats, ending, scene plan) → `planning/story_planner.py`, `planning/archetypes.py`, `config/archetypes.yaml` (the six archetype specs, previously only prose in the plan) — built, unit-tested, live-validated against the real full source (correctly resolves `build`, matching the user's independent pipeline)
+- [x] **B1** narration first draft (Sonnet) → `narration/generator.py` — built, unit-tested (context isolation confirmed: a scene only sees claims from its own beat's source units, not the whole registry), live-validated end to end
+- [x] **B2** targeted rewrite (Narration Lead / Sonnet) → `editing/targeted_rewrite.py` — built, unit-tested, live-validated (free, subscription lane); wired into the orchestrator's `TARGETED_REWRITE` branch (previously a no-op, see ERROR_LOG ERR-016's sibling finding)
 - [x] **CM** claim mapper — independent of the writer's `sentence_type` → `review/claim_mapper.py` — built, unit-tested
-- [x] **C1** story critic → `review/story_critic.py` — built, unit-tested (includes a real regression test replaying the actual foundation-vs-build finding below)
-- [ ] **C2b** grounding + CM-completeness check, **C5** style critic (conditional on voice bands) → `review/`
-- [x] **V\* (structure)** — `verification/hard/structure.py`: word-budget-vs-target, beat/scene/CTA/mini-payoff referential integrity, core-role coverage, source-unit coverage — **validated against real production data, catches both real saved plans below**
-- [ ] **V\* (numeric, units, schema, traceability)** — remaining hard checks → `verification/hard/`
-- [ ] **D\*** diagnostics — story, retention, learning, CTA, voice, visual, banded GREEN/AMBER/RED → `verification/diagnostics/`
+- [x] **C1** story critic → `review/story_critic.py` — built, unit-tested (includes a real regression test replaying the actual foundation-vs-build finding below); now also receives real `source_units`, not just the plan's self-description
+- [x] **C2b** grounding + CM-completeness check → `review/grounding_verifier.py` — built, unit-tested, live-validated
+- [x] **C5** style critic (conditional on voice bands AMBER/RED) → `review/style_critic.py` — built, unit-tested, live-validated ($0.0014, correctly caught hedging-padding tells); gated on the provisional voice diagnostic below since no fitted corpus exists yet
+- [x] **V\* (structure)** — `verification/hard/structure.py`: word-budget-vs-target, beat/scene/CTA/mini-payoff referential integrity, core-role coverage, source-unit coverage, **promise-chain gate** (title↔hook↔ending, word-overlap heuristic), **CTA placement** (not in the hook, not before the first payoff) — validated against real production data, catches both real saved plans below and the real saved plans stay clean against the two new checks
+- [x] **V\* (numeric fidelity)** — `verification/hard/grounding.py::check_numeric_fidelity`: a number that drifted between the verified claim registry and the final narration (e.g. "175 billion" cited but narrated as "175 million") — the plan §9 traceability primitive run in reverse to catch drift instead of confirm equivalence; unit-tested with a real-magnitude-mismatch case
+- [x] **D\*** diagnostics (retention + CTA position, fully deterministic; voice, provisional pending a fitted corpus — V1D) → `verification/diagnostics/{retention,cta,voice}.py` — built, unit-tested, live-validated as part of the full e2e run below. Visual/learning diagnostics remain unbuilt (V1C/V1D dependencies: screenshots and a real corpus, respectively)
 - [x] Routing table from §15 (targeted correction / re-plan / skip; B3/B4/C6 not yet wired — no revision candidates for them yet) → `editing/revision_planner.py` (A3), `orchestration/routing.py` — built, unit-tested
 - [x] Policy gate — deterministic; A4 hook present (`apply_editorial_downgrade`, cannot upgrade or clear a failure) → `orchestration/policy_gate.py` — built, unit-tested
-- [ ] **R\*** emit `narration.json`, `script.md`, `cost_report.json`, `review_summary.md`
-- [x] `orchestration/pipeline.py` — the bounded revision loop (A2→B1→[CM,C1,C2b,structural]→aggregate→policy gate→A3→route→replan-or-rewrite, bounded MAX_STORY_REPLANS=1/MAX_MAJOR_REVISIONS=2) — built, unit-tested, **and run live end-to-end against the real saved plan** (see below). The `@stage` caching decorator is deferred; the loop itself is proven first.
+- [x] **R\*** emit `narration.json`, `plan.json`, `script.md`, `cost_report.json`, `review_summary.md`, `quality_report.json` → `reporting/emit.py`, `reporting/cost_report.py`, `reporting/script_md.py` — built, unit-tested, **live-validated against the real source's full run** (see below): all six files written correctly, `cost_report.json`'s `billed_usd` reconciles exactly to the run's own `usage.jsonl`
+- [x] `orchestration/pipeline.py` — the bounded revision loop (A2→B1→[CM,C1,C2b,C5,structural,diagnostics]→aggregate→policy gate→A3→route→replan-or-rewrite, bounded MAX_STORY_REPLANS=1/MAX_MAJOR_REVISIONS=2) — built, unit-tested, **and run live end-to-end against the real saved plan** (see below). The `@stage` caching decorator is deferred; the loop itself is proven first.
 
 **Done when (plan):** *"a rough HTML becomes one coherent, verified, human-sounding script; every mutation test caught"* (mutation suite: §18).
 

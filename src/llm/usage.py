@@ -132,7 +132,7 @@ class AgentCostSummary(BaseModel):
 class CostReport(BaseModel):
     """The per-script cost breakdown (plan §4.1) — what review_summary.md's cost
     table and cost_report.json are built from. Built from a UsageLedger by
-    reporting/cost_report.py (not yet implemented); this is the shape it fills in."""
+    reporting/cost_report.py::build_cost_report()."""
 
     run_id: str
     billed_usd: float = 0.0

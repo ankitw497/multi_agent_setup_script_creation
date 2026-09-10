@@ -308,14 +308,85 @@ matter.
 
 ---
 
+## ERR-021 — A2's output truncated mid-string by a global 2048-token cap
+**Date:** 2026-09-10 · **Severity:** critical · **Status:** fixed · **Component:** `llm/backends/litellm_backend.py`, `planning/story_planner.py`
+
+The first live re-validation of the ERR-013/ERR-014 fix crashed: A2's response failed
+JSON parsing (`Unterminated string starting at: line 1 column 9298`) — a genuine
+truncation, not a malformed-schema issue — and even the Haiku repair path couldn't
+recover it (a response cut off mid-string isn't repairable; the repair call itself then
+also failed outright: `claude -p failed (exit 1)`). Root cause: `LiteLLMBackend`'s
+`max_tokens` defaulted to 2048 for **every** paid-lane call, but a full `StoryPlan` (a
+title, hook, CTA, beats, ending, and 20-30 `ScenePlan` entries — the largest structured
+output anywhere in the system, and larger than ever now that the word-budget prompt fix
+correctly asks for 20-30 scenes instead of 4-6) routinely needs far more than that.
+
+**Fix:** `max_tokens` threaded through as an optional per-call override
+(`agents/base.py` → `llm/client.py::call_structured_paid` → `llm/backends/litellm_backend.py::call`),
+mirroring the existing `timeout_s` override pattern (ERR-007) exactly. The shared
+default was also raised 2048 → 4096 (safe for every other paid call, which output far
+less), and `plan_story()` (A2) explicitly requests `max_tokens=8000` given it's
+structurally the largest output by a wide margin.
+**Live-verified:** the same real-source re-run that first hit this crash completed
+cleanly after the fix (see ERR-022's run for the full trace) — cost $0.2813/12 calls.
+**Tests:** `tests/llm/test_litellm_backend.py::test_default_max_tokens_is_4096_not_2048`,
+`::test_max_tokens_override_is_forwarded_when_given`,
+`tests/planning/test_story_planner.py::test_requests_a_generous_max_tokens_override`.
+
+---
+
+## ERR-022 — C1 disputed a correct archetype, and the replan loop obediently made it worse
+**Date:** 2026-09-10 · **Severity:** open finding, not a code bug · **Status:** open · **Component:** `review/story_critic.py`, the disagreement-resolution design itself
+
+The same live re-run (after ERR-021's fix): A2's **first** attempt correctly resolved
+`archetype: build` — matching the user's own independent render pipeline's
+classification, exactly reproducing the earlier $0.0505 single-call validation (ERR-014).
+But C1 then raised a `category: archetype, severity: critical` issue disputing `build`
+anyway. Per the disagreement-resolution design (see the "how is the disagreement
+solved" conversation, 2026-09-10): a critical C1 issue is *unconditionally* promoted to
+a hard failure (`review/aggregator.py`) regardless of how well-supported A2's original
+choice was, forcing a REVISE → A3 → REPLAN. A2's replan — now correctly given C1's
+critique via `ReplanFeedback` (ERR-016's fix, working exactly as designed) — dutifully
+switched to `archetype: derivation`, which was structurally *worse*: it introduced a
+`cta_references_unknown_beat` failure (the new plan's CTA pointed at a beat id that
+didn't exist), failed 3 of `derivation`'s own core roles, and still didn't fix the
+original word-budget shortfall. `MAX_STORY_REPLANS=1` then correctly exhausted and the
+run `FAIL`ed cleanly — the bounded loop did exactly its job (no infinite flailing, no
+silently-shipped bad script) — but the run still failed on a source A2 had actually
+gotten right the first time.
+
+**Why this is left open, not "fixed":** the current design is asymmetric by
+construction (see the disagreement-resolution explanation above) — a critical
+disagreement from C1 always wins over A2's own confidence, with no mechanism to weigh
+*how well-supported* either side's evidence actually is, and no independent tie-breaker.
+That is a real architectural question (should A2 be allowed to push back with its own
+`source_evidence`? should a critical archetype issue require a second independent
+opinion before forcing a replan? should A3 be able to judge C1's critique against the
+plan's own cited evidence before acting on it?), not a bug fixable by changing a
+threshold or a prompt line. Recorded here as a genuine open finding for a future
+session to design deliberately, not patched reactively under time pressure.
+
+---
+
 ## Open items (not yet bugs, flagged for future attention)
 
-- **Targeted rewrite (B2) is not yet implemented.** When A3 chooses `TARGETED_REWRITE`
-  over a full replan, the orchestrator currently just logs the intent and re-verifies
-  the same narration unchanged (`orchestration/pipeline.py`) — this is an explicit V1A
-  scope note, not a silent gap, but it means the revision-budget-exhaustion path for
-  this branch is only exercised structurally, never by an actual rewrite.
+- **`review_lead` and `cm_agent` share one `agent` name in cost reporting.**
+  `make_review_lead()` always sets `Agent.name="review_lead"` regardless of tier, so
+  `cost_report.json`'s `by_agent` breakdown blends strong-tier C1/C2b spend together
+  with flash-tier CM/C5 spend under one bucket (noticed in ERR-022's real
+  `cost_report.json`: one `"review_lead"` row covering 6 calls across both tiers). Each
+  `UsageRecord` still carries the exact `pass_id` (so nothing is actually lost), but
+  `CostReport` has no `by_pass_id` breakdown yet to surface it — `by_stage` exists in
+  the model but is never populated either.
 - **Production notes (ERR-013) is markup-specific.** The fix looks for
   `.page-footer .pipeline-step` — the exact shape found on one real source. A
   differently-marked-up "author's own plan" section on a future source would need its
   own extraction rule; nothing generalizes this automatically yet.
+- **C5/voice diagnostics are provisional** (see `verification/diagnostics/voice.py`) —
+  real bands need a fitted corpus, deferred to V1D. C5 is gated on the provisional
+  heuristic in the meantime, which is deliberately capped at AMBER (never RED) so an
+  unfitted signal can't force a real revision cycle on its own.
+- **`delete_or_compress` has no delete semantics in V1A** (see `editing/targeted_rewrite.py`'s
+  own docstring) — it's always executed as a scoped compress-rewrite, never an actual
+  removal from `plan.scene_plan`, to avoid leaving the plan's own word-budget target
+  inconsistent with what was actually narrated.

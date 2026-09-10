@@ -37,7 +37,14 @@ class LiteLLMBackend:
 
     lane = "paid_api"
 
-    def __init__(self, max_tokens: int = 2048):
+    def __init__(self, max_tokens: int = 4096):
+        # 4096 default (raised from 2048, 2026-09-10): a real A2 call on a
+        # source_units-enriched payload returned a truncated ("Unterminated
+        # string") response at 2048 -- a full multi-scene StoryPlan (20-30
+        # ScenePlan entries plus beats/hook/cta/ending) is structurally the
+        # largest output in the system by a wide margin, and even the Haiku
+        # repair path can't recover a response that was cut off mid-string.
+        # A2 itself additionally overrides this per-call (see story_planner.py).
         self.max_tokens = max_tokens
 
     def call(
@@ -46,6 +53,7 @@ class LiteLLMBackend:
         system_prompt: str,
         user_payload: str,
         reasoning_effort: str | None = None,
+        max_tokens: int | None = None,
     ) -> CallResult:
         start = time.monotonic()
         extra_kwargs = {}
@@ -58,7 +66,7 @@ class LiteLLMBackend:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_payload},
             ],
-            max_tokens=self.max_tokens,
+            max_tokens=max_tokens if max_tokens is not None else self.max_tokens,
             **extra_kwargs,
         )
         latency_ms = int((time.monotonic() - start) * 1000)

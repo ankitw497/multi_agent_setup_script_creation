@@ -44,6 +44,7 @@ class Agent:
         estimated_usd: float = 0.0,
         reasoning_effort: str | None = None,
         timeout_s: int | None = None,
+        max_tokens: int | None = None,
     ) -> T:
         reasoning_effort = reasoning_effort if reasoning_effort is not None else self.default_reasoning_effort
         system_prompt = f"{self.base_system_prompt}\n\n{task_prompt}\n\n{schema_prompt(schema)}"
@@ -65,5 +66,6 @@ class Agent:
                 system_prompt=system_prompt, user_payload=user_payload,
                 schema=schema, budget=budget, estimated_usd=estimated_usd,
                 revision_cycle=revision_cycle, reasoning_effort=reasoning_effort,
+                max_tokens=max_tokens,
             )
         return result.value  # type: ignore[return-value]

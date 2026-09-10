@@ -30,19 +30,34 @@ def make_plan(scene_words=70, n_scenes=24, source_units=None, archetype="build")
     source_units = source_units if source_units is not None else ["u1"]
     from planning.models import ScenePlan
 
+    # Scenes distributed across all three beats (not all dumped on B01) so
+    # the retention/CTA diagnostics (plan §10.2, §10.3) see a realistic
+    # timing shape too, not just a plan that happens to pass the word-count
+    # hard check. B01 (hook, ~small) + B02 (early mini-payoff, hosts the
+    # CTA at a real ~20-40% mark) + B03 (the bulk of the remaining content).
+    b1_n = min(3, max(1, n_scenes // 8))
+    b2_n = min(4, max(1, n_scenes // 6))
+    b3_n = max(0, n_scenes - b1_n - b2_n)
+    scene_plan = (
+        [ScenePlan(scene_id=f"s{i}", beat_id="B01", word_budget=scene_words) for i in range(b1_n)]
+        + [ScenePlan(scene_id=f"s{i}", beat_id="B02", word_budget=scene_words) for i in range(b1_n, b1_n + b2_n)]
+        + [ScenePlan(scene_id=f"s{i}", beat_id="B03", word_budget=scene_words) for i in range(b1_n + b2_n, n_scenes)]
+    )
+
     return StoryPlan(
         archetype=archetype, selection_reason="x", story_promise="x", central_question="x",
-        title=TitleContract(chosen="t", promise="p"),
-        hook=HookContract(viewer_problem="x", tension="y", promise="z"),
-        cta=CTAContract(primary_after_beat="B01"),
-        ending=EndingContract(resolve_hook="x", compressed_mental_model="y", capstone_payoff="z", viewer_can_now="do x"),
+        title=TitleContract(chosen="t", promise="understand how attention retrieves context"),
+        hook=HookContract(viewer_problem="x", tension="y", promise="you will understand how attention retrieves context"),
+        cta=CTAContract(primary_after_beat="B02"),  # not the first beat -- see check_cta_placement
+        ending=EndingContract(resolve_hook="now you understand how attention retrieves context end to end",
+                               compressed_mental_model="y", capstone_payoff="z", viewer_can_now="do x"),
         beats=[StoryBeat(beat_id="B01", purpose="x", source_unit_ids=source_units,
-                          archetype_stage="desired_capability"),
+                          archetype_stage="desired_capability", forward_driver="x", new_information=True),
                StoryBeat(beat_id="B02", purpose="x", source_unit_ids=source_units,
-                          archetype_stage="problem_to_solution_pair"),
+                          archetype_stage="problem_to_solution_pair", forward_driver="y", payoff=True),
                StoryBeat(beat_id="B03", purpose="x", source_unit_ids=source_units,
-                          archetype_stage="assembled_system")],
-        scene_plan=[ScenePlan(scene_id=f"s{i}", beat_id="B01", word_budget=scene_words) for i in range(n_scenes)],
+                          archetype_stage="assembled_system", forward_driver="z", new_information=True)],
+        scene_plan=scene_plan,
     )
 
 
@@ -247,7 +262,10 @@ def test_a_critical_non_archetype_issue_routes_to_targeted_rewrite_not_replan():
             "RevisionPlan": [RevisionPlan(run_id="r", story_replan_required=False,
                                             rewrite_beats=[RewriteBeat(beat_id="B01", reason="x", intent="y")])],
         },
-        narration_responses=[make_empty_narration_response()],
+        # Two narration_lead calls now happen: B1's initial draft, then B2's
+        # targeted rewrite (real gap fixed 2026-09-10 -- TARGETED_REWRITE used
+        # to be a no-op and never called narration_lead a second time at all).
+        narration_responses=[make_empty_narration_response(), GeneratedNarration(scenes=[])],
         review_responses={
             "cm": [ClaimMapperOutput(sentences=[]), ClaimMapperOutput(sentences=[])],
             "c1": [StoryCritique(issues=[critical_issue]), StoryCritique(issues=[])],
@@ -265,3 +283,40 @@ def test_a_critical_non_archetype_issue_routes_to_targeted_rewrite_not_replan():
     assert result.major_revisions_used == 1
     assert result.story_replans_used == 0  # replan was never triggered
     assert any("targeted rewrite" in line for line in result.log)
+
+
+def test_targeted_rewrite_actually_calls_b2_with_the_named_beat_not_a_no_op():
+    """Real gap found 2026-09-10: TARGETED_REWRITE used to just log the
+    intent and re-verify the same narration -- narration_lead was never
+    called a second time at all. This proves the second call actually
+    happens and carries the named beat's scope."""
+    from editing.models import RewriteBeat, RevisionPlan
+
+    plan = make_plan()
+    critical_issue = {
+        "issue_id": "I1", "severity": "critical", "category": "clarity", "layer": "TECHNICAL",
+        "problem": "x", "why_it_matters": "y", "recommended_intent": "z", "repair_owner": "narration_lead",
+    }
+    agents = make_agents(
+        story_lead_responses={
+            "RevisionPlan": [RevisionPlan(run_id="r", story_replan_required=False,
+                                            rewrite_beats=[RewriteBeat(beat_id="B01", reason="x", intent="tighten it")])],
+        },
+        narration_responses=[make_empty_narration_response(), GeneratedNarration(scenes=[])],
+        review_responses={
+            "cm": [ClaimMapperOutput(sentences=[]), ClaimMapperOutput(sentences=[])],
+            "c1": [StoryCritique(issues=[critical_issue]), StoryCritique(issues=[])],
+            "c2b": [GroundingReview(issues=[]), GroundingReview(issues=[])],
+        },
+    )
+    from planning.models import SourceBrief
+
+    run_story_and_narration_loop(
+        source_brief=SourceBrief(topic="t", core_question="q", viewer_problem="p", central_insight="i"),
+        claims=[], ledger=AssumptionLedger(), all_source_unit_ids=["u1"],
+        target_duration_seconds=600.0, agents=agents, budget=make_budget(), initial_plan=plan,
+    )
+
+    b2_call = next(c for c in agents.narration_lead.calls if c["pass_id"] == "B2")
+    assert b2_call["mode"] == "TARGETED_REWRITE"
+    assert all("tighten it" == s["required_intent"] for s in b2_call["payload"]["scenes"])

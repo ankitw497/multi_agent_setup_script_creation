@@ -3,12 +3,17 @@
 """
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from orchestration.pipeline import PipelineResult
+
+if TYPE_CHECKING:
+    from llm.usage import CostReport
 
 _SEVERITY_HEADINGS = (("critical", "Critical"), ("major", "Major"), ("minor", "Minor"))
 
 
-def render_review_summary(result: PipelineResult) -> str:
+def render_review_summary(result: PipelineResult, cost_report: "CostReport | None" = None) -> str:
     lines = [
         f"# Review Summary",
         "",
@@ -35,6 +40,26 @@ def render_review_summary(result: PipelineResult) -> str:
                 lines.append(f"{idx}. **[{issue.category}/{issue.layer}]** {issue.problem}")
                 lines.append(f"   - why it matters: {issue.why_it_matters}")
                 lines.append(f"   - recommended: {issue.recommended_intent}")
+        lines.append("")
+
+    lines.append("## Diagnostics")
+    if not result.review_bundle.diagnostics:
+        lines.append("None.")
+    else:
+        for d in result.review_bundle.diagnostics:
+            lines.append(f"- **[{d.band}] {d.dimension}**: {d.evidence}"
+                         + (f" (target: {d.target})" if d.target else ""))
+    lines.append("")
+
+    if cost_report is not None:
+        lines.append("## Cost")
+        lines.append(f"**Total billed:** ${cost_report.billed_usd:.4f}")
+        if cost_report.by_agent:
+            lines.append("")
+            lines.append("| Agent | Calls | Billed USD |")
+            lines.append("|---|---|---|")
+            for agent, summary in cost_report.by_agent.items():
+                lines.append(f"| {agent} | {summary.calls} | ${summary.billed_microusd / 1_000_000:.4f} |")
         lines.append("")
 
     lines.append("## Run log")

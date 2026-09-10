@@ -192,3 +192,18 @@ def test_prompt_instructs_addressing_replan_feedback():
 
     assert "replan_feedback" in TASK_PROMPT
     assert "previous_archetype" in TASK_PROMPT
+
+
+def test_requests_a_generous_max_tokens_override():
+    """Real bug found 2026-09-10: a full multi-scene StoryPlan was truncated
+    mid-string at the shared 2048-token default. A2 must always ask for
+    more room, not rely on the shared default alone."""
+    story_lead = FakeStoryLead(make_plan())
+    from planning.models import SourceBrief
+
+    plan_story(
+        SourceBrief(topic="t", core_question="q", viewer_problem="p", central_insight="i"),
+        [], AssumptionLedger(), story_lead, BudgetCounter(tier=DEFAULT_TIERS["longform"]),
+        target_duration_seconds=600, source_units=[],
+    )
+    assert story_lead.calls[0]["max_tokens"] >= 8000

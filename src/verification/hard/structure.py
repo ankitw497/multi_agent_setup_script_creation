@@ -10,6 +10,7 @@ plan totalling 460 words against a 1,670-word target).
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from planning.archetypes import get_archetype_spec
@@ -17,6 +18,36 @@ from planning.models import StoryPlan
 
 PLANNING_WPM = 167
 WORD_BUDGET_TOLERANCE = 0.30  # generous -- LLMs are unreliable at exact aggregate sums; see module docstring
+
+# plan §9's promise-chain gate is genuinely about semantic relatedness, which
+# a hard (mechanical) gate can only approximate -- a word-overlap ratio, not
+# real judgement. Set low deliberately: this exists to catch a promise chain
+# that is truly disconnected (a title about one thing, a hook about another),
+# not to penalize a hook/ending that pays off the same promise in different
+# words. False negatives here are fine (C1 can still judge this); false
+# positives on legitimate paraphrase would be worse than not having the gate.
+PROMISE_OVERLAP_THRESHOLD = 0.15
+
+_STOPWORDS = {
+    "a", "an", "the", "to", "of", "and", "or", "in", "on", "for", "with", "this", "that",
+    "you", "your", "is", "are", "it", "its", "be", "can", "will", "how", "what", "why",
+    "not", "but", "so", "as", "at", "by", "from", "into", "than", "then", "their",
+}
+
+
+def _content_words(text: str) -> set[str]:
+    words = re.findall(r"[a-z0-9']+", text.lower())
+    return {w for w in words if w not in _STOPWORDS and len(w) > 2}
+
+
+def _promise_overlap(a: str, b: str) -> float:
+    """Containment-style overlap (intersection / shorter phrase's word
+    count) -- matches the model's own docstring language ("title.promise
+    must be CONTAINED IN hook.promise"), not symmetric similarity."""
+    wa, wb = _content_words(a), _content_words(b)
+    if not wa or not wb:
+        return 0.0
+    return len(wa & wb) / min(len(wa), len(wb))
 
 
 @dataclass
@@ -98,6 +129,54 @@ def check_core_roles_present(plan: StoryPlan) -> list[StructuralIssue]:
     return []
 
 
+def check_promise_chain(plan: StoryPlan) -> list[StructuralIssue]:
+    """plan §9 Structural story gate: "title promise unrelated to the hook
+    or the hook promise unpaid by the ending". See PROMISE_OVERLAP_THRESHOLD
+    for why this is a deliberately generous word-overlap proxy, not real
+    semantic judgement -- C1 remains the actual judge of a subtle mismatch."""
+    issues = []
+    if _promise_overlap(plan.title.promise, plan.hook.promise) < PROMISE_OVERLAP_THRESHOLD:
+        issues.append(StructuralIssue(
+            "title_promise_unrelated_to_hook",
+            f"title.promise={plan.title.promise!r} shares almost no content with hook.promise={plan.hook.promise!r}",
+        ))
+    if _promise_overlap(plan.hook.promise, plan.ending.resolve_hook) < PROMISE_OVERLAP_THRESHOLD:
+        issues.append(StructuralIssue(
+            "hook_promise_unpaid_by_ending",
+            f"hook.promise={plan.hook.promise!r} is not reflected in ending.resolve_hook={plan.ending.resolve_hook!r}",
+        ))
+    return issues
+
+
+def check_cta_placement(plan: StoryPlan) -> list[StructuralIssue]:
+    """plan §9 CTA hard gate (partial -- `max_ctas<=2` is already enforced
+    at the model level by CTAContract's own Field bound, so it can never
+    even reach this check): the CTA must not sit in the hook (the very
+    first beat) and must come no earlier than the first beat that actually
+    earns a payoff."""
+    if not plan.beats:
+        return []
+    beat_ids = [b.beat_id for b in plan.beats]
+    if plan.cta.primary_after_beat not in beat_ids:
+        return []  # already reported by check_referential_integrity
+    cta_index = beat_ids.index(plan.cta.primary_after_beat)
+
+    issues = []
+    if cta_index == 0:
+        issues.append(StructuralIssue(
+            "cta_in_hook",
+            f"cta.primary_after_beat={plan.cta.primary_after_beat!r} is the first beat -- no payoff has been earned yet",
+        ))
+    first_payoff_index = next((i for i, b in enumerate(plan.beats) if b.payoff), None)
+    if first_payoff_index is not None and cta_index < first_payoff_index:
+        issues.append(StructuralIssue(
+            "cta_before_first_payoff",
+            f"cta.primary_after_beat={plan.cta.primary_after_beat!r} (beat {cta_index}) comes before "
+            f"the first payoff beat ({plan.beats[first_payoff_index].beat_id}, beat {first_payoff_index})",
+        ))
+    return issues
+
+
 def check_structure(
     plan: StoryPlan, target_duration_seconds: float, all_source_unit_ids: list[str],
 ) -> list[StructuralIssue]:
@@ -108,4 +187,6 @@ def check_structure(
         + check_source_coverage(plan, all_source_unit_ids)
         + check_referential_integrity(plan)
         + check_core_roles_present(plan)
+        + check_promise_chain(plan)
+        + check_cta_placement(plan)
     )

@@ -119,6 +119,43 @@ def test_reasoning_effort_is_omitted_by_default(monkeypatch):
     assert "reasoning_effort" not in captured
 
 
+def test_default_max_tokens_is_4096_not_2048(monkeypatch):
+    """Real bug found 2026-09-10: a full multi-scene StoryPlan (A2) was
+    truncated mid-string at the old 2048-token default -- even the Haiku
+    repair path can't recover a response cut off mid-JSON-string."""
+    fake_response = FakeResponse("OK", "gpt-4o", 6, 1)
+    captured = {}
+
+    def fake_completion(**kwargs):
+        captured.update(kwargs)
+        return fake_response
+
+    monkeypatch.setattr("litellm.completion", fake_completion)
+    monkeypatch.setattr("litellm.completion_cost", lambda completion_response: 0.0)
+
+    backend = LiteLLMBackend()
+    backend.call("gpt-4o", "sys", "user")
+
+    assert captured["max_tokens"] == 4096
+
+
+def test_max_tokens_override_is_forwarded_when_given(monkeypatch):
+    fake_response = FakeResponse("OK", "gpt-4o", 6, 1)
+    captured = {}
+
+    def fake_completion(**kwargs):
+        captured.update(kwargs)
+        return fake_response
+
+    monkeypatch.setattr("litellm.completion", fake_completion)
+    monkeypatch.setattr("litellm.completion_cost", lambda completion_response: 0.0)
+
+    backend = LiteLLMBackend()
+    backend.call("gpt-4o", "sys", "user", max_tokens=8000)
+
+    assert captured["max_tokens"] == 8000
+
+
 def test_call_result_reports_reasoning_tokens_separately_from_output_tokens(monkeypatch):
     """Regression test for the real finding (2026-09-10): a cheap-tier call with no
     reasoning_effort override can spend nearly its whole output budget on hidden

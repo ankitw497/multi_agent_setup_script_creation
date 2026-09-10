@@ -109,15 +109,19 @@ class LLMClient:
         estimated_usd: float,
         revision_cycle: int = 0,
         reasoning_effort: str | None = None,
+        max_tokens: int | None = None,
     ) -> StructuredCallResult:
         """gpt | gemini — hard-gated by a local BudgetCounter (plan §3.2).
 
         reasoning_effort should be sourced from config/models.yaml per alias
         (e.g. "none" for the cheap cascade tier — see litellm_backend.py for why).
+        max_tokens overrides the backend's default for passes with a
+        structurally large output (A2's full StoryPlan) — see
+        litellm_backend.py's default-bump comment for the real failure this fixes.
         """
         budget.preflight_check(estimated_usd)
 
-        result = self.paid_backend.call(model, system_prompt, user_payload, reasoning_effort)
+        result = self.paid_backend.call(model, system_prompt, user_payload, reasoning_effort, max_tokens=max_tokens)
         budget.record_spend(result.billed_microusd)  # raises BudgetExceeded past hard_cap
 
         value = self._validate(result.content, schema)

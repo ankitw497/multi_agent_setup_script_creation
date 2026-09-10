@@ -61,3 +61,29 @@ def test_uses_pass_id_a1_and_source_analyst_mode():
     assert call["pass_id"] == "A1"
     assert call["mode"] == "SOURCE_ANALYST"
     assert call["schema"] is SourceBrief
+
+
+def test_narrative_digest_defaults_to_none():
+    story_lead = FakeStoryLead(make_brief())
+    from llm.budget import BudgetCounter, DEFAULT_TIERS
+    understand_source([], [], AssumptionLedger(), story_lead, BudgetCounter(tier=DEFAULT_TIERS["longform"]))
+    assert story_lead.calls[0]["payload"]["narrative_digest"] is None
+
+
+def test_narrative_digest_is_passed_through_when_given():
+    """S1 (plan §6.3) is a comprehension aid for long sources only -- when
+    present, A1 must actually see it alongside the full units/claims, never
+    instead of them."""
+    from planning.narrative_digest import NarrativeDigest
+
+    story_lead = FakeStoryLead(make_brief())
+    digest = NarrativeDigest(summary="covers X then Y then Z", section_order=["u2", "u1", "u3"])
+    from llm.budget import BudgetCounter, DEFAULT_TIERS
+
+    understand_source(
+        [], [], AssumptionLedger(), story_lead, BudgetCounter(tier=DEFAULT_TIERS["longform"]),
+        narrative_digest=digest,
+    )
+    payload_digest = story_lead.calls[0]["payload"]["narrative_digest"]
+    assert payload_digest["summary"] == "covers X then Y then Z"
+    assert payload_digest["section_order"] == ["u2", "u1", "u3"]

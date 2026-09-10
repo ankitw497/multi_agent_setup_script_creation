@@ -1,11 +1,11 @@
 """Tests for verification/hard/grounding.py -- the §5.1 policy, mechanically enforced."""
 from facts.models import Claim
 from narration.models import SceneNarration, SentenceNarration
-from verification.hard.grounding import check_grounding_policy
+from verification.hard.grounding import check_grounding_policy, check_numeric_fidelity
 
 
-def make_claim(claim_id, status, importance="SUPPORTING") -> Claim:
-    return Claim(claim_id=claim_id, source_unit="u1", claim="x", type="mechanism",
+def make_claim(claim_id, status, importance="SUPPORTING", claim="x") -> Claim:
+    return Claim(claim_id=claim_id, source_unit="u1", claim=claim, type="mechanism",
                  verification_status=status, importance=importance)
 
 
@@ -101,3 +101,55 @@ def test_a_clean_multi_scene_narration_has_no_violations():
         scene("s2", [make_sentence(grounding_refs=["C002"])]),
     ]
     assert check_grounding_policy(narration, claims) == []
+
+
+# ---- numeric fidelity -------------------------------------------------------
+
+def test_matching_number_is_clean():
+    claims = [make_claim("C001", "VERIFIED", claim="the model has 175 billion parameters")]
+    narration = [scene("s1", [make_sentence("it has 175B parameters", grounding_refs=["C001"])])]
+    assert check_numeric_fidelity(narration, claims) == []
+
+
+def test_number_written_differently_but_equal_is_clean():
+    """The exact plan §9 traceability example, run in reverse: "175B" and
+    "175 billion" must compare EQUAL, not be flagged as drift."""
+    claims = [make_claim("C001", "VERIFIED", claim="175,000,000,000 parameters")]
+    narration = [scene("s1", [make_sentence("175 billion parameters", grounding_refs=["C001"])])]
+    assert check_numeric_fidelity(narration, claims) == []
+
+
+def test_small_rounding_is_tolerated():
+    """Narration is allowed to round a precise figure for speech."""
+    claims = [make_claim("C001", "VERIFIED", claim="40.4M saved tensors")]
+    narration = [scene("s1", [make_sentence("roughly 40M saved tensors", grounding_refs=["C001"])])]
+    assert check_numeric_fidelity(narration, claims) == []
+
+
+def test_genuine_drift_is_flagged():
+    """A real fabrication/drift case: the sentence claims a completely
+    different magnitude than the claim it cites."""
+    claims = [make_claim("C001", "VERIFIED", claim="175 billion parameters")]
+    narration = [scene("s1", [make_sentence("175 million parameters", grounding_refs=["C001"])])]
+    violations = check_numeric_fidelity(narration, claims)
+    assert len(violations) == 1
+    assert violations[0].code == "numeric_drift"
+
+
+def test_sentence_with_no_numbers_is_not_checked():
+    claims = [make_claim("C001", "VERIFIED", claim="175 billion parameters")]
+    narration = [scene("s1", [make_sentence("it has many parameters", grounding_refs=["C001"])])]
+    assert check_numeric_fidelity(narration, claims) == []
+
+
+def test_claim_with_no_numbers_is_not_checked():
+    """The cited claim makes no numeric assertion itself -- nothing to compare."""
+    claims = [make_claim("C001", "VERIFIED", claim="attention retrieves context")]
+    narration = [scene("s1", [make_sentence("it has 175 billion parameters", grounding_refs=["C001"])])]
+    assert check_numeric_fidelity(narration, claims) == []
+
+
+def test_ungrounded_sentence_is_not_checked():
+    claims = [make_claim("C001", "VERIFIED", claim="175 billion parameters")]
+    narration = [scene("s1", [make_sentence("175 million parameters", grounding_required=False)])]
+    assert check_numeric_fidelity(narration, claims) == []

@@ -8,8 +8,9 @@ from planning.models import (
     CTAContract, EndingContract, HookContract, MiniPayoff, ScenePlan, StoryBeat, StoryPlan, TitleContract,
 )
 from verification.hard.structure import (
-    check_core_roles_present, check_every_beat_has_source_units, check_referential_integrity,
-    check_source_coverage, check_structure, check_word_budget_matches_target,
+    check_core_roles_present, check_cta_placement, check_every_beat_has_source_units,
+    check_promise_chain, check_referential_integrity, check_source_coverage, check_structure,
+    check_word_budget_matches_target,
 )
 
 
@@ -139,11 +140,91 @@ def test_check_structure_runs_all_checks_together():
     assert "core_role_missing" in codes
 
 
+# ---- promise chain ---------------------------------------------------------
+
+def test_disconnected_title_and_hook_promise_is_flagged():
+    plan = make_plan(
+        title=TitleContract(chosen="t", promise="why cats always land on their feet"),
+        hook=HookContract(viewer_problem="x", tension="y", promise="how neural networks learn to translate language"),
+    )
+    issues = check_promise_chain(plan)
+    codes = {i.code for i in issues}
+    assert "title_promise_unrelated_to_hook" in codes
+
+
+def test_hook_promise_unpaid_by_ending_is_flagged():
+    plan = make_plan(
+        hook=HookContract(viewer_problem="x", tension="y", promise="you will understand attention"),
+        ending=EndingContract(resolve_hook="a completely unrelated closing statement about cats",
+                               compressed_mental_model="y", capstone_payoff="z", viewer_can_now="do x"),
+    )
+    issues = check_promise_chain(plan)
+    codes = {i.code for i in issues}
+    assert "hook_promise_unpaid_by_ending" in codes
+
+
+def test_related_promise_chain_in_different_words_is_not_flagged():
+    """A real promise chain restated in different words must not trip a
+    false positive -- PROMISE_OVERLAP_THRESHOLD is deliberately generous."""
+    plan = make_plan(
+        title=TitleContract(chosen="t", promise="understand how attention retrieves context"),
+        hook=HookContract(viewer_problem="x", tension="y", promise="you will understand how attention retrieves context for a token"),
+        ending=EndingContract(resolve_hook="now you understand how attention retrieves context end to end",
+                               compressed_mental_model="y", capstone_payoff="z", viewer_can_now="do x"),
+    )
+    assert check_promise_chain(plan) == []
+
+
+# ---- CTA placement -----------------------------------------------------------
+
+def test_cta_in_the_first_beat_is_flagged():
+    plan = make_plan(
+        cta=CTAContract(primary_after_beat="B01"),
+        beats=[StoryBeat(beat_id="B01", purpose="x", source_unit_ids=["u1"])],
+    )
+    issues = check_cta_placement(plan)
+    codes = {i.code for i in issues}
+    assert "cta_in_hook" in codes
+
+
+def test_cta_before_the_first_payoff_beat_is_flagged():
+    plan = make_plan(
+        cta=CTAContract(primary_after_beat="B02"),
+        beats=[
+            StoryBeat(beat_id="B01", purpose="x", source_unit_ids=["u1"]),
+            StoryBeat(beat_id="B02", purpose="x", source_unit_ids=["u2"]),
+            StoryBeat(beat_id="B03", purpose="x", source_unit_ids=["u3"], payoff=True),
+        ],
+    )
+    issues = check_cta_placement(plan)
+    codes = {i.code for i in issues}
+    assert "cta_before_first_payoff" in codes
+
+
+def test_cta_after_the_first_payoff_beat_is_clean():
+    plan = make_plan(
+        cta=CTAContract(primary_after_beat="B03"),
+        beats=[
+            StoryBeat(beat_id="B01", purpose="x", source_unit_ids=["u1"]),
+            StoryBeat(beat_id="B02", purpose="x", source_unit_ids=["u2"], payoff=True),
+            StoryBeat(beat_id="B03", purpose="x", source_unit_ids=["u3"]),
+        ],
+    )
+    assert check_cta_placement(plan) == []
+
+
 def test_check_structure_on_a_fully_clean_plan_is_empty():
     plan = make_plan(
+        title=TitleContract(chosen="t", promise="understand how attention retrieves context"),
+        hook=HookContract(viewer_problem="x", tension="y", promise="you will understand how attention retrieves context"),
+        ending=EndingContract(
+            resolve_hook="now you understand how attention retrieves context end to end",
+            compressed_mental_model="y", capstone_payoff="z", viewer_can_now="do x",
+        ),
+        cta=CTAContract(primary_after_beat="B03"),
         beats=[
             StoryBeat(beat_id="B01", purpose="x", source_unit_ids=["u1"], archetype_stage="desired_capability"),
-            StoryBeat(beat_id="B02", purpose="x", source_unit_ids=["u2"], archetype_stage="problem_to_solution_pair"),
+            StoryBeat(beat_id="B02", purpose="x", source_unit_ids=["u2"], archetype_stage="problem_to_solution_pair", payoff=True),
             StoryBeat(beat_id="B03", purpose="x", source_unit_ids=["u3"], archetype_stage="assembled_system"),
         ],
         scene_plan=[ScenePlan(scene_id=f"s{i}", beat_id="B01", word_budget=70) for i in range(24)],  # ~1680 words

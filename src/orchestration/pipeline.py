@@ -16,6 +16,7 @@ from pathlib import Path
 
 from agents.base import Agent
 from editing.revision_planner import plan_revision
+from editing.targeted_rewrite import apply_targeted_rewrite
 from facts.models import AssumptionLedger, Claim, SourceUnit
 from llm.budget import BudgetCounter
 from narration.generator import generate_narration
@@ -27,7 +28,11 @@ from review.claim_mapper import map_claims
 from review.grounding_verifier import verify_grounding
 from review.models import ReviewBundle
 from review.story_critic import critique_story
-from verification.hard.grounding import check_grounding_policy
+from review.style_critic import critique_style
+from verification.diagnostics.cta import check_cta_position
+from verification.diagnostics.retention import check_retention
+from verification.diagnostics.voice import check_burstiness
+from verification.hard.grounding import check_grounding_policy, check_numeric_fidelity
 from verification.hard.structure import check_structure
 
 from .policy_gate import FinalStatus, compute_final_status
@@ -64,16 +69,27 @@ def _run_review_block(
     structural = check_structure(plan, target_duration_seconds, all_source_unit_ids)
 
     narration = map_claims(narration, claims, agents.cm_agent, budget)
-    grounding_violations = check_grounding_policy(narration, claims)
+    grounding_violations = check_grounding_policy(narration, claims) + check_numeric_fidelity(narration, claims)
     grounding_issues = verify_grounding(narration, claims, agents.review_lead, budget)
     story_issues = critique_story(plan, narration, agents.review_lead, budget, source_units)
+
+    diagnostics = check_retention(plan) + [check_cta_position(plan)]
+    voice_diagnostic = check_burstiness(narration)
+    diagnostics.append(voice_diagnostic)
+
+    style_issues: list = []
+    if voice_diagnostic.band in ("AMBER", "RED"):
+        # C5 (plan §8): only invoked when voice signals something -- a clean
+        # voice diagnostic costs nothing. Shares the flash-tier cm_agent
+        # (Gemini flash), same reuse pattern as review_lead serving C1+C2b.
+        style_issues = critique_style(narration, agents.cm_agent, budget)
 
     bundle = aggregate_review(
         run_id="pipeline",
         structural_issues=structural,
         grounding_violations=grounding_violations,
-        critique_issues=grounding_issues + story_issues,
-        diagnostics=[],  # voice/visual/retention/learning diagnostics: V1C/V1D, not yet built
+        critique_issues=grounding_issues + story_issues + style_issues,
+        diagnostics=diagnostics,
     )
     return narration, bundle
 
@@ -167,9 +183,11 @@ def run_story_and_narration_loop(
                 final = compute_final_status(bundle.hard_failures, bundle.diagnostics, revision_budget_remaining=False)
                 return PipelineResult(plan, narration, bundle, final, story_replans_used, major_revisions_used, log)
             major_revisions_used += 1
-            # B2 targeted rewrite is not yet implemented (V1A scope note) --
-            # the loop still re-verifies so the exhaustion path is real and testable.
-            log.append(f"targeted rewrite #{major_revisions_used} requested (B2 not yet implemented)")
+            narration = apply_targeted_rewrite(plan, narration, claims, revision_plan, agents.narration_lead)
+            log.append(
+                f"targeted rewrite #{major_revisions_used}: {len(revision_plan.rewrite_beats)} beat(s), "
+                f"{len(revision_plan.technical_fixes)} fix(es), {len(revision_plan.delete_or_compress)} delete/compress"
+            )
             continue
 
         # action == NONE but status was REVISE (diagnostics-only escalation, no

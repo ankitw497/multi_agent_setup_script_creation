@@ -149,6 +149,18 @@ def plan_story(
     plan = story_lead.run(
         pass_id="A2", mode="PLAN", task_prompt=TASK_PROMPT,
         payload=payload, schema=StoryPlan, budget=budget, estimated_usd=0.15,
+        # A real 2048-token default truncated a full StoryPlan mid-string
+        # (2026-09-10) -- this is structurally the largest output in the
+        # system (20-30 ScenePlan entries plus beats/hook/cta/ending), so it
+        # gets an explicit, generous override rather than relying on the
+        # shared default alone. Confirmed via litellm.supports_reasoning()
+        # this was genuinely output-length truncation, NOT the ERR-005
+        # hidden-reasoning-token trap: openai_story_strong resolves to
+        # gpt-4o, which litellm reports has no reasoning budget at all. If
+        # this alias is ever repointed at a reasoning-capable model (o3,
+        # gpt-5, ...), re-check that first -- raising max_tokens alone
+        # would not fix a reasoning-token truncation the way it fixed this one.
+        max_tokens=8000,
     )
     if archetype_override and plan.archetype != archetype_override:
         raise ValueError(
