@@ -1,9 +1,19 @@
 """A2 -- ONE archetype + full story blueprint (Story Lead / GPT strong) (plan §5, §8, §9, §19).
 
 The single most consequential call in the pipeline: title, hook, CTA,
-question chain, beats (with forward drivers), mini-payoffs, ending, and a
-scene plan -- all decided here, before a word of narration exists (the
-design doc's core principle).
+question chain, beats (with forward drivers), mini-payoffs, and ending --
+all decided here, before a word of narration exists (the design doc's
+core principle).
+
+Split into two stages since 2026-09-10 (ERR-010/ERR-023): A2 itself
+(this call, `TASK_PROMPT` below) resolves the archetype and full
+structure via `StoryStructure`; A2b (`scene_expander.py`) then fills in
+`StoryPlan.scene_plan` one beat at a time, using a word target that
+`beat_word_budget.py` computes deterministically. Asking one call to also
+correctly sum a 20-30-scene word budget against a target duration was
+reliably unreliable (a live run returned 5 scenes / ~525 words against a
+~1670-word target); each beat's own much smaller target is independently
+achievable, and Python's own sum is exact by construction.
 """
 from __future__ import annotations
 
@@ -12,7 +22,9 @@ from facts.models import AssumptionLedger, Claim, SourceUnit
 from llm.budget import BudgetCounter
 
 from .archetypes import ALL_ARCHETYPES, load_archetype_specs
-from .models import ReplanFeedback, SourceBrief, StoryPlan
+from .beat_word_budget import allocate_beat_word_budgets
+from .models import ReplanFeedback, SourceBrief, StoryPlan, StoryStructure
+from .scene_expander import expand_beat_scenes
 
 TASK_PROMPT = """\
 Resolve ONE primary archetype for this source and build its full story
@@ -63,24 +75,11 @@ The ending must resolve the hook's promise, compress the mechanism into a
 usable mental model, and state `viewer_can_now` as a capability (diagnose /
 predict / build / explain), never a feature list.
 
-Build a `scene_plan` that actually fills the target duration and uses the
-source's real depth -- do not under-scope this. At 167 words/minute, the sum
-of every scene's `word_budget` should land within about 20% of
-`target_duration_seconds / 60 * 167` words. Work backward from that: for a
-600-second (10-minute) target, that is roughly 1,670 words, which typically
-means 20-30 scenes at 40-80 words each -- NOT 4-6 scenes. A beat is a story
-unit, not a scene budget; a single beat routinely spans several scenes when
-the source has that much real content to cover (a beat about deriving an
-equation, for instance, usually needs a scene for the setup, one for each
-real step, and one for the payoff). Every source unit with real teaching
-content should be reflected in at least one scene -- do not silently drop
-sections of the source because a smaller scene count felt cleaner.
-
-Each scene needs: a realistic `word_budget` (30-100 hard bounds, 40-80
-preferred), a `narrative_beat` (hook/teaching/escalation/reveal/close --
-`reveal` should be roughly 1 scene in 4-6, not constant), and a concrete,
-single-idea `visual_description`. Leave `components` empty -- that's decided
-later by the HTML stage, not here.
+Do not produce a scene-by-scene breakdown here -- that is a separate pass
+(A2b), given your beats afterward. Focus entirely on getting the
+archetype, hook, CTA, beats, and ending right; a beat is a story unit that
+will later expand into several scenes when the source has that much real
+content to cover, not a single scene itself.
 
 Ground everything in the claims and source brief given. Never introduce a
 technical claim that isn't backed by the claim registry.
@@ -99,10 +98,11 @@ previous plan (archetype: `previous_archetype`) was rejected for the
 specific reasons listed in `critique_issues` and `structural_issues`. Do
 not silently repeat `previous_archetype` unless you can directly refute
 every critique issue that names a better-supported alternative. Every
-structural issue must be visibly addressed in this new plan (e.g. if
+structural issue must be visibly addressed in this new plan -- e.g. if
 specific source unit ids were listed as uncovered, this plan's beats must
-now actually cover them; if the word budget was short, this plan's scene
-count and per-scene budgets must close that gap for real, not nominally).
+now actually cover them (a word-budget shortfall specifically is handled
+by a separate deterministic pass afterward, not something you need to fix
+here by adding more beats than the source actually supports).
 """
 
 
@@ -146,25 +146,36 @@ def plan_story(
         "archetype_override": archetype_override,  # None means "auto": classify freely
         "replan_feedback": replan_feedback.model_dump() if replan_feedback else None,
     }
-    plan = story_lead.run(
+    structure = story_lead.run(
         pass_id="A2", mode="PLAN", task_prompt=TASK_PROMPT,
-        payload=payload, schema=StoryPlan, budget=budget, estimated_usd=0.15,
+        payload=payload, schema=StoryStructure, budget=budget, estimated_usd=0.10,
         # A real 2048-token default truncated a full StoryPlan mid-string
-        # (2026-09-10) -- this is structurally the largest output in the
-        # system (20-30 ScenePlan entries plus beats/hook/cta/ending), so it
-        # gets an explicit, generous override rather than relying on the
-        # shared default alone. Confirmed via litellm.supports_reasoning()
-        # this was genuinely output-length truncation, NOT the ERR-005
-        # hidden-reasoning-token trap: openai_story_strong resolves to
-        # gpt-4o, which litellm reports has no reasoning budget at all. If
-        # this alias is ever repointed at a reasoning-capable model (o3,
-        # gpt-5, ...), re-check that first -- raising max_tokens alone
-        # would not fix a reasoning-token truncation the way it fixed this one.
-        max_tokens=8000,
+        # (2026-09-10, ERR-021) before the scene-plan split existed; kept
+        # generous here too even though this call's output is now much
+        # smaller (no scene_plan) -- cheap insurance against a plan with
+        # unusually many beats. Confirmed via litellm.supports_reasoning()
+        # the original truncation was genuine output-length truncation, NOT
+        # the ERR-005 hidden-reasoning-token trap: openai_story_strong
+        # resolves to gpt-4o, which litellm reports has no reasoning budget
+        # at all. Re-check that first if this alias is ever repointed at a
+        # reasoning-capable model.
+        max_tokens=4000,
     )
-    if archetype_override and plan.archetype != archetype_override:
+    if archetype_override and structure.archetype != archetype_override:
         raise ValueError(
-            f"A2 returned archetype {plan.archetype!r} but the run pinned "
+            f"A2 returned archetype {structure.archetype!r} but the run pinned "
             f"{archetype_override!r} -- fixed-archetype mode must not switch archetypes (plan §6)"
         )
-    return plan
+
+    # A2b (ERR-010/ERR-023 fix): each beat's own word target is computed
+    # deterministically, then filled by one small, independently-achievable
+    # call per beat -- never one call asked to sum the whole plan itself.
+    beat_word_budgets = allocate_beat_word_budgets(structure.beats, target_duration_seconds)
+    scene_plan = []
+    for beat in structure.beats:
+        target_words = beat_word_budgets.get(beat.beat_id, 0)
+        if target_words <= 0:
+            continue
+        scene_plan.extend(expand_beat_scenes(beat, target_words, claims, story_lead, budget))
+
+    return StoryPlan(**structure.model_dump(exclude={"scene_plan"}), scene_plan=scene_plan)

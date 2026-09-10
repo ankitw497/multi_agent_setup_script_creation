@@ -2,14 +2,15 @@
 
 Uses a schema-dispatching FakeAgent so each of the three shared agent
 identities (story_lead/narration_lead/review_lead) can serve multiple
-passes (A2+A3, B1, CM+C1+C2b) the way the real pipeline shares them.
+passes (A2+A2b+A3, B1+B2, CM+C1+C2b) the way the real pipeline shares them.
 """
 from facts.models import AssumptionLedger, Claim
 from narration.generator import GeneratedNarration
 from orchestration.pipeline import PipelineAgents, run_story_and_narration_loop
 from planning.models import (
-    CTAContract, EndingContract, HookContract, StoryBeat, StoryPlan, TitleContract,
+    CTAContract, EndingContract, HookContract, StoryBeat, StoryPlan, StoryStructure, TitleContract,
 )
+from planning.scene_expander import BeatSceneExpansion
 from review.claim_mapper import ClaimMapperOutput
 from review.grounding_verifier import GroundingReview
 from review.story_critic import StoryCritique
@@ -65,9 +66,57 @@ def make_empty_narration_response(n=1) -> GeneratedNarration:
     return GeneratedNarration(scenes=[{"scene_id": f"s{i}", "sentences": []} for i in range(n)])
 
 
+def make_structure(archetype="build") -> StoryStructure:
+    """The A2 (structure-only) fake response since the ERR-010/ERR-023 split
+    -- same title/hook/cta/ending/beats shape as make_plan(), minus
+    scene_plan, which is now a separate per-beat pass (see
+    make_good_expansions/make_bad_expansions below)."""
+    return StoryStructure(
+        archetype=archetype, selection_reason="x", story_promise="x", central_question="x",
+        title=TitleContract(chosen="t", promise="understand how attention retrieves context"),
+        hook=HookContract(viewer_problem="x", tension="y", promise="you will understand how attention retrieves context"),
+        cta=CTAContract(primary_after_beat="B02"),
+        ending=EndingContract(resolve_hook="now you understand how attention retrieves context end to end",
+                               compressed_mental_model="y", capstone_payoff="z", viewer_can_now="do x"),
+        beats=[StoryBeat(beat_id="B01", purpose="x", source_unit_ids=["u1"],
+                          archetype_stage="desired_capability", forward_driver="x", new_information=True),
+               StoryBeat(beat_id="B02", purpose="x", source_unit_ids=["u1"],
+                          archetype_stage="problem_to_solution_pair", forward_driver="y", payoff=True),
+               StoryBeat(beat_id="B03", purpose="x", source_unit_ids=["u1"],
+                          archetype_stage="assembled_system", forward_driver="z", new_information=True)],
+    )
+
+
+def _expansion(n_scenes, word_budget) -> BeatSceneExpansion:
+    return BeatSceneExpansion(scenes=[
+        {"narrative_beat": "teaching", "visual_description": "x", "word_budget": word_budget}
+        for _ in range(n_scenes)
+    ])
+
+
+def make_good_expansions() -> list[BeatSceneExpansion]:
+    """One response per beat in make_structure()'s order (B01, B02, B03):
+    3+4+17=24 scenes * 70 words = 1680 words total, within tolerance of the
+    ~1670-word target for a 600s video. Asymmetric (not an even 8/8/8)
+    so the CTA -- hosted on B02 in make_structure() -- lands at a real
+    ~29% mark for the CTA-position diagnostic (plan §10.3's 20-40% band),
+    not ~67% the way an even split would put it."""
+    return [_expansion(3, 70), _expansion(4, 70), _expansion(17, 70)]
+
+
+def make_bad_expansions() -> list[BeatSceneExpansion]:
+    """The exact real defect this whole split fixes, replayed as a fake
+    response: 2 scenes * 30 words * 3 beats = 180 words, wildly short of
+    the ~1670-word target -- used to test the exhaustion path still works
+    correctly if a beat expansion call is itself still bad."""
+    return [_expansion(2, 30), _expansion(2, 30), _expansion(2, 30)]
+
+
 def make_agents(story_lead_responses=None, narration_responses=None, review_responses=None) -> PipelineAgents:
     story_lead = FakeAgent({
         StoryPlan: (story_lead_responses or {}).get(StoryPlan, []),
+        StoryStructure: (story_lead_responses or {}).get(StoryStructure, []),
+        BeatSceneExpansion: (story_lead_responses or {}).get(BeatSceneExpansion, []),
         __import__("editing.models", fromlist=["RevisionPlan"]).RevisionPlan: (story_lead_responses or {}).get("RevisionPlan", []),
     })
     narration_lead = FakeAgent({GeneratedNarration: narration_responses or []})
@@ -110,14 +159,19 @@ def test_a_clean_plan_passes_with_no_revision_calls():
 def test_a_bad_plan_gets_replanned_and_then_passes():
     """The exact real scenario found live: a structurally deficient plan
     (word budget too low) gets caught, A3 calls for a replan, and a second,
-    clean plan is generated and passes."""
+    clean plan is generated and passes. Since ERR-010/ERR-023's split, the
+    replan's StoryPlan is assembled from a StoryStructure call plus one
+    BeatSceneExpansion call per beat -- never returned verbatim by a single
+    agent call -- so this checks content, not object identity."""
     from editing.models import RevisionPlan
 
     bad_plan = make_plan(scene_words=30, n_scenes=2)  # ~20 words vs ~1670 target
-    good_plan = make_plan()
 
     agents = make_agents(
-        story_lead_responses={StoryPlan: [good_plan], "RevisionPlan": [RevisionPlan(run_id="r", story_replan_required=True)]},
+        story_lead_responses={
+            StoryStructure: [make_structure()], BeatSceneExpansion: make_good_expansions(),
+            "RevisionPlan": [RevisionPlan(run_id="r", story_replan_required=True)],
+        },
         narration_responses=[make_empty_narration_response(), make_empty_narration_response()],
         review_responses={
             "cm": [ClaimMapperOutput(sentences=[]), ClaimMapperOutput(sentences=[])],
@@ -134,7 +188,8 @@ def test_a_bad_plan_gets_replanned_and_then_passes():
     )
     assert result.final_status == "PASS"
     assert result.story_replans_used == 1
-    assert result.plan is good_plan
+    assert result.plan.archetype == "build"
+    assert len(result.plan.scene_plan) == 24  # 8 scenes * 3 beats, from make_good_expansions()
 
 
 def test_replan_budget_exhaustion_fails_rather_than_looping_forever():
@@ -143,11 +198,10 @@ def test_replan_budget_exhaustion_fails_rather_than_looping_forever():
     from editing.models import RevisionPlan
 
     bad_plan_1 = make_plan(scene_words=30, n_scenes=2)
-    bad_plan_2 = make_plan(scene_words=30, n_scenes=2)
 
     agents = make_agents(
         story_lead_responses={
-            StoryPlan: [bad_plan_2],
+            StoryStructure: [make_structure()], BeatSceneExpansion: make_bad_expansions(),
             "RevisionPlan": [RevisionPlan(run_id="r", story_replan_required=True)] * 2,
         },
         narration_responses=[make_empty_narration_response(), make_empty_narration_response()],
@@ -178,7 +232,6 @@ def test_a2_replan_receives_the_prior_rejection_reason_not_a_blind_retry():
     from editing.models import RevisionPlan
 
     bad_plan = make_plan(scene_words=30, n_scenes=2, archetype="foundation")
-    good_plan = make_plan(archetype="build")
     archetype_issue = {
         "issue_id": "I1", "severity": "critical", "category": "archetype", "layer": "STORY",
         "problem": "explicit problem->fix chain suggests build",
@@ -186,7 +239,10 @@ def test_a2_replan_receives_the_prior_rejection_reason_not_a_blind_retry():
     }
 
     agents = make_agents(
-        story_lead_responses={StoryPlan: [good_plan], "RevisionPlan": [RevisionPlan(run_id="r", story_replan_required=True)]},
+        story_lead_responses={
+            StoryStructure: [make_structure(archetype="build")], BeatSceneExpansion: make_good_expansions(),
+            "RevisionPlan": [RevisionPlan(run_id="r", story_replan_required=True)],
+        },
         narration_responses=[make_empty_narration_response(), make_empty_narration_response()],
         review_responses={
             "cm": [ClaimMapperOutput(sentences=[]), ClaimMapperOutput(sentences=[])],
@@ -219,11 +275,13 @@ def test_source_units_reach_both_a2_replan_and_c1_critique():
     from facts.models import SourceUnit
 
     bad_plan = make_plan(scene_words=30, n_scenes=2)
-    good_plan = make_plan()
     units = [SourceUnit(id="production_notes", heading="Production notes", text="Problem -> Mini payoff")]
 
     agents = make_agents(
-        story_lead_responses={StoryPlan: [good_plan], "RevisionPlan": [RevisionPlan(run_id="r", story_replan_required=True)]},
+        story_lead_responses={
+            StoryStructure: [make_structure()], BeatSceneExpansion: make_good_expansions(),
+            "RevisionPlan": [RevisionPlan(run_id="r", story_replan_required=True)],
+        },
         narration_responses=[make_empty_narration_response(), make_empty_narration_response()],
         review_responses={
             "cm": [ClaimMapperOutput(sentences=[]), ClaimMapperOutput(sentences=[])],

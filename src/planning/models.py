@@ -157,8 +157,20 @@ class ScenePlan(BaseModel):
     semantic_objects: list[SemanticObject] = Field(default_factory=list)
 
 
-class StoryPlan(BaseModel):
-    """A2's output (plan §5). Everything narration needs is decided here, before prose exists."""
+class StoryStructure(BaseModel):
+    """A2a's output -- everything about the story EXCEPT its scene-level
+    breakdown (plan §5, §9, §19).
+
+    Split out from StoryPlan (2026-09-10, ERR-010/ERR-023) because asking
+    one call to both resolve the archetype/beats AND correctly sum a
+    20-30-scene word budget against a target duration was reliably
+    unreliable at the aggregate math specifically -- real live runs
+    returned 5-6 scenes (~500 words) against a ~1670-word target, even
+    with explicit calibration instructions. The archetype/structure
+    judgement itself was never the problem (A2 resolved `build` correctly
+    on every live run tested). See planning/scene_expander.py for A2b,
+    which fills in `StoryPlan.scene_plan` afterward, one beat at a time.
+    """
 
     archetype: Archetype  # never "auto" — see the Archetype type alias note above
     selection_reason: str
@@ -175,6 +187,13 @@ class StoryPlan(BaseModel):
     beats: list[StoryBeat] = Field(default_factory=list)
     mini_payoffs: list[MiniPayoff] = Field(default_factory=list)
     ending: EndingContract
+
+
+class StoryPlan(StoryStructure):
+    """A2's full output (plan §5): a StoryStructure plus its scene-level
+    breakdown. Everything narration needs is decided here, before prose
+    exists."""
+
     scene_plan: list[ScenePlan] = Field(default_factory=list)
 
 

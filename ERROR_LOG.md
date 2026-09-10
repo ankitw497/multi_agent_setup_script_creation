@@ -160,6 +160,12 @@ items) through instruction alone, however precisely stated.
 catches this mechanically every time instead of relying on a better prompt. Validated
 against both real saved plans on disk (ratios 0.19, 0.28 — both correctly flagged).
 
+**Update (ERR-024):** the check above only ever caught the defect after the fact; it kept
+recurring live (see ERR-023) until the actual generation was restructured — see ERR-024
+for the real preventive fix (splitting A2 into a structure call plus small, independently
+-achievable per-beat scene-expansion calls). This check remains in place as the
+safety net regardless.
+
 ---
 
 ## ERR-011 — A2 beats returned `source_unit_ids: []`
@@ -394,6 +400,65 @@ burden is much smaller — the same principle behind why a smaller, scoped call 
 where a big aggregate one doesn't), not another retry. That is a real design decision
 with cost/scope implications of its own, left for deliberate discussion rather than
 built unprompted mid-validation.
+
+---
+
+## ERR-024 — Split A2 into structure + per-beat scene expansion (the ERR-010/ERR-023 fix)
+**Date:** 2026-09-10 · **Severity:** critical · **Status:** fixed · **Component:** `planning/story_planner.py`, `planning/beat_word_budget.py` (new), `planning/scene_expander.py` (new), `planning/models.py`
+
+Following the open finding logged above: two live re-runs both FAILed primarily on
+`ERR-010` recurring (A2 under-generating `scene_plan`), not the archetype dispute. Built
+the actual structural fix rather than another retry: `StoryPlan` split into
+`StoryStructure` (archetype, hook, CTA, beats, ending -- no scene_plan) plus a separate
+per-beat scene-expansion pass. `beat_word_budget.py::allocate_beat_word_budgets()`
+computes each beat's own word target deterministically (proportional to how many source
+units it covers, exact by construction -- Python's sum can't drift the way an LLM's own
+aggregate sum did); `scene_expander.py::expand_beat_scenes()` (A2b) asks one small,
+well-scoped call per beat to hit that much smaller, independently-achievable target.
+
+**Live-verified, twice:**
+1. Standalone `plan_story()` call at a 900s (15-min) target — chosen deliberately larger
+   than earlier 600s tests, per a direct request to get a representative cost estimate
+   for real future usage, not just a small-target figure: **8 beats, 44 scenes, 2573
+   words against a 2505-word target — ratio 1.03** (previously as bad as 0.19-0.31).
+   Cost: **$0.0953 across 9 calls** (1 structure + 8 per-beat expansion).
+2. Full pipeline run at the same 900s target (`runs/v07`): **zero `word_budget_mismatch`
+   failures in either the first ("build") or replanned ("foundation") attempt** --
+   completely eliminated, confirming the fix generalizes beyond the standalone test.
+   Cost: $0.3979 across 27 records (2 full structure+expansion cycles plus B1/CM/C1/C2b).
+
+**Tests:** `tests/planning/test_beat_word_budget.py` (6 tests, including exact-sum and
+minimum-floor guarantees), `tests/planning/test_scene_expander.py` (5 tests),
+`tests/planning/test_story_planner.py` (updated for the two-call flow),
+`tests/orchestration/test_pipeline.py` (4 tests updated to mock both calls).
+
+---
+
+## ERR-025 — Third live occurrence of ERR-022: C1 disputes a correct "build" archetype, now the sole confirmed blocker
+**Date:** 2026-09-10 · **Severity:** open finding, not a code bug · **Status:** open, now the sole confirmed blocker · **Component:** `review/story_critic.py`, the disagreement-resolution design itself (see ERR-022 for the original finding)
+
+With ERR-010/ERR-023 fixed, `runs/v07`'s live re-run isolated the remaining problem
+cleanly: A2's first attempt again correctly resolved `archetype: build` with **zero
+word-budget failures** -- and C1 disputed it anyway (`critical/archetype`), forcing a
+replan to `foundation`, which then failed for different reasons (`source_units_uncovered:
+production_notes`, a CTA landing at **100%** through the story, more grounding
+violations). This is the **third** live run in a row (`v05`, `v06`, `v07`) where C1
+disputes a `build` resolution that every other signal -- the user's own independent
+pipeline, two separate single-call validations (ERR-014, this file's own earlier entry),
+and now a clean, well-budgeted first attempt -- agrees is correct. With ERR-010 no longer
+a confound, **this is now the single confirmed blocker to a live PASS** on this source,
+not one of two compounding issues.
+
+**Still not patched reactively:** the reasoning from the original ERR-022 entry stands --
+this needs a deliberate design decision (can A2 push back on a critique with its own
+`source_evidence`? does a critical archetype dispute need a second independent opinion
+before forcing a replan? should A3 weigh C1's critique against the plan's own cited
+evidence rather than accepting it at face value?), not a prompt tweak or another retry.
+Secondary, smaller finding from the same run worth tracking separately: `production_notes`
+was left uncovered by both attempts' beats despite ERR-011's fix instructing every source
+unit to be referenced -- plausibly because it's meta-commentary rather than teaching
+content, so no beat naturally claims it; may need its own explicit instruction if it
+recurs.
 
 ---
 

@@ -80,16 +80,18 @@ def test_auto_mode_accepts_whatever_archetype_the_model_resolves():
     assert result.archetype == "derivation"
 
 
-def test_prompt_calibrates_scene_count_and_word_budget_to_target_duration():
-    """Regression test for a real defect found 2026-09-10: a live run produced
-    a StoryPlan with only 4 scenes totaling ~320 words against a 600s (~1670
-    word) target -- the source's real depth (11 sections) was almost entirely
-    unused. The prompt must give the model a concrete calibration anchor, not
-    just an abstract per-scene word range."""
+def test_prompt_no_longer_asks_a2_to_calibrate_scene_word_budgets_itself():
+    """Superseded regression test for the real defect found 2026-09-10 (a
+    live run produced only 4 scenes / ~320 words against a ~1670-word
+    target): asking A2 to also correctly sum a whole-plan word budget in
+    one shot was itself unreliable (ERR-010/ERR-023). The fix moved that
+    aggregate math to deterministic Python (beat_word_budget.py) plus a
+    small per-beat call (scene_expander.py) -- A2's own prompt must no
+    longer ask it to produce or calibrate a scene_plan at all."""
     from planning.story_planner import TASK_PROMPT
 
-    assert "target_duration_seconds / 60 * 167" in TASK_PROMPT
-    assert "NOT 4-6 scenes" in TASK_PROMPT or "not 4-6 scenes" in TASK_PROMPT.lower()
+    assert "scene_plan" not in TASK_PROMPT
+    assert "A2b" in TASK_PROMPT
 
 
 def test_prompt_instructs_populating_source_unit_ids():
@@ -195,10 +197,12 @@ def test_prompt_instructs_addressing_replan_feedback():
 
 
 def test_requests_a_generous_max_tokens_override():
-    """Real bug found 2026-09-10: a full multi-scene StoryPlan was truncated
-    mid-string at the shared 2048-token default. A2 must always ask for
-    more room, not rely on the shared default alone."""
-    story_lead = FakeStoryLead(make_plan())
+    """Real bug found 2026-09-10 (ERR-021): a full multi-scene StoryPlan was
+    truncated mid-string at the shared 2048-token default. Now that
+    scene_plan is a separate pass (ERR-010/ERR-023), A2's own call is much
+    smaller, but it still gets an explicit override rather than relying on
+    the shared default alone -- cheap insurance for a plan with many beats."""
+    story_lead = FakeStoryLead(make_plan())  # make_plan() has no beats -> only the A2 call happens
     from planning.models import SourceBrief
 
     plan_story(
@@ -206,4 +210,4 @@ def test_requests_a_generous_max_tokens_override():
         [], AssumptionLedger(), story_lead, BudgetCounter(tier=DEFAULT_TIERS["longform"]),
         target_duration_seconds=600, source_units=[],
     )
-    assert story_lead.calls[0]["max_tokens"] >= 8000
+    assert story_lead.calls[0]["max_tokens"] >= 4000
