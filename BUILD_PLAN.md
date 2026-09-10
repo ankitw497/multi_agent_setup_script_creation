@@ -99,7 +99,7 @@ PR-sized unit with tests before the next.
 - [x] **S2a** deterministic seeds — numbers, equations, JS constants → `AssumptionLedger`, formulas → `NumericClaim.expression` — **done, cross-validated against real corpus values**
 - [x] **S2b** claim extraction (Haiku, batched over all source units) → `facts/claim_extract.py` — **done, validated**
 - [x] **S2c** normalize/dedupe/link numbers→claims → `facts/normalize.py` — **done, validated**
-- [ ] **C2a** source verification (Python + local evidence broker + Gemini), cached by the §4.2/§6.5 key → `facts/verify.py`, `facts/evidence.py` — **blocked on the Gemini key fix**
+- [x] **C2a** source verification (Python + local evidence broker + Gemini), cached by the §4.2/§6.5 key → `facts/verify.py`, `facts/evidence.py` — **done, live-validated (adversarial test passed)**
 - [ ] **S1** narrative digest (Haiku; only above ~12k source tokens)
 - [ ] **A1** source understanding (GPT) → `agents/story_lead.py`
 - [ ] **A2** archetype + story plan (title, hook, CTA, question chain, beats, ending, `open_loop_ledger`) → `planning/`
@@ -116,6 +116,23 @@ PR-sized unit with tests before the next.
 **Done when (plan):** *"a rough HTML becomes one coherent, verified, human-sounding script; every mutation test caught"* (mutation suite: §18).
 
 ---
+
+### C2a status detail
+
+Built: `facts/verify.py` — arithmetic-linked claims verified by Python alone (no LLM, no
+judgement — a computed product either matches the claim's stated number or it doesn't);
+everything else goes to the Review Lead (Gemini strong tier) with a two-pass evidence loop:
+verdicts → evidence requests → Evidence Broker (`facts/evidence.py`, local `config/references/`
+only for V1A, word-overlap matching, no embeddings) → re-verdict only on what was actually
+found, so an empty references directory costs nothing extra.
+
+**Live-validated with a genuinely adversarial test**, not just plausible-looking claims: three
+claims sent together — a real mechanism claim, a real historical claim, and one deliberately
+fabricated ("Attention has exactly 1 trillion parameters"). Result: the first two correctly
+**VERIFIED** with sound technical reasoning; the fabricated one correctly **REJECTED**, with the
+model explaining *why* (attention is an operation, not a parameterized model with a fixed
+count) rather than just flagging it. Cost: **$0.018** for the batch (real dollars, Gemini strong
+tier — this is a paid-lane stage, unlike S2a-S2c).
 
 ### S2b + S2c status detail
 
