@@ -517,6 +517,49 @@ unrelated hard failures intact).
 
 ---
 
+## ERR-027 — C2a verification was the dominant remaining noise; a real limitation found in ERR-026's dismissal check
+**Date:** 2026-09-10 · **Severity:** major finding + one open design limitation · **Status:** partially addressed · **Component:** validation harness, `orchestration/pipeline.py`
+
+Ran C2a for real against `runs/v01`'s 61 claims (never actually verified before in any
+live run this session -- confirmed all `UNVERIFIED` by inspection) rather than continuing
+to validate against stale data: 54 VERIFIED, 4 UNVERIFIED, 3 CONTEXT_DEPENDENT, 0 REJECTED,
+for $0.0841/2 calls. Re-ran the full pipeline (`runs/v09`) against these real verified
+claims: **hard failures dropped from 73-111 (every prior run) to 4-5 per round** --
+confirming the stale-claims artifact really was the dominant source of noise once
+ERR-026 stabilized the archetype.
+
+**A genuinely new, more subtle scenario surfaced:** this time A2's first attempt resolved
+`foundation` (wrong), C1 disputed it, A3's log line read "dismissed 1 critique issue(s)
+already ruled out in the plan's own rejected_archetypes" -- and A3 *also* set
+`story_replan_required=true` for a separate reason, and the replan correctly landed on
+`build`. The final archetype was correct, but **the validation harness doesn't persist
+each round's intermediate review bundle**, only the final one -- so it's not actually
+possible to confirm from this run's saved artifacts whether the dismissed issue was
+itself the (correct) "should be build" critique, or an unrelated, genuinely re-raised one.
+Not fabricating certainty either way: this is an honest observability gap in the harness
+script, not a claim that ERR-026 misfired.
+
+**What IS a real, standing limitation, independent of this specific run:** ERR-026's
+mechanical check verifies only that an alternative archetype is ALREADY a key in
+`rejected_archetypes` -- it has no way to judge whether A2's *original rejection reason*
+was itself sound. If A2 rejects the correct archetype with a real-sounding but wrong
+reason, and C1 later correctly re-argues for it, the mechanical check would currently
+treat that as "already considered" and could let A3 legitimately dismiss a correct
+critique. This wasn't caught happening in this run (the correct archetype won out
+regardless, via a separate signal), but it's a real gap in the design, not fully closed --
+verifying reasoning QUALITY, not just reasoning EXISTENCE, would need a genuinely harder
+semantic check than word-matching can provide. Flagged for the same "deliberate future
+design" treatment as the original finding, not patched under time pressure.
+
+Remaining `runs/v09` failures were otherwise legitimate, not defects: 3 of 4 hard failures
+are the grounding policy correctly refusing to narrate claims C2a genuinely could not
+verify (exactly the intended behavior); the 4th (`core_role_missing`) plus a CTA landing
+at 100% are real, secondary gaps in that specific replanned attempt, within
+`MAX_STORY_REPLANS=1`'s bound (correctly failed rather than looping further). Cost:
+$0.5791/40 records.
+
+---
+
 ## Open items (not yet bugs, flagged for future attention)
 
 - **`review_lead` and `cm_agent` share one `agent` name in cost reporting.**
