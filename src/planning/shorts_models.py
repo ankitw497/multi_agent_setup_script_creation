@@ -67,6 +67,7 @@ class ShortPlan(BaseModel):
     the spoken bridge is not — sometimes the strongest ending is the payoff."""
 
     parent: ShortParent | None = None  # required for derived; None only for a standalone short
+    title: str = ""  # plan §20.6/§20.10: A2s's design output, checked for title~hook~payoff alignment
     goal: ShortGoal = "DISCOVERY"
     central_insight: str
     micro_arc: MicroArc

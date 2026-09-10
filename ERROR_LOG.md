@@ -560,6 +560,33 @@ $0.5791/40 records.
 
 ---
 
+## ERR-028 — V1A-S: CM/C2b saw the full claim registry instead of a short's scoped fact set
+**Date:** 2026-09-10 · **Severity:** major · **Status:** fixed · **Component:** `orchestration/shorts_pipeline.py`
+
+First live end-to-end validation of the new V1A-S short pipeline (SC → A2s → B1s → CM → C2b
+→ C1s → C4s → hard checks → diagnostics, $0.0101/7 calls against the real, verified
+attention-series source): the run correctly FAILed, but on `claim_outside_allowed_fact_set`
+-- narration cited claim `C034` in two segments, and it was genuinely outside the short's
+`allowed_fact_ids`. `narration/short_generator.py::generate_short_narration()` already
+scopes the claims it *offers* B1s to `allowed_fact_ids`, but `orchestration/shorts_pipeline.py`
+passed the **full**, unscoped `claims` list to `map_claims()` (CM) and `verify_grounding()`
+(C2b) -- so CM, doing its own job correctly, was free to ground a sentence to any claim in
+the whole registry, including ones outside this specific short's verified scope.
+
+**Fix:** scope `claims` to `allowed_fact_ids` once, before EITHER narration generation or
+CM/C2b -- consistent scoping applied at the single point every downstream call reads from,
+so CM/C2b never even have the option to cite an out-of-scope claim, rather than only
+detecting the violation after the fact via `check_grounding_scope`.
+**Live-verified:** re-ran end to end after the fix ($0.0192/15 calls, a different candidate
+this time) -- zero `claim_outside_allowed_fact_set` failures; the run still correctly FAILed,
+but now on entirely different, genuine findings (a real title/hook mismatch, a 71.9s
+narration exceeding the 62s cap, and C1s correctly catching that the narration didn't
+actually execute its own declared `problem_fix` micro-arc) -- confirming every check in the
+new pipeline catches real issues on real data.
+**Test:** `tests/orchestration/test_shorts_pipeline.py::test_cm_and_c2b_never_see_a_claim_outside_the_allowed_scope`
+
+---
+
 ## Open items (not yet bugs, flagged for future attention)
 
 - **`review_lead` and `cm_agent` share one `agent` name in cost reporting.**

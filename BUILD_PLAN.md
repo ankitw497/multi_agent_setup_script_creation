@@ -352,11 +352,18 @@ are gitignored working content and must not be a dependency of the committed tes
 
 ## V1A-S — Shorts slice (plan §20; depends on V1A, kept out of it)
 
-- [ ] `SC` candidate finder, `A2s` short planner, `micro_arc` enum
-- [ ] `C1s` critic, cold-hook critic
-- [ ] Short-profile gates/diagnostics (§20.10)
+- [x] `micro_arc` enum, `HookEvent`/`ShortsCandidate`/`ShortPlan` contracts → `planning/shorts_models.py` (Phase 1) — `title: str` field added (a real gap: the plan's own A2s design output and the title~hook~payoff hard gate both need it, but it was missing from the original contract)
+- [x] `SC` candidate finder (Haiku, subscription, free) → `planning/candidate_finder.py` — built, unit-tested, live-validated against the real verified attention-series claims (5 real, concrete candidates from 5 different beats)
+- [x] `A2s` short story planner (GPT mini) → `planning/short_planner.py` — built, unit-tested, live-validated (`parent`/`allowed_fact_ids` assembled deterministically in Python from the model's own `source_beat_ids`, never trusted as the model's job)
+- [x] `B1` short rhythm profile (Sonnet, subscription, free) → `narration/short_generator.py` — built, unit-tested, live-validated (four fixed segments: hook/setup/mechanism/payoff, not a scene_plan)
+- [x] `C1s` micro-arc critic (Gemini flash) → `review/short_critic.py` — built, unit-tested, live-validated (correctly caught a narration that didn't actually execute its own declared `problem_fix` micro-arc)
+- [x] Cold-hook critic `C4s` (Haiku → Gemini flash cascade) → `review/cold_hook_critic.py` — built, unit-tested; a clean, confident Haiku pass never escalates (free), matching the plan's cascade cost philosophy
+- [x] Short-profile hard gates (§20.10) → `verification/hard/shorts.py`: central insight present, title~hook~payoff alignment, duration ≤60s (+2s estimate slack), parent reference, grounding scoped to `allowed_fact_ids` — built, unit-tested, live-validated (correctly caught a real title/hook mismatch and a 71.9s narration over the cap)
+- [x] Short-profile diagnostics (§20.10, the deterministically-computable subset) → `verification/diagnostics/shorts.py`: time-to-hook, setup length, word-count band — built, unit-tested. Visual density/on-screen text (need H/HV) and sentence rhythm (needs a fitted voice corpus) deferred to V1B/V1C/V1D, same dependencies long-form's equivalents have
+- [x] Single-pass short orchestrator (deliberately no A3/B2 revision loop — see module docstring) → `orchestration/shorts_pipeline.py` — built, unit-tested, live-validated end to end twice ($0.0101 then $0.0192) against the real verified source; one real bug found and fixed live (ERROR_LOG ERR-028: CM/C2b saw the full claim registry instead of the short's scoped fact set)
+- [x] `narration.json`/`short_plan.json` emission → `reporting/emit_short.py` — built, unit-tested, live-validated. `short.html` (H/HV) and cost/quality reports for shorts are out of this scope (V1B/V1C, and no multi-short orchestration script yet to wire a UsageLedger through)
 
-**Done when (plan):** *"a short derived from a successful V1A output is grounded within the parent's fact set, has one central insight, and its hook event lands ≤3s."*
+**Done when (plan):** *"a short derived from a successful V1A output is grounded within the parent's fact set, has one central insight, and its hook event lands ≤3s."* — **met**: live-validated twice against the real, C2a-verified attention-series claims; the second run correctly PASSED the grounding-scope, central-insight, and hook-timing gates (it still FAILed overall on real content-quality findings — title/hook mismatch, duration, micro-arc fidelity — which is the policy gate doing its job, not a reason this bar isn't met).
 
 ---
 

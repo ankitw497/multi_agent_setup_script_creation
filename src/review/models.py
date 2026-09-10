@@ -20,6 +20,7 @@ Severity = Literal["critical", "major", "minor"]
 Category = Literal[
     "hook", "archetype", "causal_flow", "clarity", "pacing",
     "mini_payoff", "cognitive_load", "ending", "repetition",
+    "micro_arc",  # short-format analogue of "archetype" (plan §20.3) -- shorts have no archetype
 ]
 
 Layer = Literal["SOURCE", "STORY", "NARRATION", "VOICE", "VISUAL", "RENDERER", "TECHNICAL"]
