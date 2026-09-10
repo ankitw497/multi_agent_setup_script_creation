@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "script-pipeline"
+version = "0.1.0"
+description = "Multi-agent pipeline: rough HTML -> verified, human-sounding YouTube video-script HTML (see IMPLEMENTATION_PLAN.md)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+
+dependencies = [
+  "pydantic>=2.6",
+  "litellm>=1.55",
+  "python-dotenv>=1.0",
+  "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+# Pulled in phase by phase, not up front (plan Appendix D / phased rollout).
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "pytest-mock>=3.14"]
+extraction = ["beautifulsoup4>=4.12", "lxml>=5.0"]   # Phase 3 (§6)
+render = ["playwright>=1.45"]                         # V1C (§13, §17)
+lint = ["rapidfuzz>=3.9"]                             # narration lint (§10)
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+# The plan's §16 layout lists top-level packages directly under src/
+# (extraction/, facts/, agents/, ... llm/, config/) rather than one nested
+# package — this mirrors that literally instead of introducing an extra
+# wrapper package name.
+packages = [
+  "extraction", "facts", "agents", "planning", "narration", "voice",
+  "html_synth", "review", "verification", "verification.hard",
+  "verification.diagnostics", "editing", "orchestration", "llm",
+  "llm.backends", "reporting", "config",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+  "integration: hits a real provider/CLI; costs money or subscription quota. Not run by default.",
+]
+addopts = "-m 'not integration'"

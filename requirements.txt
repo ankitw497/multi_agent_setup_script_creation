@@ -1,0 +1,16 @@
+# Core runtime deps for Phase 0-1 (see pyproject.toml for the authoritative spec).
+# Install: pip install -e ".[dev]"
+pydantic>=2.6
+litellm>=1.55
+python-dotenv>=1.0
+pyyaml>=6.0
+
+# Dev / test
+pytest>=8.0
+pytest-asyncio>=0.23
+pytest-mock>=3.14
+
+# Added in later phases (kept here as a map, not installed yet):
+# beautifulsoup4, lxml        -> Phase 3 extraction (plan §6)
+# playwright                  -> V1C render verification (plan §13, §17)
+# rapidfuzz                   -> narration lint (plan §10)

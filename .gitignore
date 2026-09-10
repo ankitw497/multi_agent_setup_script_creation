@@ -1,12 +1,24 @@
-# Tracked on purpose: IMPLEMENTATION_PLAN.md, SYSTEM_DESIGN_GUIDE.md, LICENSE, .gitignore.
-# Everything else is working material and stays local.
+# Tracked on purpose: the two design docs, LICENSE, this file, and the codebase
+# itself (pyproject.toml, requirements.txt, README.md, src/, tests/, config/).
+# Working material (specs, reviews, corpus, ad-hoc tools, generated runs,
+# secrets, caches) stays local.
 docs/
 tools/
 runs/
+.env
 *.md
 !IMPLEMENTATION_PLAN.md
 !SYSTEM_DESIGN_GUIDE.md
-.env
+!README.md
+!BUILD_PLAN.md
+
+.venv/
 __pycache__/
 *.pyc
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
 .DS_Store
