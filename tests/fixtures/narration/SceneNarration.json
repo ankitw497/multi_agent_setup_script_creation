@@ -1,0 +1,27 @@
+{
+  "scene_id": "scene_08",
+  "sentences": [
+    {
+      "text": "That creates a new problem: as dimension grows, those dot products grow too.",
+      "sentence_type": "technical_assertion",
+      "claim_refs": ["C017"],
+      "grounding_required": true,
+      "grounding_refs": ["C017"]
+    },
+    {
+      "text": "So before softmax, we scale them down.",
+      "sentence_type": "technical_assertion",
+      "claim_refs": ["C017"],
+      "grounding_required": true,
+      "grounding_refs": ["C017"]
+    },
+    {
+      "text": "That's the part most people skip past.",
+      "sentence_type": "transition",
+      "claim_refs": [],
+      "grounding_required": false,
+      "grounding_refs": []
+    }
+  ],
+  "est_seconds": 22.5
+}

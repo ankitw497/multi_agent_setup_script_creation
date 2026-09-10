@@ -1,0 +1,93 @@
+{
+  "archetype": "build",
+  "selection_reason": "The source repeatedly introduces a limitation and then a mechanism that solves it.",
+  "source_evidence": ["scene_03: raw similarity introduced", "scene_06: scaling solves the magnitude problem"],
+  "rejected_archetypes": {
+    "mystery": "No genuine hidden cause is investigated.",
+    "experiment": "No competing methods are evaluated."
+  },
+  "story_promise": "By the end you can reason about why attention needs each of its parts.",
+  "central_question": "How does a token decide what to pay attention to?",
+  "question_chain": ["What should a token compare?", "Why divide by sqrt(d_k)?", "How do scores become weights?"],
+  "title": {
+    "candidates": ["Why Attention Divides by Root D_k", "The Hidden Reason Attention Scales"],
+    "chosen": "The Hidden Reason Attention Scales",
+    "promise": "you'll know exactly why scaling exists"
+  },
+  "hook": {
+    "viewer_problem": "Two tokens can look similar for the wrong reason.",
+    "tension": "Raw dot products blow up as dimension grows.",
+    "promise": "there's a one-line fix, and it's not arbitrary",
+    "open_loop": "why does this fix work",
+    "must_not_reveal_yet": ["the exact scaling formula"]
+  },
+  "cta": {
+    "max_ctas": 2,
+    "primary_after_beat": "B03",
+    "intent": "VALUE_LINKED",
+    "end_after_final_payoff": true
+  },
+  "beats": [
+    {
+      "beat_id": "B01",
+      "purpose": "establish the need for relevance scoring",
+      "archetype_role": "desired_capability",
+      "archetype_stage": "desired_capability",
+      "source_unit_ids": ["scene_01"],
+      "viewer_question_before": "how does a token know what matters?",
+      "answer_or_payoff": "",
+      "next_question": "what should it compare?",
+      "learning_objective": "the viewer understands relevance must come from comparison",
+      "forward_driver": "unresolved capability: no way to compare tokens yet",
+      "beat_function": "setup",
+      "new_information": true,
+      "payoff": false,
+      "visual_mode_change": true,
+      "question_progress": "none",
+      "concept_density": "low"
+    },
+    {
+      "beat_id": "B03",
+      "purpose": "reveal the scaling fix",
+      "archetype_role": "solution",
+      "archetype_stage": "problem_to_solution_pair",
+      "source_unit_ids": ["scene_06"],
+      "viewer_question_before": "why do large dot products cause trouble?",
+      "answer_or_payoff": "scaling keeps softmax well-behaved regardless of dimension",
+      "next_question": "how do scaled scores become usable weights?",
+      "learning_objective": "the viewer can explain why sqrt(d_k) specifically",
+      "forward_driver": "unresolved limitation: softmax saturates on large logits",
+      "beat_function": "reveal",
+      "new_information": true,
+      "payoff": true,
+      "visual_mode_change": true,
+      "question_progress": "resolved",
+      "concept_density": "high"
+    }
+  ],
+  "mini_payoffs": [
+    {"after_beat": "B03", "payoff": "scaling is a variance-control fix, not an arbitrary constant", "opens": "how weights are produced"}
+  ],
+  "ending": {
+    "resolve_hook": "the fix is sqrt(d_k), and now you know why",
+    "compressed_mental_model": "compare, score, scale, normalize, retrieve",
+    "capstone_payoff": "you can now predict how attention behaves as models get wider",
+    "viewer_can_now": "explain why scaled dot-product attention scales by sqrt(d_k) instead of a fixed constant",
+    "next_video_bridge": "but every token still attends to every other token — that's the next problem"
+  },
+  "scene_plan": [
+    {
+      "scene_id": "scene_08",
+      "beat_id": "B03",
+      "archetype_role": "solution",
+      "narrative_beat": "reveal",
+      "engine": "remotion",
+      "narrative_job": "show the scaling operation applied to a real Q/K pair",
+      "visual_importance": "hero",
+      "visual_description": "the QK^T matrix with the scaling divisor animated in",
+      "word_budget": 65,
+      "components": ["math_block", "hero_diagram"],
+      "semantic_objects": [{"semantic_object_id": "attention_matrix", "continuity": "continues_from_previous"}]
+    }
+  ]
+}

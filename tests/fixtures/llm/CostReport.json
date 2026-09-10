@@ -1,0 +1,16 @@
+{
+  "run_id": "2026-09-10_attention_v01",
+  "billed_usd": 0.41,
+  "target_usd": 0.40,
+  "hard_cap_usd": 1.00,
+  "estimate_usd": 0.38,
+  "by_agent": {
+    "story_lead": {"billed_microusd": 190000, "notional_microusd": 0, "calls": 3, "cache_saved_microusd": 110000},
+    "review_lead": {"billed_microusd": 220000, "notional_microusd": 0, "calls": 6, "cache_saved_microusd": 40000},
+    "narration_lead": {"billed_microusd": 0, "notional_microusd": 310000, "calls": 3, "cache_saved_microusd": 0}
+  },
+  "by_stage": {"facts": 30000, "plan": 160000, "review": 170000, "revision": 50000},
+  "by_revision_cycle": {"0": 360000, "1": 50000},
+  "cache_saved_microusd": 150000,
+  "escalations": ["C5 -> gemini_review_strong (voice AMBER)"]
+}

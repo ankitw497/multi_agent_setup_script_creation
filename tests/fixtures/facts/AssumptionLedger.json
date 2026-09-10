@@ -1,0 +1,13 @@
+{
+  "model": "Qwen2.5-7B",
+  "parameter_count": 7610000000,
+  "weight_dtype": "bf16",
+  "bytes_per_weight": 2,
+  "batch_size": 4,
+  "sequence_length": 2048,
+  "memory_units": "GB_decimal",
+  "hidden_size": 3584,
+  "layers": 28,
+  "kv_heads": 4,
+  "head_dim": 128
+}

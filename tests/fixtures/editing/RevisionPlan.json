@@ -1,0 +1,15 @@
+{
+  "run_id": "2026-09-10_attention_v01",
+  "revision_level": "targeted",
+  "preserve": ["hook", "beats B01-B02", "ending"],
+  "rewrite_beats": [
+    {"beat_id": "B05", "reason": "scaling appears before the magnitude problem is shown", "intent": "motivate scaling using the previous scene's dot-product behavior"}
+  ],
+  "technical_fixes": [
+    {"scene_id": "scene_09", "claim_id": "N004", "required_change": "use decimal GB consistently, not GiB"}
+  ],
+  "delete_or_compress": [
+    {"scene_id": "scene_12", "reason": "repeats the definition from scene_08"}
+  ],
+  "story_replan_required": false
+}

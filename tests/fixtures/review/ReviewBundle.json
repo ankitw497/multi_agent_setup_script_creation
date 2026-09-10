@@ -1,0 +1,33 @@
+{
+  "run_id": "2026-09-10_attention_v01",
+  "hard_failures": [],
+  "issues": [
+    {
+      "issue_id": "I001",
+      "severity": "minor",
+      "category": "repetition",
+      "layer": "NARRATION",
+      "scene_ids": ["scene_10", "scene_12"],
+      "problem": "scene_12 repeats the role of Value already established in scene_08",
+      "why_it_matters": "redundant explanation slows pacing without adding information",
+      "recommended_intent": "compress scene_12's restatement to one clause",
+      "repair_owner": "narration_lead"
+    }
+  ],
+  "diagnostics": [
+    {
+      "dimension": "burstiness",
+      "band": "GREEN",
+      "evidence": "burstiness 0.55, within band 0.47-0.63",
+      "value": 0.55,
+      "target": "0.47-0.63"
+    },
+    {
+      "dimension": "payoff_gap",
+      "band": "AMBER",
+      "evidence": "82 seconds between scene_09 and scene_13 with no payoff or visual change",
+      "value": 82.0,
+      "target": "<=75-90s"
+    }
+  ]
+}

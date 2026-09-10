@@ -1,0 +1,19 @@
+{
+  "run_id": "2026-09-10_attention_v01",
+  "html_path": "docs/corpus/raw_inputs/video-2.1-what-is-actually-running.html",
+  "source_hash": "sha256:def456",
+  "config": {"story": {"archetype": "auto"}, "format": {"type": "longform"}, "duration": {"target_seconds": 600}},
+  "source_units": [],
+  "claim_registry": [],
+  "assumption_ledger": null,
+  "source_brief": null,
+  "plan": null,
+  "draft_version": 0,
+  "narration": [],
+  "review_bundle": null,
+  "revision_plan": null,
+  "revision_count": 0,
+  "shorts": [],
+  "quality_report": null,
+  "status": "running"
+}

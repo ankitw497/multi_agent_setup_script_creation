@@ -1,0 +1,24 @@
+{
+  "claim_id": "C017",
+  "source_unit": "scene_08",
+  "claim": "Scaled dot-product attention divides the logits by sqrt(d_k).",
+  "type": "mechanism",
+  "numbers": [],
+  "assumptions": ["head_dim"],
+  "mode": null,
+  "stage": null,
+  "scope": "UNIVERSAL",
+  "importance": "CORE",
+  "provenance_status": "SOURCE_EXPLICIT",
+  "verification_status": "VERIFIED",
+  "evidence": [
+    {
+      "kind": "SOURCE",
+      "ref": "scene_08",
+      "excerpt": "attention scores QK^T divided by sqrt(head dimension)",
+      "verdict": "matches the source's own equation"
+    }
+  ],
+  "derived_from_claim_ids": [],
+  "inference_kind": "NONE"
+}

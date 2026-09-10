@@ -1,0 +1,13 @@
+{
+  "topic": "Scaled dot-product attention",
+  "core_question": "Why divide attention scores by sqrt(d_k)?",
+  "viewer_problem": "Dot products grow with dimension, breaking softmax.",
+  "central_insight": "Scaling controls variance so softmax stays well-behaved regardless of head dimension.",
+  "prerequisites": ["dot product", "softmax"],
+  "key_concepts": ["query", "key", "value", "scaling"],
+  "concept_dependencies": ["dot product before scaling", "scaling before softmax"],
+  "likely_confusions": ["confusing scaling with normalization"],
+  "source_constraints": ["head_dim is fixed at 128 in the worked example"],
+  "visual_opportunities": ["animate logit magnitude growing with dimension"],
+  "novelty_statement": "most practitioners know softmax exists but not why the sqrt(d_k) divisor is specifically variance control"
+}

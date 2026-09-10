@@ -1,0 +1,19 @@
+{
+  "run_id": "2026-09-10_attention_v01",
+  "final_status": "PASS_WARN",
+  "hard_gate_failures": [],
+  "diagnostics": [
+    {"dimension": "payoff_gap", "band": "AMBER", "evidence": "82s gap, scenes 9-13", "value": 82.0, "target": "<=75-90s"}
+  ],
+  "amber_count": 1,
+  "red_count": 0,
+  "pass_amber_allowance": 3,
+  "archetype_input": "auto",
+  "archetype_resolved": "build",
+  "revisions": 1,
+  "approval_checklist": [
+    {"index": 3, "question": "Is there exactly one primary story arc?", "passed": true, "is_hard_gate": true},
+    {"index": 9, "question": "Does the ending resolve what the opening promised?", "passed": true, "is_hard_gate": true}
+  ],
+  "editorial_summary": "one AMBER payoff-gap diagnostic remains; within the pass_amber_allowance"
+}

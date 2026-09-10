@@ -1,0 +1,14 @@
+{
+  "run_id": "2026-09-10_attention_v01",
+  "scene_order_ok": true,
+  "duplicate_ids": [],
+  "numeric_claim_mismatches": [],
+  "narration_hash_match": true,
+  "deictic_unresolved": [],
+  "renderer_compat_ok": true,
+  "reader_standalone_ok": true,
+  "page_parity_ok": true,
+  "screenshots": ["screenshots/scene_08_1920.png", "screenshots/scene_08_390.png"],
+  "visual_flags": [],
+  "issues": []
+}

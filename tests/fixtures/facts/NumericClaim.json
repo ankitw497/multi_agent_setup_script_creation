@@ -1,0 +1,13 @@
+{
+  "numeric_claim_id": "N001",
+  "claim_id": "C001",
+  "scene_id": "scene_06",
+  "expression": "params * bytes_per_param",
+  "variables": {"params": 7610000000, "bytes_per_param": 2},
+  "output_unit": "byte",
+  "display_value": "15.2",
+  "display_unit": "GB",
+  "tolerance": 0.01,
+  "rounding": "one decimal place",
+  "depends_on": ["parameter_count", "bytes_per_weight", "memory_units"]
+}

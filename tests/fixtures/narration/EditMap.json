@@ -1,0 +1,12 @@
+{
+  "run_id": "2026-09-10_attention_v01",
+  "revision_cycle": 1,
+  "entries": [
+    {
+      "scene_id": "scene_08",
+      "before": "We scale the dot products before softmax.",
+      "after": "That creates a new problem: as dimension grows, those dot products grow too. So before softmax, we scale them down.",
+      "change_type": "restored_causal_reasoning"
+    }
+  ]
+}

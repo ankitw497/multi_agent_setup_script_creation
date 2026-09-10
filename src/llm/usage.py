@@ -13,6 +13,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Literal
 
+from pydantic import BaseModel, Field
+
 Lane = Literal["paid_api", "subscription"]
 
 VALID_AGENTS = {"story_lead", "narration_lead", "review_lead", "html_author", "worker"}
@@ -116,3 +118,48 @@ class UsageLedger:
                 f"ledger sum={actual} microusd but expected={expected_billed_microusd} microusd "
                 f"(ledger: {self.path})"
             )
+
+
+class AgentCostSummary(BaseModel):
+    """One row of CostReport.by_agent (plan §4.1's illustrative table)."""
+
+    billed_microusd: int = 0
+    notional_microusd: int = 0
+    calls: int = 0
+    cache_saved_microusd: int = 0
+
+
+class CostReport(BaseModel):
+    """The per-script cost breakdown (plan §4.1) — what review_summary.md's cost
+    table and cost_report.json are built from. Built from a UsageLedger by
+    reporting/cost_report.py (not yet implemented); this is the shape it fills in."""
+
+    run_id: str
+    billed_usd: float = 0.0
+    target_usd: float | None = None
+    hard_cap_usd: float | None = None
+    estimate_usd: float | None = None
+    by_agent: dict[str, AgentCostSummary] = Field(default_factory=dict)
+    by_stage: dict[str, int] = Field(default_factory=dict)  # stage group -> microusd
+    by_revision_cycle: dict[int, int] = Field(default_factory=dict)  # cycle -> microusd
+    cache_saved_microusd: int = 0
+    escalations: list[str] = Field(default_factory=list)  # e.g. "C5 -> gemini_review_strong (voice AMBER)"
+
+    @classmethod
+    def from_ledger(cls, run_id: str, ledger: "UsageLedger") -> "CostReport":
+        """The one deterministic path from records to a report — no other code
+        should hand-aggregate a ledger (plan §4.1's reconciliation invariant)."""
+        by_agent_raw = ledger.by_agent()
+        by_agent = {
+            agent: AgentCostSummary(
+                billed_microusd=row["billed_microusd"],
+                notional_microusd=row["notional_microusd"],
+                calls=row["calls"],
+            )
+            for agent, row in by_agent_raw.items()
+        }
+        return cls(
+            run_id=run_id,
+            billed_usd=microusd_to_usd(ledger.total_billed_microusd()),
+            by_agent=by_agent,
+        )

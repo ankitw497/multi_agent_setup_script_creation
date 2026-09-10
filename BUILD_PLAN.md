@@ -70,18 +70,23 @@ pending your key fix, confirmed via a real request, not assumed.
 
 ---
 
-## Phase 1 — Data contracts (plan §5)
+## Phase 1 — Data contracts (plan §5) — ✅ DONE
 
-All pydantic v2, with golden fixtures, before any prompt is written. **Not started.**
+All pydantic v2, with golden fixtures, before any prompt is written.
 
-- [ ] `SourceUnit`; `Claim` (+ `provenance_status`, `verification_status`, `importance`, `derived_from_claim_ids`, `inference_kind`, `mode`, `stage`, `scope`); `NumericClaim` (`numeric_claim_id` distinct from `claim_id`, unit-aware `expression`/`variables`/`output_unit`); `AssumptionLedger`
-- [ ] `SourceBrief` (+ `novelty_statement`); `TitleContract`; `HookContract`; `CTAContract`; `StoryBeat` (+ `knowledge_delta`, `forward_driver`, observable fields); `MiniPayoff`; `EndingContract`; `StoryPlan`; `OpenLoop`; `RetentionMap`
-- [ ] `ScenePlan`; `SentenceNarration` (+ `grounding_required`/`grounding_refs`, decoupled from `sentence_type`); `SceneNarration`; `SceneHTML`
-- [ ] `CritiqueIssue`; `ReviewBundle`; `RevisionPlan`; `RenderReport`; `QualityReport`; `SeriesLedger`
-- [ ] `ShortsCandidate`; `HookEvent`; `ShortPlan` (§20.5)
-- [ ] Golden JSON fixture per model; round-trip test (`model_validate_json` → `model_dump_json` → re-validate)
+- [x] `facts/models.py` — `SourceUnit`; `Claim` (+ `provenance_status`, `verification_status`, `importance`, `derived_from_claim_ids`, `inference_kind`, `mode`, `stage`, `scope`); `VerificationEvidence`; `EvidenceRequest`; `NumericClaim` (`numeric_claim_id` distinct from `claim_id`, unit-aware `expression`/`variables`/`output_unit`); `AssumptionLedger` (open to source-declared constants via `extra="allow"`)
+- [x] `planning/models.py` — `ArchetypeSpec` (core/optional roles + driver); `SourceBrief` (+ `novelty_statement`); `TitleContract`; `HookContract`; `CTAContract` (default intent `VALUE_LINKED`, `max_ctas<=2` enforced); `StoryBeat` (+ `learning_objective`, `forward_driver`, observable fields — no numeric energy score); `MiniPayoff`; `EndingContract`; `ScenePlan` (word budget 30-100 enforced); `SemanticObject`; `StoryPlan`; `SeriesLedger`
+- [x] `planning/shorts_models.py` — `HookEvent` (0-3s enforced); `ShortsCandidate` (open multi-factor `scores` dict); `ShortPlan` (+ `micro_arc`, `short_goal`, `bridge.mode`) — confirmed to have **no** `archetype` field at all
+- [x] `narration/models.py` — `SentenceNarration` (`grounding_required` decoupled from `sentence_type`, defaults `False` until the Claim Mapper sets it); `SceneNarration`; `EditMapEntry`/`EditMap`
+- [x] `review/models.py` — `CritiqueIssue` (`repair_owner` restricted to agents that actually rewrite); `DiagnosticResult` (banded, always carries evidence); `ReviewBundle`
+- [x] `editing/models.py` — `RewriteBeat`, `TechnicalFix`, `DeleteOrCompress`, `RevisionPlan`
+- [x] `verification/models.py` — `RenderReport` (+ `reader_standalone_ok`/`page_parity_ok` for the §12.0 dual-audience contract); `ApprovalQuestion`; `QualityReport` (`final_status` restricted to the four §14 values)
+- [x] `orchestration/state.py` — `PipelineState`, confirmed its own `model_dump_json()` round-trips (the property the checkpoint/resume design depends on)
+- [x] `llm/usage.py` — `AgentCostSummary`, `CostReport` (+ `CostReport.from_ledger()`, the one deterministic path from records to a report)
+- [x] Golden JSON fixtures under `tests/fixtures/<package>/` for every aggregate/substantial model (17 fixture files); simpler "leaf" models round-tripped from inline literals in their test file instead — see the strategy note in `tests/conftest.py`
+- [x] One type-level design choice worth flagging: `Archetype`/`ArchetypeSpec.archetype` is a `Literal` of the six real archetypes with **no `"auto"` option** — so "archetype resolved to auto" (a §9 hard-gate failure) is unrepresentable by construction, not just checked at runtime. Confirmed by `test_archetype_literal_excludes_auto`.
 
-**Done when (plan):** *"schemas round-trip; no prompts yet."*
+**Status: 109/109 unit tests passing** (55 new this phase). **Done when (plan):** *"schemas round-trip; no prompts yet"* — met; zero prompts were written to build this phase.
 
 ---
 

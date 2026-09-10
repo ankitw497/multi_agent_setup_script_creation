@@ -1,0 +1,14 @@
+{
+  "id": "scene_08",
+  "heading": "Scaling before softmax",
+  "level": 2,
+  "text": "As head dimension grows, dot products grow too, so we scale by sqrt(d_k).",
+  "equations": ["QK^T / sqrt(d_k)"],
+  "diagrams": ["attention_matrix"],
+  "callouts": [],
+  "code": [],
+  "numbers": ["128"],
+  "js_literals": [],
+  "dom_path": "body > section#scene_08",
+  "structure_confidence": 0.95
+}

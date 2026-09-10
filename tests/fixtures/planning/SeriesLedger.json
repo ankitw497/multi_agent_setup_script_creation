@@ -1,0 +1,9 @@
+{
+  "series_id": "gpu-memory",
+  "shared_assumptions": {"model": "Qwen2.5-7B", "parameter_count": "7.61B"},
+  "terms_taught": {"KV cache": "video-1.2", "hidden size": "video-2.1"},
+  "hooks_used": ["same OOM, four different causes"],
+  "analogies_used": ["memory as a shared apartment"],
+  "viewer_can_now_by_video": {"video-1.1": "diagnose which memory component filled the GPU"},
+  "shorts_by_video": {"video-1.1": ["short-1.1a", "short-1.1b"]}
+}
