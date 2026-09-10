@@ -1,0 +1,321 @@
+# Error log
+
+A running record of every real bug or design gap found while building this pipeline —
+distinct from `BUILD_PLAN.md` (which tracks *progress*) and `IMPLEMENTATION_PLAN.md`
+(which is the frozen *design*). Almost every entry here was found by actually running
+code against real data (the `project/attention_series/` source, or a live paid call),
+not by inspection alone — that's deliberate: unit tests with fake agents can't surface
+most of these, since a fake never produces the malformed, incomplete, or surprising
+output a real model does.
+
+**Convention:** append new entries at the bottom with the next `ERR-NNN` id. Each entry
+should be able to stand alone: what broke, the concrete evidence (real numbers/output,
+not "it didn't work"), the root cause, the fix, and the regression test that now locks
+it in. Mark `Live cost` when a paid call was involved. Keep `Status` accurate — a bug
+found and not yet fixed is still worth logging.
+
+| Field | Meaning |
+|---|---|
+| **Severity** | `critical` (wrong output shipped silently), `major` (pipeline crash / real gap), `minor` (cosmetic, caught before it shipped) |
+| **Status** | `fixed` / `open` |
+
+---
+
+## ERR-001 — Chrome-stripping deleted real content
+**Date:** 2026-09-10 · **Severity:** critical · **Status:** fixed · **Component:** `extraction/html_parser.py`
+
+A bare `"footer"` chrome-stripping selector was meant to remove only the page footer,
+but this design system also renders `.diagram-caption` and `.math-block` as `<footer>`
+tags — so every diagram caption and equation block in the real source was silently
+deleted before extraction ever saw them.
+
+**Fix:** scoped the selector to `.page-footer` specifically.
+**Test:** `tests/extraction/test_profiles.py::test_guide_extraction_recovers_footer_tagged_diagrams_and_equations`
+
+---
+
+## ERR-002 — Number-sweep regex vocabulary too narrow
+**Date:** 2026-09-10 · **Severity:** minor · **Status:** fixed · **Component:** `extraction/profiles/base.py`
+
+Realistic domain phrasing ("128 dimensions") wasn't recognized as a number because
+`dimensions`/`dims` weren't in the accepted-unit list.
+
+**Fix:** added `dimensions?|dims?` to `_NUMBER_RE`.
+
+---
+
+## ERR-003 — Formula parser rejected the "~" approximation marker outright
+**Date:** 2026-09-10 · **Severity:** major · **Status:** fixed · **Component:** `facts/seeds.py`
+
+A real source formula (`"~40.4M × 2 bytes"`) failed to parse at all — the parser had no
+handling for a leading `~`, so an author's own explicit "this is approximate" signal
+caused a hard failure instead of a looser check.
+
+**Fix:** `~` now parses normally, with a wider tolerance (0.05 vs 0.01) and a note
+(`"one or more factors were marked approximate (~)"`) rather than being ignored or
+rejected. `facts/seeds.py`.
+
+---
+
+## ERR-004 — Gemini 1.5-flash/1.5-pro fully retired
+**Date:** 2026-09-10 · **Severity:** major · **Status:** fixed · **Component:** `config/models.yaml`, `llm/backends/litellm_backend.py`
+
+A live call 404'd. Google's own error response named the exact replacements.
+
+**Fix:** repinned to `gemini-3.6-flash` (cheap tier) / `gemini-3.1-pro-preview` (strong
+tier). `config/models.yaml` documents the `ListModels` probe used to find this, for next
+time an id 404s.
+
+---
+
+## ERR-005 — Gemini flash reasons by default, silently consuming the entire output budget
+**Date:** 2026-09-10 · **Severity:** critical · **Status:** fixed · **Component:** `llm/backends/litellm_backend.py`
+
+A small `max_tokens` cheap-tier call returned **empty `content`** for real money
+($0.0003645) — the model spent its whole allowance on hidden reasoning tokens with
+nothing left for visible output.
+
+**Fix:** `reasoning_effort` support added to `LiteLLMBackend.call()` (`"none"` for the
+cheap tier); `CallResult.reasoning_tokens` now tracked separately from `output_tokens`
+so this failure mode is visible, not silent, if it recurs elsewhere.
+**Test:** `tests/llm/test_litellm_backend.py::test_call_result_reports_reasoning_tokens_separately_from_output_tokens`
+
+---
+
+## ERR-006 — Multi-model `modelUsage` envelope: wrong model identified
+**Date:** 2026-09-10 · **Severity:** critical · **Status:** fixed · **Component:** `llm/backends/claude_cli.py`
+
+A single `claude -p --model sonnet` call was observed to log **two** entries in the
+envelope's `modelUsage`: `claude-sonnet-5` (182 in / 9 out — the real answer) *and* an
+internal `claude-haiku-4-5-20251001` entry (525 in / 12 out — an internal sub-step, even
+in headless `-p` mode). The original parser took `modelUsage`'s first dict key, which
+happened to be Haiku — every Sonnet call would have silently mis-attributed its
+resolved model.
+
+**Fix:** `_identify_resolved_model()` now matches token counts against the envelope's
+top-level `usage` block instead of trusting dict key order.
+**Tests:** `test_identifies_resolved_model_from_multi_model_envelope`,
+`test_dict_key_order_alone_would_have_picked_the_wrong_model` (`tests/llm/test_claude_cli_backend.py`).
+
+---
+
+## ERR-007 — Subscription CLI 120s timeout too tight for real batched calls
+**Date:** 2026-09-10 · **Severity:** major · **Status:** fixed · **Component:** `llm/backends/claude_cli.py`
+
+An 11-source-unit (~3300-word) batched Haiku claim-extraction call exceeded the 120s
+default subprocess timeout and was killed mid-call.
+
+**Fix:** default raised to 300s, with a per-call `timeout_s` override threaded through
+`agents/base.py` → `llm/client.py` → the backend, since larger real payloads over a
+complex schema legitimately need more wall-clock (subscription lane = quota, not
+billed time, so a generous default costs nothing but patience).
+
+---
+
+## ERR-008 — CM and C1/C2b were collapsed onto one `review_lead` agent
+**Date:** 2026-09-10 · **Severity:** major · **Status:** fixed · **Component:** `orchestration/pipeline.py`
+
+`PipelineAgents` originally had a single `review_lead` field serving both the Claim
+Mapper (CM — mechanical, meant to be cheap/flash-tier by design, plan §2.2) and C1/C2b
+(correctness-critical, meant to be strong-tier, no cheap fallback). Collapsing them
+meant CM was either run at strong-tier cost or C1/C2b at flash-tier
+quality — neither intended.
+
+**Fix:** split into a separate `cm_agent` (flash tier) field alongside `review_lead`
+(strong tier).
+
+---
+
+## ERR-009 — `LLMClient` built by hand without a repair function
+**Date:** 2026-09-10 · **Severity:** major · **Status:** fixed · **Component:** `llm/client.py`
+
+The first live end-to-end orchestrator run crashed with a plain `JSONDecodeError` from
+C2b's response — not a schema mismatch, malformed JSON outright, plausible given the
+payload size (61 claims + a full narration draft). The architecture always specified
+that malformed paid-lane output gets repaired on Haiku, free, before reaching a later
+stage (plan §3.4) — but the e2e script constructed `LLMClient` directly, without a
+`repair_fn`, so that safety net was never wired in. This is exactly the class of gap
+that only running the *whole* pipeline surfaces: every stage's own unit tests use a
+`FakeAgent` that never produces malformed output.
+
+**Fix:** `llm/repair.py::make_haiku_repair_fn` + `llm/client.py::make_llm_client` — now
+**the one correct way** to construct a real `LLMClient`; it always wires the repair
+function in, so this mistake can't be made by a future caller.
+**Test:** `tests/llm/test_client_factory.py` (both cases: repair_fn always present, and
+it actually uses the subscription backend).
+
+---
+
+## ERR-010 — A2 could not satisfy an aggregate word-budget constraint through prompting alone
+**Date:** 2026-09-10 · **Severity:** critical · **Status:** fixed (worked around structurally, not prompt-tuned) · **Component:** `planning/story_planner.py`, `verification/hard/structure.py`
+
+Three separate live A2 runs against the same real source (~1670-word / 600s target)
+returned scene plans totaling 320, then 460, then 480 words — even after the prompt was
+given the exact arithmetic (`target_duration_seconds / 60 * 167`) and an explicit
+expected scene-count range. **This is not a prompt-wording problem**: LLMs are
+reliably unreliable at satisfying an aggregate constraint (a sum across many generated
+items) through instruction alone, however precisely stated.
+
+**Fix:** a deterministic hard check, `verification/hard/structure.py::check_word_budget_matches_target`,
+catches this mechanically every time instead of relying on a better prompt. Validated
+against both real saved plans on disk (ratios 0.19, 0.28 — both correctly flagged).
+
+---
+
+## ERR-011 — A2 beats returned `source_unit_ids: []`
+**Date:** 2026-09-10 · **Severity:** major · **Status:** fixed · **Component:** `planning/story_planner.py`
+
+Every beat in a real run came back with an **empty** `source_unit_ids` — not because the
+model ignored an instruction, but because the prompt never actually asked for that
+field to be populated at all. Silently dropped most of an 11-section source's content
+from ever being covered.
+
+**Fix:** `TASK_PROMPT` now explicitly instructs populating it ("never leave this
+empty").
+**Test:** `tests/planning/test_story_planner.py::test_prompt_instructs_populating_source_unit_ids`
+
+---
+
+## ERR-012 — Archetype instability: three live runs, three different (wrong) answers
+**Date:** 2026-09-10 · **Severity:** critical · **Status:** fixed (root cause: ERR-013 + ERR-014) · **Component:** `planning/story_planner.py`
+
+Three live A2 runs against the identical real source returned three different
+archetypes (`foundation`, `foundation`, `derivation`) — none of them `build`, which the
+user's own separate, existing render pipeline had already independently determined was
+correct for this exact source. This was the symptom; ERR-013 and ERR-014 were the root
+cause, found by investigating *why* A2 kept missing evidence that should have been
+decisive.
+
+---
+
+## ERR-013 — Root cause of ERR-012: extraction silently deleted the strongest archetype evidence
+**Date:** 2026-09-10 · **Severity:** critical · **Status:** fixed · **Component:** `extraction/html_parser.py`
+
+The source's `<footer class="page-footer">` held an author-written "Production notes ·
+target pacing" section — a timestamped `.pipeline-step` plan (`Problem → Mini payoff →
+... → Score creates a new problem → ... → New limitations → ... → Payoff and Part 2
+bridge`), i.e. the author's own account of the story's `build` shape. `.page-footer` is
+chrome-stripped wholesale (correctly, per ERR-001's fix — it's *mostly* nav-adjacent
+captions on this source) — but that one blanket rule discarded the production notes
+right along with the chrome, before A1 or A2 ever saw them.
+
+**Fix:** `_extract_production_notes()` runs on the *unstripped* soup, pulls any
+`.pipeline-step` content into its own `production_notes` `SourceUnit` (via a new shared
+`extract_pipeline_steps()` helper), and only then lets `_strip_chrome()` remove the
+rest. Gracefully absent (returns `None`, adds nothing) on sources with no such section —
+**this will not exist on every source**, and nothing downstream (hard checks, archetype
+specs) depends on it existing.
+**Tests:** `tests/extraction/test_html_parser.py` — three tests, including one against
+the real source file and one confirming a plain footer with no pipeline steps produces
+no such unit.
+
+---
+
+## ERR-014 — A2 and C1 only ever saw compressed summaries, never the source's real content
+**Date:** 2026-09-10 · **Severity:** critical · **Status:** fixed · **Component:** `planning/story_planner.py`, `review/story_critic.py`, `orchestration/pipeline.py`
+
+Even with ERR-013 fixed, `plan_story()` (A2) only received A1's `SourceBrief` — a lossy
+distillation — and `critique_story()` (C1) received **no source content at all**, only
+the plan's own self-description. Neither could independently weigh direct evidence
+(like the production notes) against A1's or A2's own summarization choices.
+
+**Fix:** both now take a `source_units: list[SourceUnit]` parameter with the real
+content; `orchestration/pipeline.py` threads it through the initial A2 call, the A2
+replan call, and the C1 critique call. Both prompts instruct treating an author's own
+production notes / storyboard plan as strong direct evidence **when present** — phrased
+conditionally, since most sources won't have one.
+**Live cost:** $0.0505 for one targeted validation call — re-ran A2 with the fix and it
+correctly resolved `archetype: build`, matching the user's independent pipeline.
+**Tests:** `tests/planning/test_story_planner.py`, `tests/review/test_story_critic.py`,
+`tests/orchestration/test_pipeline.py::test_source_units_reach_both_a2_replan_and_c1_critique`.
+
+---
+
+## ERR-015 — Strong-tier Gemini reasoning was unbounded, driving up real cost
+**Date:** 2026-09-10 · **Severity:** major · **Status:** fixed · **Component:** `config/models.yaml`
+
+`gemini_review_strong` (C1/C2a/C2b) had `reasoning_effort: null` — "provider default,"
+which is unbounded reasoning depth, not a deliberately-sized one. A completed live e2e
+run spent $0.218 across 11 paid calls partly because of this.
+
+**Fix:** `reasoning_effort: "low"`. Verified with two minimal calls (not a full
+re-run): a `max_tokens=20` test was caught as **misleading** (too small a budget for a
+fair comparison) before drawing a conclusion; a `max_tokens=300` retest showed `"low"`
+used fewer reasoning tokens (261 vs 285) *and*, more importantly, actually completed its
+answer, while default ran out of budget mid-sentence.
+**Test:** `tests/agents/test_factories.py::test_review_lead_strong_tier_caps_reasoning_to_low`
+
+---
+
+## ERR-016 — A2's replan was blind: no feedback from C1/A3 was ever given back to it
+**Date:** 2026-09-10 · **Severity:** major · **Status:** fixed · **Component:** `orchestration/pipeline.py`, `planning/story_planner.py`
+
+The disagreement-resolution path (C1 raises a critical issue → hard failure → REVISE →
+A3 decides `story_replan_required` → orchestrator reruns A2) reran `plan_story()` with
+the **exact same inputs** as the first attempt — `source_brief`, `claims`,
+`source_units`, unchanged. A2 never learned *why* its previous plan was rejected, so a
+second wrong answer on replan was just as likely as a corrected one; the only thing
+protecting correctness was A2 getting lucky (or the ERR-014 fix already being enough
+that replan rarely triggers for this specific defect).
+
+**Fix:** new `ReplanFeedback` contract (`planning/models.py`) carrying the previous
+archetype, C1's critique issues, and the structural findings; `plan_story()` takes it as
+an optional `replan_feedback` parameter and the prompt instructs directly addressing
+every item rather than silently repeating the same plan. `orchestration/pipeline.py`
+builds it from `bundle.issues` and the just-computed `structural` findings on every
+REPLAN action.
+**Tests:** `tests/planning/test_story_planner.py::test_replan_feedback_is_passed_through_on_a_replan`,
+`tests/orchestration/test_pipeline.py::test_a2_replan_receives_the_prior_rejection_reason_not_a_blind_retry`.
+
+---
+
+## ERR-017 — Dead code: `MAX_MAX_MAJOR_REVISIONS if False else ...`
+**Date:** 2026-09-10 · **Severity:** minor · **Status:** fixed (caught before it shipped) · **Component:** `orchestration/pipeline.py`
+
+A leftover editing artifact from an earlier draft of the bounded-loop logic. Never
+actually caused a wrong result (Python's conditional expression laziness meant the
+`if False` branch was simply dead), but confusing and sloppy. Cleaned up on sight.
+
+---
+
+## ERR-018 — `pydantic` `.model_fields` deprecation warning
+**Date:** 2026-09-10 · **Severity:** minor · **Status:** fixed · **Component:** test suite
+
+`issues[0].model_fields` (instance access) is deprecated in pydantic 2.11+ in favor of
+`type(issues[0]).model_fields` (class access). Fixed at both call sites
+(`tests/review/test_story_critic.py`, `tests/review/test_models.py`).
+
+---
+
+## ERR-019 — Test fixture violated the model's own hard bound
+**Date:** 2026-09-10 · **Severity:** minor · **Status:** fixed · **Component:** test suite
+
+An early version of a pipeline test used `scene_words=10`, but `ScenePlan.word_budget`
+has a hard floor of 30 (plan §9: 30-100 hard, 40-80 preferred) — pydantic correctly
+rejected it. Not a product bug; the test itself was invalid. Fixed to use `scene_words=30`.
+
+---
+
+## ERR-020 — e2e validation script bugs (tooling, not pipeline defects)
+**Date:** 2026-09-10 · **Severity:** minor · **Status:** fixed · **Component:** ad-hoc validation scripts (not committed)
+
+Two slips in throwaway e2e scripts used to drive live validation, not in the pipeline
+itself: (1) a v02 re-run script forgot to save `source_brief.json`, worked around by
+loading v01's instead; (2) see ERR-009 — the script constructed `LLMClient` by hand,
+which is what surfaced that gap in the first place. Logged here for completeness since
+they're what led to a real product fix (ERR-009), not because the scripts themselves
+matter.
+
+---
+
+## Open items (not yet bugs, flagged for future attention)
+
+- **Targeted rewrite (B2) is not yet implemented.** When A3 chooses `TARGETED_REWRITE`
+  over a full replan, the orchestrator currently just logs the intent and re-verifies
+  the same narration unchanged (`orchestration/pipeline.py`) — this is an explicit V1A
+  scope note, not a silent gap, but it means the revision-budget-exhaustion path for
+  this branch is only exercised structurally, never by an actual rewrite.
+- **Production notes (ERR-013) is markup-specific.** The fix looks for
+  `.page-footer .pipeline-step` — the exact shape found on one real source. A
+  differently-marked-up "author's own plan" section on a future source would need its
+  own extraction rule; nothing generalizes this automatically yet.

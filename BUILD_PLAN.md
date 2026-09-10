@@ -4,6 +4,8 @@ This is the "what's actually built" tracker. `IMPLEMENTATION_PLAN.md` is the
 frozen design (v3.2) and does not track progress — this file does, and gets
 its checkboxes updated as work lands. Section refs (`§N`) point into
 `IMPLEMENTATION_PLAN.md` unless marked "guide §N" (`SYSTEM_DESIGN_GUIDE.md`).
+Every real bug found while building this (not just design notes) is logged
+in full in `ERROR_LOG.md` — this file only summarizes them inline.
 
 Legend: `[x]` done · `[~]` partial/in progress · `[ ]` not started.
 

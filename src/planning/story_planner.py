@@ -12,7 +12,7 @@ from facts.models import AssumptionLedger, Claim, SourceUnit
 from llm.budget import BudgetCounter
 
 from .archetypes import ALL_ARCHETYPES, load_archetype_specs
-from .models import SourceBrief, StoryPlan
+from .models import ReplanFeedback, SourceBrief, StoryPlan
 
 TASK_PROMPT = """\
 Resolve ONE primary archetype for this source and build its full story
@@ -93,6 +93,16 @@ or similar meta-commentary about how the piece is meant to be built, treat
 it as strong direct evidence: it is the author's own account of the
 structure, not a pattern you have to infer from the raw material. Weigh it
 accordingly against the classification order above.
+
+If `replan_feedback` is present, this is NOT a first attempt -- your
+previous plan (archetype: `previous_archetype`) was rejected for the
+specific reasons listed in `critique_issues` and `structural_issues`. Do
+not silently repeat `previous_archetype` unless you can directly refute
+every critique issue that names a better-supported alternative. Every
+structural issue must be visibly addressed in this new plan (e.g. if
+specific source unit ids were listed as uncovered, this plan's beats must
+now actually cover them; if the word budget was short, this plan's scene
+count and per-scene budgets must close that gap for real, not nominally).
 """
 
 
@@ -123,6 +133,7 @@ def plan_story(
     story_lead: Agent, budget: BudgetCounter, target_duration_seconds: float,
     source_units: list[SourceUnit],
     archetype_override: str | None = None,
+    replan_feedback: ReplanFeedback | None = None,
 ) -> StoryPlan:
     payload = {
         "source_brief": source_brief.model_dump(),
@@ -133,6 +144,7 @@ def plan_story(
         "planning_wpm": 167,
         "archetype_reference": _archetype_reference_payload(),
         "archetype_override": archetype_override,  # None means "auto": classify freely
+        "replan_feedback": replan_feedback.model_dump() if replan_feedback else None,
     }
     plan = story_lead.run(
         pass_id="A2", mode="PLAN", task_prompt=TASK_PROMPT,

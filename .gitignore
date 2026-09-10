@@ -11,6 +11,7 @@ runs/
 !SYSTEM_DESIGN_GUIDE.md
 !README.md
 !BUILD_PLAN.md
+!ERROR_LOG.md
 project/
 
 .venv/

@@ -20,7 +20,7 @@ from facts.models import AssumptionLedger, Claim, SourceUnit
 from llm.budget import BudgetCounter
 from narration.generator import generate_narration
 from narration.models import SceneNarration
-from planning.models import SourceBrief, StoryPlan
+from planning.models import ReplanFeedback, SourceBrief, StoryPlan
 from planning.story_planner import plan_story
 from review.aggregator import aggregate_review
 from review.claim_mapper import map_claims
@@ -143,9 +143,19 @@ def run_story_and_narration_loop(
                 log.append("replan budget exhausted -> FAIL")
                 return PipelineResult(plan, narration, bundle, "FAIL", story_replans_used, major_revisions_used, log)
             story_replans_used += 1
+            feedback = ReplanFeedback(
+                previous_archetype=plan.archetype,
+                critique_issues=[
+                    {"severity": i.severity, "category": i.category, "problem": i.problem,
+                     "recommended_intent": i.recommended_intent}
+                    for i in bundle.issues
+                ],
+                structural_issues=[{"code": i.code, "detail": i.detail} for i in structural],
+            )
             plan = plan_story(
                 source_brief, claims, ledger, agents.story_lead, budget,
                 target_duration_seconds, source_units, archetype_override,
+                replan_feedback=feedback,
             )
             narration = generate_narration(plan, claims, agents.narration_lead)
             log.append(f"A2 replan #{story_replans_used}: archetype={plan.archetype}")

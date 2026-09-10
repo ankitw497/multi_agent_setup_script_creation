@@ -41,6 +41,18 @@ class ArchetypeSpec(BaseModel):
     driver: str  # e.g. "unanswered cause" for mystery (plan §10.2)
 
 
+class ReplanFeedback(BaseModel):
+    """What made the previous A2 attempt get rejected, given back on replan so
+    A2 doesn't just retry blind with identical inputs (a real gap found
+    2026-09-10: the replan call used to rerun plan_story() with the exact
+    same source_brief/claims/source_units and nothing else, so a second
+    wrong answer was just as likely as a corrected one)."""
+
+    previous_archetype: str
+    critique_issues: list[dict] = Field(default_factory=list)  # severity/category/problem/recommended_intent
+    structural_issues: list[dict] = Field(default_factory=list)  # code/detail
+
+
 class SourceBrief(BaseModel):
     """What A1 establishes about the source before any story shape is chosen (plan §5)."""
 

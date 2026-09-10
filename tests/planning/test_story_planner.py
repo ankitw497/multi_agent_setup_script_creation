@@ -146,3 +146,49 @@ def test_passes_target_duration_and_planning_wpm():
     payload = story_lead.calls[0]["payload"]
     assert payload["target_duration_seconds"] == 900
     assert payload["planning_wpm"] == 167
+
+
+def test_replan_feedback_defaults_to_none_on_a_first_attempt():
+    story_lead = FakeStoryLead(make_plan())
+    from planning.models import SourceBrief
+
+    plan_story(
+        SourceBrief(topic="t", core_question="q", viewer_problem="p", central_insight="i"),
+        [], AssumptionLedger(), story_lead, BudgetCounter(tier=DEFAULT_TIERS["longform"]),
+        target_duration_seconds=600, source_units=[],
+    )
+    assert story_lead.calls[0]["payload"]["replan_feedback"] is None
+
+
+def test_replan_feedback_is_passed_through_on_a_replan():
+    """Real gap found 2026-09-10: the replan call used to rerun plan_story()
+    with the exact same inputs as the first attempt -- A2 never learned WHY
+    its previous plan was rejected, so a second wrong answer was just as
+    likely as a corrected one. A2 must now see the critic's and A3's actual
+    reasoning."""
+    from planning.models import ReplanFeedback, SourceBrief
+
+    story_lead = FakeStoryLead(make_plan(archetype="build"))
+    feedback = ReplanFeedback(
+        previous_archetype="foundation",
+        critique_issues=[{"severity": "critical", "category": "archetype",
+                           "problem": "explicit problem->fix chain", "recommended_intent": "replan as build"}],
+        structural_issues=[{"code": "word_budget_mismatch", "detail": "480 vs 1670 words"}],
+    )
+
+    plan_story(
+        SourceBrief(topic="t", core_question="q", viewer_problem="p", central_insight="i"),
+        [], AssumptionLedger(), story_lead, BudgetCounter(tier=DEFAULT_TIERS["longform"]),
+        target_duration_seconds=600, source_units=[], replan_feedback=feedback,
+    )
+    payload = story_lead.calls[0]["payload"]
+    assert payload["replan_feedback"]["previous_archetype"] == "foundation"
+    assert payload["replan_feedback"]["critique_issues"][0]["category"] == "archetype"
+    assert payload["replan_feedback"]["structural_issues"][0]["code"] == "word_budget_mismatch"
+
+
+def test_prompt_instructs_addressing_replan_feedback():
+    from planning.story_planner import TASK_PROMPT
+
+    assert "replan_feedback" in TASK_PROMPT
+    assert "previous_archetype" in TASK_PROMPT

@@ -154,6 +154,47 @@ def test_replan_budget_exhaustion_fails_rather_than_looping_forever():
     assert any("replan budget exhausted" in line for line in result.log)
 
 
+def test_a2_replan_receives_the_prior_rejection_reason_not_a_blind_retry():
+    """Real gap found 2026-09-10: the replan call used to rerun plan_story()
+    with the exact same inputs as the first attempt -- A2 never learned WHY
+    its plan was rejected. This proves the orchestrator now builds and
+    passes a ReplanFeedback carrying the previous archetype, C1's critique,
+    and the structural findings into the replan call."""
+    from editing.models import RevisionPlan
+
+    bad_plan = make_plan(scene_words=30, n_scenes=2, archetype="foundation")
+    good_plan = make_plan(archetype="build")
+    archetype_issue = {
+        "issue_id": "I1", "severity": "critical", "category": "archetype", "layer": "STORY",
+        "problem": "explicit problem->fix chain suggests build",
+        "why_it_matters": "x", "recommended_intent": "replan as build", "repair_owner": "story_lead",
+    }
+
+    agents = make_agents(
+        story_lead_responses={StoryPlan: [good_plan], "RevisionPlan": [RevisionPlan(run_id="r", story_replan_required=True)]},
+        narration_responses=[make_empty_narration_response(), make_empty_narration_response()],
+        review_responses={
+            "cm": [ClaimMapperOutput(sentences=[]), ClaimMapperOutput(sentences=[])],
+            "c1": [StoryCritique(issues=[archetype_issue]), StoryCritique(issues=[])],
+            "c2b": [GroundingReview(issues=[]), GroundingReview(issues=[])],
+        },
+    )
+    from planning.models import SourceBrief
+
+    run_story_and_narration_loop(
+        source_brief=SourceBrief(topic="t", core_question="q", viewer_problem="p", central_insight="i"),
+        claims=[], ledger=AssumptionLedger(), all_source_unit_ids=["u1"],
+        target_duration_seconds=600.0, agents=agents, budget=make_budget(), initial_plan=bad_plan,
+    )
+
+    a2_call = next(c for c in agents.story_lead.calls if c["pass_id"] == "A2")
+    feedback = a2_call["payload"]["replan_feedback"]
+    assert feedback["previous_archetype"] == "foundation"
+    assert feedback["critique_issues"][0]["category"] == "archetype"
+    assert feedback["critique_issues"][0]["recommended_intent"] == "replan as build"
+    assert any(i["code"] == "word_budget_mismatch" for i in feedback["structural_issues"])
+
+
 def test_source_units_reach_both_a2_replan_and_c1_critique():
     """Real gap found 2026-09-10: neither A2 nor C1 ever saw the source's
     real content (e.g. an author's own production notes) -- only A1's
