@@ -1,0 +1,9 @@
+{
+  "name": "js-literal-bridge",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Parses inline <script> JS with Acorn and extracts ONLY literal-safe top-level const/let declarations. Never executes source code (plan §6.2, Appendix G #1: node:vm is not a security boundary).",
+  "dependencies": {
+    "acorn": "^8.11.3"
+  }
+}

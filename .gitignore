@@ -11,6 +11,7 @@ runs/
 !SYSTEM_DESIGN_GUIDE.md
 !README.md
 !BUILD_PLAN.md
+project/
 
 .venv/
 __pycache__/

@@ -95,7 +95,7 @@ All pydantic v2, with golden fixtures, before any prompt is written.
 Pipeline order from §8. Nothing here is built yet; each line becomes its own
 PR-sized unit with tests before the next.
 
-- [ ] **S0** extraction — DOM + JS-literal AST (Acorn via a Node bridge; literals only, never `node:vm`) → `extraction/`
+- [x] **S0** extraction — DOM + JS-literal AST (Acorn via a Node bridge; literals only, never `node:vm`) → `extraction/` — **done, validated against real content**
 - [ ] **S2a** deterministic seeds — numbers, equations, JS constants → `AssumptionLedger`, formulas → `NumericClaim.expression`
 - [ ] **S2b** claim extraction (Haiku, batched over all source units) → `facts/claim_extract.py`
 - [ ] **S2c** normalize/dedupe/link numbers→claims → `facts/normalize.py`, `facts/ledger.py`
@@ -116,6 +116,39 @@ PR-sized unit with tests before the next.
 **Done when (plan):** *"a rough HTML becomes one coherent, verified, human-sounding script; every mutation test caught"* (mutation suite: §18).
 
 ---
+
+### S0 status detail
+
+Built: `extraction/html_parser.py` (orchestrator), `extraction/profiles/{base,guide,video_script,generic}.py`
+(pluggable, confidence-scored), `extraction/js_literal_extractor.py` + `extraction/js_bridge/`
+(a small Node+Acorn subproject — `extract_literals.js` parses literal-safe `const`/`let`
+declarations only; calls, `require`, `new`, member access are rejected and never executed).
+
+**Validated against real content, not just fixtures:**
+- All 7 files in `docs/corpus/` (raw inputs + sample outputs) correctly classified as `video_script`
+  at 0.90-1.00 confidence.
+- `video-1.1` correctly recovered its JS constants (`HIDDEN`, `LAYERS`, `KV_HEADS`, `HEAD_DIM`,
+  `PARAMS`) via the Acorn bridge — the exact literals that originally motivated the
+  parse-don't-execute design decision, now proven end to end.
+- `project/attention_series/input/video-01-attention-coherent-story.html` (a real, in-progress
+  source, not part of the original corpus) correctly classified as `guide` at 1.00 confidence,
+  11 sections, matching its true structure exactly (3 equations, 15 diagrams, 7 callouts, 15 code
+  blocks — verified against the source's own markup counts).
+
+**Two real bugs found and fixed by running against that real file, not assumed from the markup
+census:**
+1. **Chrome-stripping deleted real content.** `.diagram-caption` and `.math-block` both render as
+   `<footer>` tags in this design system; a chrome-stripping selector list had a bare `"footer"`
+   entry meant only for the page footer, and it silently deleted all of them. Fixed by scoping to
+   `.page-footer`; locked in with a regression test
+   (`test_guide_extraction_recovers_footer_tagged_diagrams_and_equations`).
+2. **The number-sweep regex's unit vocabulary was too narrow.** Realistic domain phrasing
+   ("128 dimensions") wasn't recognized because `dimensions`/`dims` weren't in the accepted-unit
+   list. Added.
+
+Committed test fixtures are small, tracked, hand-written HTML snippets under
+`tests/fixtures/extraction/` — never the real corpus (`docs/corpus/`, `project/`), both of which
+are gitignored working content and must not be a dependency of the committed test suite.
 
 ## V1A-S — Shorts slice (plan §20; depends on V1A, kept out of it)
 
