@@ -96,7 +96,7 @@ Pipeline order from §8. Nothing here is built yet; each line becomes its own
 PR-sized unit with tests before the next.
 
 - [x] **S0** extraction — DOM + JS-literal AST (Acorn via a Node bridge; literals only, never `node:vm`) → `extraction/` — **done, validated against real content**
-- [ ] **S2a** deterministic seeds — numbers, equations, JS constants → `AssumptionLedger`, formulas → `NumericClaim.expression`
+- [x] **S2a** deterministic seeds — numbers, equations, JS constants → `AssumptionLedger`, formulas → `NumericClaim.expression` — **done, cross-validated against real corpus values**
 - [ ] **S2b** claim extraction (Haiku, batched over all source units) → `facts/claim_extract.py`
 - [ ] **S2c** normalize/dedupe/link numbers→claims → `facts/normalize.py`, `facts/ledger.py`
 - [ ] **C2a** source verification (Python + local evidence broker + Gemini), cached by the §4.2/§6.5 key → `facts/verify.py`, `facts/evidence.py` — **blocked on the Gemini key fix**
@@ -116,6 +116,36 @@ PR-sized unit with tests before the next.
 **Done when (plan):** *"a rough HTML becomes one coherent, verified, human-sounding script; every mutation test caught"* (mutation suite: §18).
 
 ---
+
+### S2a status detail
+
+Built: `facts/seeds.py` — `parse_formula()` (a deterministic multiplication-chain parser for
+source-authored formula captions like `"7.61B × 2 bytes"`), `seed_assumption_ledger()`
+(top-level scalar JS literals only, passed through unchanged), `find_formula_claims()`
+(recursively finds any `{"formula": "..."}` dict at any nesting depth and turns it into a
+`NumericClaim`, regardless of a source's own JSON shape).
+
+**Two deliberate non-decisions, stated explicitly rather than guessed:**
+1. A JS scalar (`PARAMS=7.61`) is **never** renamed to a typed ledger field (`parameter_count`)
+   or unit-scaled (×1e9) automatically — that's a semantic judgement about a source's naming
+   convention, not a deterministic fact, and guessing it wrong would silently corrupt the
+   ledger. It's kept as `ledger.params = 7.61`, verbatim, and typed-field population is left to
+   an explicit later step.
+2. A messy real formula (`"CUDA init + cuDNN workspace + allocator"`, `"40.4M × 8 bytes (m + v)"`)
+   is **never partially evaluated** — it fails closed and is reported in `unparsed`, never
+   silently dropped or guessed at.
+
+**Validated against real corpus data** (`docs/corpus/sample_outputs/video-1.1-*.html`, via the
+already-working S0 pipeline): 11 of 25 real formulas parsed cleanly, matching the source's own
+claimed values exactly — `7.61B × 2 bytes` → 15.22 GB (source said 15.2 GB); the six-factor KV-
+cache formula → 117,440,512 bytes = 0.117 GB (source said ~0.12 GB). The other 14 correctly
+failed closed (additions, named non-numeric factors, parenthetical annotations) rather than
+being guessed at.
+
+**One real fix from that validation:** the parser initially rejected `"~40.4M × 2 bytes"` — a
+leading `~` is a source author's own "approximately" marker, a genuine and common pattern here,
+not noise. Fixed to parse the number normally while widening `NumericClaim.tolerance` to 0.05
+and recording a note — parsed rate went from 9/25 to 11/25 on the real file after the fix.
 
 ### S0 status detail
 
