@@ -1,0 +1,12 @@
+# Tracked on purpose: IMPLEMENTATION_PLAN.md, SYSTEM_DESIGN_GUIDE.md, LICENSE, .gitignore.
+# Everything else is working material and stays local.
+docs/
+tools/
+runs/
+*.md
+!IMPLEMENTATION_PLAN.md
+!SYSTEM_DESIGN_GUIDE.md
+.env
+__pycache__/
+*.pyc
+.DS_Store
