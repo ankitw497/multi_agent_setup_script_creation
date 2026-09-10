@@ -305,6 +305,138 @@ def test_source_units_reach_both_a2_replan_and_c1_critique():
     assert c1_call["payload"]["source_units"][0]["id"] == "production_notes"
 
 
+def _make_plan_with_rejected_archetypes(rejected_archetypes: dict) -> StoryPlan:
+    plan = make_plan()
+    return plan.model_copy(update={"rejected_archetypes": rejected_archetypes})
+
+
+def test_legitimate_dismissal_clears_the_only_hard_failure_to_pass():
+    """ERR-025's fix: C1 disputing an archetype the plan's own
+    rejected_archetypes ALREADY explicitly considered is not new evidence
+    -- A3 may dismiss it, and if it was the only hard failure, the run
+    should resolve to PASS without ever replanning."""
+    from editing.models import DismissedIssue, RevisionPlan
+
+    plan = _make_plan_with_rejected_archetypes({"derivation": "no justified equation found in the source"})
+    archetype_issue = {
+        "issue_id": "I1", "severity": "critical", "category": "archetype", "layer": "STORY",
+        "problem": "the source actually shows a derivation, not a build arc",
+        "why_it_matters": "x", "recommended_intent": "replan as derivation", "repair_owner": "story_lead",
+    }
+    agents = make_agents(
+        story_lead_responses={
+            "RevisionPlan": [RevisionPlan(
+                run_id="r", story_replan_required=False,
+                dismissed_issues=[DismissedIssue(issue_id="I1", reason="already ruled out: no justified equation found")],
+            )],
+        },
+        narration_responses=[make_empty_narration_response()],
+        review_responses={
+            "cm": [ClaimMapperOutput(sentences=[])],
+            "c1": [StoryCritique(issues=[archetype_issue])],
+            "c2b": [GroundingReview(issues=[])],
+        },
+    )
+    from planning.models import SourceBrief
+
+    result = run_story_and_narration_loop(
+        source_brief=SourceBrief(topic="t", core_question="q", viewer_problem="p", central_insight="i"),
+        claims=[], ledger=AssumptionLedger(), all_source_unit_ids=["u1"],
+        target_duration_seconds=600.0, agents=agents, budget=make_budget(), initial_plan=plan,
+    )
+
+    assert result.final_status == "PASS"
+    assert result.story_replans_used == 0  # dismissed, not replanned
+    assert any("dismissed 1 critique issue" in line for line in result.log)
+    # narration_lead only called once (B1) -- no B2/replan triggered by the dismissed issue
+    assert len(agents.narration_lead.calls) == 1
+
+
+def test_illegitimate_dismissal_naming_an_unconsidered_archetype_is_ignored():
+    """The safety rail: A3 cannot dismiss a critique naming an archetype
+    the plan never actually addressed in rejected_archetypes -- that
+    would just be A3 (GPT) overruling C1 (Gemini) on its own say-so,
+    defeating the point of an independent critic."""
+    from editing.models import DismissedIssue, RevisionPlan
+
+    plan = _make_plan_with_rejected_archetypes({"mystery": "no violated expectation found"})
+    archetype_issue = {
+        "issue_id": "I1", "severity": "critical", "category": "archetype", "layer": "STORY",
+        "problem": "the source actually shows a derivation, not a build arc",  # "derivation" never considered
+        "why_it_matters": "x", "recommended_intent": "replan as derivation", "repair_owner": "story_lead",
+    }
+    agents = make_agents(
+        story_lead_responses={
+            # Same shape as make_plan()'s known-clean fixture (not
+            # "derivation") -- this test is only about the dismissal being
+            # ignored, not about simulating a fully correct replan.
+            StoryStructure: [make_structure()], BeatSceneExpansion: make_good_expansions(),
+            "RevisionPlan": [RevisionPlan(
+                run_id="r", story_replan_required=True,
+                dismissed_issues=[DismissedIssue(issue_id="I1", reason="A3 just disagrees")],
+            )],
+        },
+        narration_responses=[make_empty_narration_response(), make_empty_narration_response()],
+        review_responses={
+            "cm": [ClaimMapperOutput(sentences=[]), ClaimMapperOutput(sentences=[])],
+            "c1": [StoryCritique(issues=[archetype_issue]), StoryCritique(issues=[])],
+            "c2b": [GroundingReview(issues=[]), GroundingReview(issues=[])],
+        },
+    )
+    from planning.models import SourceBrief
+
+    result = run_story_and_narration_loop(
+        source_brief=SourceBrief(topic="t", core_question="q", viewer_problem="p", central_insight="i"),
+        claims=[], ledger=AssumptionLedger(), all_source_unit_ids=["u1"],
+        target_duration_seconds=600.0, agents=agents, budget=make_budget(), initial_plan=plan,
+    )
+
+    assert result.story_replans_used == 1  # the dismissal was ignored -- normal replan still happened
+    assert any("without adequate grounds" in line for line in result.log)
+
+
+def test_dismissal_leaves_other_hard_failures_intact():
+    """A legitimate dismissal only removes ITS OWN hard-failure line --
+    an unrelated structural failure must still force a replan."""
+    from editing.models import DismissedIssue, RevisionPlan
+
+    bad_plan = _make_plan_with_rejected_archetypes({"derivation": "no justified equation found"})
+    bad_plan = bad_plan.model_copy(update={"scene_plan": [
+        s.model_copy(update={"word_budget": 30}) for s in bad_plan.scene_plan[:2]
+    ]})  # word_budget_mismatch: ~60 words vs ~1670 target
+    archetype_issue = {
+        "issue_id": "I1", "severity": "critical", "category": "archetype", "layer": "STORY",
+        "problem": "the source actually shows a derivation, not a build arc",
+        "why_it_matters": "x", "recommended_intent": "replan as derivation", "repair_owner": "story_lead",
+    }
+    agents = make_agents(
+        story_lead_responses={
+            StoryStructure: [make_structure()], BeatSceneExpansion: make_good_expansions(),
+            "RevisionPlan": [RevisionPlan(
+                run_id="r", story_replan_required=True,
+                dismissed_issues=[DismissedIssue(issue_id="I1", reason="already ruled out: no justified equation found")],
+            )],
+        },
+        narration_responses=[make_empty_narration_response(), make_empty_narration_response()],
+        review_responses={
+            "cm": [ClaimMapperOutput(sentences=[]), ClaimMapperOutput(sentences=[])],
+            "c1": [StoryCritique(issues=[archetype_issue]), StoryCritique(issues=[])],
+            "c2b": [GroundingReview(issues=[]), GroundingReview(issues=[])],
+        },
+    )
+    from planning.models import SourceBrief
+
+    result = run_story_and_narration_loop(
+        source_brief=SourceBrief(topic="t", core_question="q", viewer_problem="p", central_insight="i"),
+        claims=[], ledger=AssumptionLedger(), all_source_unit_ids=["u1"],
+        target_duration_seconds=600.0, agents=agents, budget=make_budget(), initial_plan=bad_plan,
+    )
+
+    assert any("dismissed 1 critique issue" in line for line in result.log)
+    assert result.story_replans_used == 1  # the word_budget_mismatch still forced a replan
+    assert result.final_status == "PASS"
+
+
 def test_a_critical_non_archetype_issue_routes_to_targeted_rewrite_not_replan():
     """A critical issue that ISN'T structural (e.g. a grounding fidelity
     problem) should let A3 choose targeted rewrite over a full replan."""

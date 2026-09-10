@@ -4,19 +4,24 @@ from editing.revision_planner import plan_revision
 from planning.models import (
     CTAContract, EndingContract, HookContract, StoryBeat, StoryPlan, TitleContract,
 )
+from review.models import CritiqueIssue
 from verification.hard.grounding import GroundingViolation
 from verification.hard.structure import StructuralIssue
 
 
-def make_plan() -> StoryPlan:
-    return StoryPlan(
-        archetype="foundation", selection_reason="x", story_promise="x", central_question="x",
+def make_plan(**overrides) -> StoryPlan:
+    base = dict(
+        archetype="foundation", selection_reason="dependency-driven concepts", story_promise="x",
+        central_question="x", source_evidence=["no violated expectation found", "no problem/fix chain found"],
+        rejected_archetypes={"build": "no problem/fix chain found", "mystery": "no violated expectation"},
         title=TitleContract(chosen="t", promise="p"),
         hook=HookContract(viewer_problem="x", tension="y", promise="z"),
         cta=CTAContract(primary_after_beat="B01"),
         ending=EndingContract(resolve_hook="x", compressed_mental_model="y", capstone_payoff="z", viewer_can_now="do x"),
         beats=[StoryBeat(beat_id="B01", purpose="x")],
     )
+    base.update(overrides)
+    return StoryPlan(**base)
 
 
 class FakeStoryLead:
@@ -72,6 +77,40 @@ def test_grounding_violations_are_passed_through_by_scene():
     plan_revision(make_plan(), [], violations, [], story_lead, BudgetCounter(tier=DEFAULT_TIERS["longform"]))
     payload = story_lead.calls[0]["payload"]
     assert payload["grounding_violations"][0]["scene_id"] == "s1"
+
+
+def test_passes_the_plans_own_reasoning_so_a3_can_weigh_a_critique_against_it():
+    """Real gap found 2026-09-10 (ERR-025): A3 never saw WHY A2 chose the
+    resolved archetype, so it had no way to judge whether a critic's
+    dispute was actually new evidence or something A2 already considered
+    and ruled out."""
+    story_lead = FakeStoryLead(RevisionPlan(run_id="r1"))
+    from llm.budget import BudgetCounter, DEFAULT_TIERS
+
+    plan_revision(make_plan(), [], [], [], story_lead, BudgetCounter(tier=DEFAULT_TIERS["longform"]))
+    payload = story_lead.calls[0]["payload"]
+    assert payload["selection_reason"] == "dependency-driven concepts"
+    assert payload["rejected_archetypes"]["build"] == "no problem/fix chain found"
+    assert "no problem/fix chain found" in payload["source_evidence"]
+
+
+def test_critique_payload_includes_issue_id_for_later_dismissal_tracking():
+    story_lead = FakeStoryLead(RevisionPlan(run_id="r1"))
+    critique = [CritiqueIssue(
+        issue_id="I1", severity="critical", category="archetype", layer="STORY",
+        problem="x", why_it_matters="y", recommended_intent="z", repair_owner="story_lead",
+    )]
+    from llm.budget import BudgetCounter, DEFAULT_TIERS
+
+    plan_revision(make_plan(), [], [], critique, story_lead, BudgetCounter(tier=DEFAULT_TIERS["longform"]))
+    assert story_lead.calls[0]["payload"]["critique_issues"][0]["issue_id"] == "I1"
+
+
+def test_prompt_instructs_narrow_dismissal_not_blanket_disagreement():
+    from editing.revision_planner import TASK_PROMPT
+
+    assert "dismissed_issues" in TASK_PROMPT
+    assert "rejected_archetypes" in TASK_PROMPT
 
 
 def test_uses_pass_id_a3_and_revision_planner_mode():

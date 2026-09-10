@@ -15,18 +15,20 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from agents.base import Agent
+from editing.models import RevisionPlan
 from editing.revision_planner import plan_revision
 from editing.targeted_rewrite import apply_targeted_rewrite
 from facts.models import AssumptionLedger, Claim, SourceUnit
 from llm.budget import BudgetCounter
 from narration.generator import generate_narration
 from narration.models import SceneNarration
+from planning.archetypes import ALL_ARCHETYPES
 from planning.models import ReplanFeedback, SourceBrief, StoryPlan
 from planning.story_planner import plan_story
 from review.aggregator import aggregate_review
 from review.claim_mapper import map_claims
 from review.grounding_verifier import verify_grounding
-from review.models import ReviewBundle
+from review.models import CritiqueIssue, ReviewBundle
 from review.story_critic import critique_story
 from review.style_critic import critique_style
 from verification.diagnostics.cta import check_cta_position
@@ -94,6 +96,45 @@ def _run_review_block(
     return narration, bundle
 
 
+def _legitimately_dismissed_issue_ids(
+    revision_plan: RevisionPlan, issues: list[CritiqueIssue], plan: StoryPlan,
+) -> set[str]:
+    """ERR-025's fix: A3 may propose dismissing a critique issue, but
+    whether that's actually honored is enforced HERE, in code, not left to
+    the model's own say-so -- C1 is a different model family specifically
+    for adversarial independence (Appendix G's "producer != validator"),
+    so A3 (same family as A2) freely overruling it on its own judgement
+    would make that independence decorative.
+
+    A dismissal is only honored when: the issue is a `critical`/`archetype`
+    finding, its `problem` text names a specific archetype, AND that
+    archetype is already a key in `plan.rejected_archetypes` (i.e. A2's own
+    reasoning already explicitly considered and gave a real reason to rule
+    it out). This is a narrow, mechanical, imperfect proxy (word matching,
+    not real semantic judgement) for "this isn't new evidence" -- any
+    archetype named that ISN'T already in `rejected_archetypes` fails this
+    check, so a genuinely novel critique can never be waved away this way.
+    """
+    issues_by_id = {i.issue_id: i for i in issues}
+    considered = {a.lower() for a in plan.rejected_archetypes}
+    legitimate: set[str] = set()
+    for dismissed in revision_plan.dismissed_issues:
+        issue = issues_by_id.get(dismissed.issue_id)
+        if issue is None or issue.severity != "critical" or issue.category != "archetype":
+            continue
+        # Naming the CURRENT archetype is expected phrasing for a dispute
+        # ("not a build arc") -- exclude it so only a proposed ALTERNATIVE
+        # has to already be in rejected_archetypes to count as "not new".
+        mentioned = {a for a in ALL_ARCHETYPES if a in issue.problem.lower()} - {plan.archetype}
+        if mentioned and mentioned.issubset(considered):
+            legitimate.add(dismissed.issue_id)
+    return legitimate
+
+
+def _remove_dismissed_hard_failures(hard_failures: list[str], dismissed_issue_ids: set[str]) -> list[str]:
+    return [f for f in hard_failures if not any(f"[{iid}]" in f for iid in dismissed_issue_ids)]
+
+
 def run_story_and_narration_loop(
     source_brief: SourceBrief,
     claims: list[Claim],
@@ -151,6 +192,32 @@ def run_story_and_narration_loop(
         revision_plan = plan_revision(
             plan, structural, grounding_violations, bundle.issues, agents.story_lead, budget,
         )
+
+        if revision_plan.dismissed_issues:
+            legitimate_ids = _legitimately_dismissed_issue_ids(revision_plan, bundle.issues, plan)
+            rejected_ids = {d.issue_id for d in revision_plan.dismissed_issues} - legitimate_ids
+            if rejected_ids:
+                log.append(f"A3 tried to dismiss {len(rejected_ids)} issue(s) without adequate grounds -- ignored")
+            if legitimate_ids:
+                bundle = ReviewBundle(
+                    run_id=bundle.run_id,
+                    hard_failures=_remove_dismissed_hard_failures(bundle.hard_failures, legitimate_ids),
+                    issues=bundle.issues, diagnostics=bundle.diagnostics,
+                )
+                log.append(
+                    f"A3 dismissed {len(legitimate_ids)} critique issue(s) already ruled out "
+                    "in the plan's own rejected_archetypes"
+                )
+                status = compute_final_status(
+                    hard_failures=bundle.hard_failures, diagnostics=bundle.diagnostics,
+                    revision_budget_remaining=any_budget_remaining,
+                )
+                if status not in ("REVISE",):
+                    log.append(f"final status after dismissal: {status}")
+                    return PipelineResult(
+                        plan, narration, bundle, status, story_replans_used, major_revisions_used, log,
+                    )
+
         action = decide_action(revision_plan)
         log.append(f"A3: action={action.value}")
 

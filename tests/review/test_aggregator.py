@@ -28,6 +28,14 @@ def test_critical_critique_issues_become_hard_failures_but_minor_ones_dont():
     assert len(bundle.issues) == 2  # both still preserved in the full issue list
 
 
+def test_critical_hard_failure_embeds_the_issue_id_for_later_dismissal_tracking():
+    """ERR-025: orchestration/pipeline.py must be able to remove exactly
+    one dismissed critique's hard-failure line, by issue_id -- never a
+    fragile text-content match."""
+    bundle = aggregate_review("r1", [], [], [make_issue("critical")], [])
+    assert "[I1]" in bundle.hard_failures[0]
+
+
 def test_a_clean_review_has_no_hard_failures():
     bundle = aggregate_review("r1", [], [], [], [])
     assert bundle.hard_failures == []

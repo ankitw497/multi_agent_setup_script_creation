@@ -1,5 +1,5 @@
 """Round-trip tests for editing/models.py (design doc §36, plan §15)."""
-from editing.models import DeleteOrCompress, RevisionPlan, RewriteBeat, TechnicalFix
+from editing.models import DeleteOrCompress, DismissedIssue, RevisionPlan, RewriteBeat, TechnicalFix
 
 from tests.conftest import roundtrip, roundtrip_fixture
 
@@ -30,3 +30,15 @@ def test_revision_plan_defaults_to_no_replan_needed():
     plan = RevisionPlan(run_id="r1")
     assert plan.story_replan_required is False
     assert plan.revision_level == "targeted"
+
+
+def test_revision_plan_defaults_to_no_dismissed_issues():
+    plan = RevisionPlan(run_id="r1")
+    assert plan.dismissed_issues == []
+
+
+def test_dismissed_issue_roundtrips():
+    roundtrip(DismissedIssue, {
+        "issue_id": "I1",
+        "reason": "already ruled out in rejected_archetypes: 'no comparison of methods present'",
+    })

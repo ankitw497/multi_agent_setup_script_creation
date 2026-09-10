@@ -462,6 +462,61 @@ recurs.
 
 ---
 
+## ERR-026 — A3 can now dismiss a re-raised archetype dispute (the ERR-022/ERR-025 fix), narrowly and mechanically enforced
+**Date:** 2026-09-10 · **Severity:** critical · **Status:** fixed · **Component:** `editing/models.py`, `editing/revision_planner.py`, `review/aggregator.py`, `orchestration/pipeline.py`
+
+Designed deliberately, not patched reactively, per the original ERR-022/ERR-025 finding. The
+core problem: A2 is required to give a real reason for rejecting every other archetype on
+every plan, so C1 (a different model family, Gemini vs GPT, specifically for adversarial
+independence) re-arguing for one of those five without adding anything new is expected
+noise -- but the pipeline had no way to recognize that, and unconditionally promoted any
+critical C1 issue to a hard failure with no path back.
+
+**The design tension this had to resolve:** simply letting A3 (same family as A2) overrule
+C1 on its own say-so would make the independent critic decorative -- exactly the
+"producer != validator" failure mode the plan guards against elsewhere (Appendix G #3/#5).
+The fix therefore has TWO layers, deliberately redundant:
+
+1. **A3 gets the plan's own evidence** (`selection_reason`, `source_evidence`,
+   `rejected_archetypes` -- previously never passed to it at all) and an explicit procedure:
+   before accepting a `category: archetype` critique at face value, check whether the
+   alternative it names is already a key in `rejected_archetypes` with a real reason: if so
+   and the critique adds nothing new, dismiss it (`RevisionPlan.dismissed_issues`, a new
+   field) citing the specific prior reason it fails to add to; only treat it as needing a
+   replan if it's genuinely new. The FIRST prompt draft (unconditional "critic raised a
+   critical archetype issue -> replan" instruction, still present from before this fix)
+   silently overrode this new paragraph -- a live test confirmed A3 still replanned every
+   time ($0.0049, 0 dismissals). Fixed by rewriting the archetype-dispute criterion itself
+   to require the check as step 1, not an afterthought appended later. Re-tested live:
+   correct dismissal, citing the exact matching prior rejection reason ($0.0063).
+2. **The dismissal is only honored in CODE, never on the model's word alone**
+   (`orchestration/pipeline.py::_legitimately_dismissed_issue_ids`): a mechanical check
+   requires the disputed issue to be `severity=critical, category=archetype`, and the
+   archetype it names (other than the plan's own current one, which is naturally mentioned
+   in any dispute of it) must already be a key in `plan.rejected_archetypes`. This is a
+   narrow, imperfect proxy (word matching, not real semantic judgement) -- deliberately
+   conservative, so a genuinely novel critique can never be waved away. A real bug caught
+   during test-writing: the first version of this check didn't exclude the plan's own
+   current archetype from the "must already be considered" set, so a dispute phrased as
+   "not a build arc" (mentioning the current archetype, as any dispute naturally would)
+   failed the check even when legitimate -- fixed before it ever reached a live call.
+
+**Live-verified end to end**, not just the isolated dismissal call above: a full pipeline
+run at the 900s target completed with **`story_replans_used: 0`** -- `build` resolved once
+and held through two rounds of targeted rewrite (99 -> 87 -> 73 hard failures, real
+incremental progress from B2), the first live run in four attempts (`v05`, `v06`, `v07`,
+`v08`) where the archetype dispute didn't derail the plan. The run still `FAIL`ed, but for
+reasons unrelated to today's fix: every remaining `grounding_policy_violation` traces to
+reusing `runs/v01`'s claims, all still `UNVERIFIED` (C2a was never run against this exact
+dataset in this validation harness -- confirmed by inspection, not assumed), plus a real
+but secondary `source_units_uncovered`/`cta.position` gap. Cost: $0.4651/24 records.
+**Tests:** `tests/editing/test_models.py`, `tests/editing/test_revision_planner.py`,
+`tests/review/test_aggregator.py`, `tests/orchestration/test_pipeline.py` (3 new tests:
+legitimate dismissal resolves to PASS, illegitimate dismissal is ignored, dismissal leaves
+unrelated hard failures intact).
+
+---
+
 ## Open items (not yet bugs, flagged for future attention)
 
 - **`review_lead` and `cm_agent` share one `agent` name in cost reporting.**

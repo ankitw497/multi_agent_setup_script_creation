@@ -22,17 +22,42 @@ Decide the MINIMUM necessary repair for this story plan and narration,
 given the findings below. You decide WHAT changes; you never write
 replacement prose, and you never alter a verified number.
 
-Set `story_replan_required = true` only when the plan itself cannot be
-fixed by rewriting scenes -- for example: the scene plan's total word
-budget is far short of the target duration (rewriting existing scenes
-cannot manufacture missing scenes), most of the source's content was never
-covered by any beat, a required core archetype role is entirely absent, or
-the critic raised a critical archetype-fit issue naming a better-supported
-alternative. In every other case, prefer `rewrite_beats` (naming the
-specific beats and the INTENT of the fix, never the prose itself),
-`technical_fixes` (a specific correction tied to a claim id), or
-`delete_or_compress` (a specific redundant scene) -- and list everything
-that should be `preserve`d untouched.
+BEFORE anything else, if any critique issue has `category: archetype`,
+resolve it first using the procedure below -- do not treat "the critic
+marked it critical" as sufficient on its own:
+
+1. Look at what alternative archetype the issue actually names.
+2. Check `rejected_archetypes`: did A2 already list that SAME alternative
+   there, with a real, substantive reason (not a placeholder)?
+3. If yes, AND the critique's `problem` text does not cite any concrete
+   evidence beyond what that rejection reason already accounted for, this
+   is a RE-RAISED objection, not new evidence. Put it in `dismissed_issues`
+   with a `reason` that quotes or closely paraphrases the specific prior
+   rejection it fails to add to. Do NOT also set `story_replan_required`
+   for this same issue.
+4. Only if the critique names an alternative NOT already in
+   `rejected_archetypes`, or surfaces a concrete piece of evidence A2's own
+   `source_evidence`/`selection_reason` never addressed, treat it as
+   genuinely new and eligible to trigger a replan.
+
+This check exists because A2 is required to give a real reason for
+rejecting every other archetype on every plan -- so a critic re-arguing
+for one of those five without adding anything new is expected noise, not
+a finding. Getting this right matters more than any other decision here:
+defaulting to "critical means replan" defeats the entire point of giving
+you the plan's own reasoning to check it against.
+
+For everything else, set `story_replan_required = true` only when the
+plan itself cannot be fixed by rewriting scenes -- for example: the scene
+plan's total word budget is far short of the target duration (rewriting
+existing scenes cannot manufacture missing scenes), most of the source's
+content was never covered by any beat, a required core archetype role is
+entirely absent, or step 4 above found a genuinely new archetype dispute.
+In every other case, prefer `rewrite_beats` (naming the specific beats and
+the INTENT of the fix, never the prose itself), `technical_fixes` (a
+specific correction tied to a claim id), or `delete_or_compress` (a
+specific redundant scene) -- and list everything that should be
+`preserve`d untouched.
 
 List `preserve` generously: anything not directly implicated by a finding
 should be explicitly preserved, not left ambiguous.
@@ -49,7 +74,7 @@ def _grounding_payload(violations: list[GroundingViolation]) -> list[dict]:
 
 def _critique_payload(issues: list[CritiqueIssue]) -> list[dict]:
     return [
-        {"severity": i.severity, "category": i.category, "layer": i.layer,
+        {"issue_id": i.issue_id, "severity": i.severity, "category": i.category, "layer": i.layer,
          "scene_ids": i.scene_ids, "problem": i.problem, "recommended_intent": i.recommended_intent}
         for i in issues
     ]
@@ -65,6 +90,9 @@ def plan_revision(
 ) -> RevisionPlan:
     payload = {
         "archetype": plan.archetype,
+        "selection_reason": plan.selection_reason,
+        "source_evidence": plan.source_evidence,
+        "rejected_archetypes": plan.rejected_archetypes,
         "beats": [{"beat_id": b.beat_id, "purpose": b.purpose} for b in plan.beats],
         "structural_issues": _structural_payload(structural_issues),
         "grounding_violations": _grounding_payload(grounding_violations),

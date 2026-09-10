@@ -25,6 +25,20 @@ class DeleteOrCompress(BaseModel):
     reason: str
 
 
+class DismissedIssue(BaseModel):
+    """A critique issue A3 has reviewed against the plan's OWN evidence and
+    judged unfounded -- narrow by design (ERR-025): dismissal is legitimate
+    only when the critique doesn't raise anything the plan's own
+    `rejected_archetypes`/`source_evidence` didn't already explicitly
+    consider and rule out, never merely "A3 disagrees" (see
+    orchestration/pipeline.py's enforcement of this at the code level, not
+    just the prompt level -- a dismissal naming an archetype the plan never
+    actually addressed in `rejected_archetypes` is rejected outright)."""
+
+    issue_id: str
+    reason: str  # must cite the specific prior evidence this critique doesn't add to
+
+
 class RevisionPlan(BaseModel):
     run_id: str
     revision_level: str = "targeted"  # e.g. "targeted", "major", "replan"
@@ -33,3 +47,4 @@ class RevisionPlan(BaseModel):
     technical_fixes: list[TechnicalFix] = Field(default_factory=list)
     delete_or_compress: list[DeleteOrCompress] = Field(default_factory=list)
     story_replan_required: bool = False
+    dismissed_issues: list[DismissedIssue] = Field(default_factory=list)
