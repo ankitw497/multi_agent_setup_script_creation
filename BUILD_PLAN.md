@@ -92,6 +92,24 @@ All pydantic v2, with golden fixtures, before any prompt is written.
 
 ## V1A — Script intelligence (plan §8, §17 — the core thesis)
 
+### A second major finding: repair wiring was never actually connected (2026-09-10)
+
+The first live end-to-end orchestrator run (against the real saved v02 plan) crashed with a
+plain `JSONDecodeError` from C2b's response -- not a schema mismatch, malformed JSON outright,
+plausible given the payload's real size (61 claims + a full narration draft). The architecture
+has always specified that malformed output gets repaired on Haiku, free, before ever reaching a
+later stage (plan §3.4) -- but the e2e script had constructed `LLMClient` by hand, without
+passing a `repair_fn`, so that safety net was never actually wired in. This is precisely the
+class of gap that only running the *whole* pipeline surfaces: every individual stage's unit
+tests use a FakeAgent that never produces malformed output, so this path was never exercised
+until a real model call actually failed to parse.
+
+Fixed properly, not patched around: `llm/repair.py::make_haiku_repair_fn` builds the real
+Haiku-backed repair function, and `llm/client.py::make_llm_client` is now **the one correct way**
+to construct an `LLMClient` for a real run — it always wires the repair function in, so this
+specific mistake can't be made by a future caller. Live-verified: the corrected e2e run
+(`runs/v04`, below) went through the same C2b payload without crashing.
+
 ### Major finding: real A2 output caught by real hard checks (2026-09-10)
 
 Two live A2 runs against the real source produced structurally deficient plans, and both were

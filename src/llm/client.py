@@ -18,6 +18,7 @@ from pydantic import BaseModel
 from .backends.claude_cli import ClaudeCliBackend
 from .backends.litellm_backend import LiteLLMBackend
 from .budget import BudgetCounter
+from .repair import make_haiku_repair_fn
 from .structured import RepairFn, validate_with_repair
 from .usage import UsageRecord, UsageLedger
 
@@ -28,6 +29,18 @@ T = TypeVar("T", bound=BaseModel)
 class StructuredCallResult:
     value: BaseModel
     usage_record: UsageRecord
+
+
+def make_llm_client(run_id: str, ledger: UsageLedger, cwd: str | None = None) -> "LLMClient":
+    """The one correct way to build an LLMClient for a real run -- ALWAYS
+    wires in the Haiku repair_fn (plan §3.4), so a malformed paid-lane
+    response is repaired for free instead of raising immediately. A real
+    run hit exactly this gap when constructed by hand without one."""
+    subscription_backend = ClaudeCliBackend(cwd=cwd)
+    return LLMClient(
+        run_id=run_id, ledger=ledger, subscription_backend=subscription_backend,
+        repair_fn=make_haiku_repair_fn(subscription_backend),
+    )
 
 
 class LLMClient:
