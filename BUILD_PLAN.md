@@ -369,12 +369,27 @@ are gitignored working content and must not be a dependency of the committed tes
 
 ## V1B — HTML (plan §12, §17)
 
-- [ ] `html_synth/synthesizer.py`, `component_library.py` — dual-audience contract: `video_script.html` + `page.html` (§12.0)
-- [ ] HV static checks; `data-numeric-claim-id` traceability
-- [ ] Web retrieval for evidence requests (extends V1A's local-reference-only evidence broker)
-- [ ] Vertical shorts template, safe zones, HV at 1080×1920
+- [x] `config/design_system.yaml` — tokens + component catalogue + story-role mapping (plan §7), lifted from the 17 classes verified present across ALL THREE `docs/corpus/sample_outputs/*.html` pages (never a single video's bespoke one-off styling); `math_block`/`diagram_card` adapted from the "guide" markup family since the sample corpus (a GPU/memory series) never needed an equation
+- [x] `html_synth/component_library.py` — deterministic component renderer, every slot HTML-escaped regardless of what the model returns — built, unit-tested, live-validated; two real bugs found and fixed (ERROR_LOG ERR-029: grid item shape assumed, not specified, crashed twice on two different real shapes before being made shape-agnostic)
+- [x] `html_synth/synthesizer.py` — H (Sonnet, subscription, free): per-beat calls (not one page-wide call — same ERR-010/ERR-024 lesson applied here) for screen prose (genuinely different text from spoken narration, plan §12.0) + component selection + numeric-claim annotation — built, unit-tested, live-validated
+- [x] `html_synth/assembler.py` — deterministic assembly; `video_script.html`/`page.html` rendered by ONE shared function parameterized only by `include_metadata`, so dual-audience parity is guaranteed by construction, not by a fragile post-hoc strip transform — built, unit-tested, live-validated
+- [x] HV static checks (`verification/hard/render.py`) — HTML parses, unique ids, scene presence/order, narration-hash match, numeric-claim-id traceability, page/video_script text parity — built, unit-tested, live-validated at **zero render_issues** against the real source. NOT yet built (need a calibration decision, not guessed at): reader-standalone word-count band, `renderer_compat`'s claim-backed-word threshold, deictic resolution — see ERROR_LOG's open items
+- [x] `reporting/emit_html.py` — `video_script.html`/`page.html`/`render_report.json` — built, unit-tested, live-validated
+- [x] `orchestration/html_pipeline.py` — ties H + HV static into one pass — built, unit-tested
+- [ ] Web retrieval for evidence requests (extends V1A's local-reference-only evidence broker) — not started; a separate, independent feature from H/HV, deliberately not bundled into this push
+- [ ] Vertical shorts template, safe zones, HV at 1080×1920 — not started; needs its own design pass on top of the long-form component library, not a copy of it
 
-**Done when (plan):** *"`video_script.html` passes structure + traceability + `renderer_compat`."*
+**Live-validated end to end** against the real, C2a-verified attention-series plan/narration
+(free — H is Sonnet/subscription): a real 59.7KB `video_script.html` / 34.3KB `page.html`,
+3218 visible words (inside the plan's own ~2,000-3,200 sample band), 24 cards / 14 defboxes
+/ 8 grid-3s rendered from real beat content, 3 numbers correctly traced to real claim ids,
+**zero HV static issues**.
+
+**Done when (plan):** *"`video_script.html` passes structure + traceability + `renderer_compat`."* —
+structure and traceability are met and live-verified; `renderer_compat` specifically (the
+>=1,500-claim-backed-words / no-empty-sections gate) is not yet implemented as its own named
+check (tracked in ERROR_LOG's open items) — the real output already clears the word-count
+figure informally, but the gate itself needs deliberate calibration, not an assumed threshold.
 
 ---
 

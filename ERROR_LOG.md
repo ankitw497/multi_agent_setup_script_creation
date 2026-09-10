@@ -587,8 +587,51 @@ new pipeline catches real issues on real data.
 
 ---
 
+## ERR-029 — V1B: grid component item shape assumed, not specified -- crashed twice on real data
+**Date:** 2026-09-11 · **Severity:** major · **Status:** fixed · **Component:** `html_synth/component_library.py`
+
+First live validation of the new H stage (`html_synth/synthesizer.py` + `assembler.py`,
+free/subscription-lane Sonnet, against the real verified attention-series plan/narration):
+crashed twice in a row, each on a different assumption about what shape a `grid_2`/`grid_3`
+component's `items` slot would contain -- `design_system.yaml`'s own comment said "list of
+pre-rendered component snippets", but nothing in the prompt or schema actually told the model
+that, or gave it any inner shape to follow.
+
+1. First crash: the model returned `items` as a list of `{title, value, desc}` dicts (a
+   sensible, safe choice -- it never has to produce markup at all, matching the
+   established "the LLM supplies data, Python renders it" principle used everywhere else in
+   this codebase). Fixed by rendering each dict through the existing `card` component.
+2. Second crash, immediately after: a *different* beat's `grid_3` (a grid of short
+   observations) returned `items` as plain strings, not dicts -- because nothing pins the
+   inner shape, the model reasonably chose a simpler shape for simpler content.
+
+**Fix:** `_render_grid_item()` handles both shapes (dict -> rendered as a mini-card; string
+-> rendered as a minimal card with just a description) rather than assuming one -- crashing
+on a reasonable model output is worse than rendering it slightly differently. Applied the
+same defensive handling to `step_list` preemptively, since it has the identical
+unconstrained-item-shape structure.
+**Live-verified:** a third run after both fixes completed with **zero render_issues**: a
+real 59.7KB `video_script.html` / 34.3KB `page.html`, 3218 visible words (inside the plan's
+own ~2,000-3,200 target band), 24 cards / 14 defboxes / 8 grid-3s rendered, 3 numbers
+correctly traced to real claim ids via `data-numeric-claim-id`. Cost: $0 (Sonnet,
+subscription lane).
+**Tests:** `tests/html_synth/test_component_library.py` -- `test_grid_3_handles_plain_string_items_without_crashing`,
+`test_step_list_handles_plain_string_items_without_crashing`, plus escaping tests for both shapes.
+
+---
+
 ## Open items (not yet bugs, flagged for future attention)
 
+- **V1B's HV static checks are a deterministic subset, not the full plan §13 list.**
+  `verification/hard/render.py` covers what's clean-cut and checkable without a
+  calibration decision: parsing, unique ids, scene presence/order, narration-hash match,
+  numeric-claim-id traceability, and text-level page parity. NOT yet built: the
+  reader-standalone word-count-band gate and `renderer_compat`'s claim-backed-word
+  threshold (both need a real calibration decision -- the plan's ~2,000-3,200 band is
+  tuned to that channel's own samples, and the real v09 output happened to land at 3,218
+  words, suggestively close but not yet a basis for picking a threshold) and deictic
+  reference resolution (needs real NLP, not pattern matching). All rendered checks
+  (Playwright, clipping, contrast, C3) are V1C by design, not a V1B gap.
 - **`review_lead` and `cm_agent` share one `agent` name in cost reporting.**
   `make_review_lead()` always sets `Agent.name="review_lead"` regardless of tier, so
   `cost_report.json`'s `by_agent` breakdown blends strong-tier C1/C2b spend together

@@ -1,0 +1,160 @@
+# One channel component library, one theme (plan §7). Tokens and component
+# skeletons lifted verbatim from docs/corpus/sample_outputs/ -- specifically
+# the 17 classes verified present across ALL THREE different-topic sample
+# pages (callout, callout-info, callout-neutral, callout-text, card, card-sm,
+# grid-2, hero-badge2, nav-main, reveal, sec-alt, sec-wrap, section-sub,
+# section-title, ...), never a single video's bespoke one-off styling (e.g.
+# video-1.1's arch-compare/bw-bars/precision-cards are CPU/GPU-specific and
+# deliberately excluded -- this is supposed to be a component library, not
+# one video's stylesheet). `math_block` and `diagram_card` are the two
+# exceptions: adapted from the "guide" markup family (extraction/profiles/
+# guide.py) since the sample_outputs corpus (a GPU/memory series) never
+# needed an equation or a labeled diagram placeholder, but real content
+# (e.g. attention) does.
+#
+# Manual component additions only (plan §7) -- automatic fitting from
+# arbitrary references is V1D.
+
+tokens:
+  colors:
+    bg: "#f5f5f7"
+    bg2: "#ffffff"
+    bg3: "#e8e8ed"
+    text: "#1d1d1f"
+    text2: "#424245"
+    text3: "#6e6e73"
+    accent: "#0071e3"
+    accent2: "#34c759"
+    accent3: "#ff3b30"
+    accent4: "#ff9f0a"
+    accent5: "#af52de"
+    border: "rgba(0,0,0,0.08)"
+  fonts:
+    serif: "'DM Serif Display',Georgia,serif"
+    sans: "'DM Sans',-apple-system,BlinkMacSystemFont,sans-serif"
+  radii:
+    r: "18px"
+    r_sm: "10px"
+  shadows:
+    shadow: "0 2px 20px rgba(0,0,0,0.08)"
+    shadow_lg: "0 8px 40px rgba(0,0,0,0.12)"
+
+# story_roles: plan §7's table, mapped onto the real generic vocabulary
+# above. A beat/scene's own `archetype_role`/`narrative_beat` selects a
+# story role here; the H pass (html_synth/synthesizer.py) then picks a
+# specific component from that role's list per scene, matching visual_importance.
+story_roles:
+  hook: [hero, card]
+  contradiction: [callout_danger, grid_2]
+  investigation: [step_list, grid_3]
+  problem_fix: [step_list, callout_warn]
+  mechanism: [card, diagram_card, math_block]
+  comparison: [grid_2, metric_table, card]
+  derivation: [math_block, card]
+  observations: [grid_3, defbox]
+  payoff: [callout_success, card]
+
+components:
+  hero:
+    description: "Full-bleed opening -- the hook. One per page, always the first section."
+    slots: [badge, title, subtitle]
+    skeleton: |
+      <div id="hero-story" class="sec-wrap">
+      <div class="hero-inner">
+        <div class="hero-badge2">{badge}</div>
+        <h1 class="hero-title">{title}</h1>
+        <p class="hero-subtitle">{subtitle}</p>
+      </div>
+      </div>
+
+  callout_info:
+    description: "Neutral supporting note."
+    slots: [text]
+    skeleton: |
+      <div class="callout callout-info"><div class="callout-text">{text}</div></div>
+
+  callout_warn:
+    description: "A problem or caveat about to be addressed (problem->fix chains)."
+    slots: [text]
+    skeleton: |
+      <div class="callout callout-warn"><div class="callout-text">{text}</div></div>
+
+  callout_danger:
+    description: "A real failure or contradiction (mystery/contradiction beats)."
+    slots: [text]
+    skeleton: |
+      <div class="callout callout-danger"><div class="callout-text">{text}</div></div>
+
+  callout_success:
+    description: "A resolved payoff or capstone."
+    slots: [text]
+    skeleton: |
+      <div class="callout callout-success"><div class="callout-text">{text}</div></div>
+
+  card:
+    description: "One concrete value/fact/comparison point."
+    slots: [title, value, desc]
+    skeleton: |
+      <div class="card">
+        <div class="card-title">{title}</div>
+        <div class="card-value">{value}</div>
+        <div class="card-desc">{desc}</div>
+      </div>
+
+  grid_2:
+    description: "Two-up comparison (before/after, contrast rows)."
+    slots: [items]  # list of {title, value, desc} dicts, exactly 2 -- rendered as mini-cards
+    skeleton: |
+      <div class="grid-2">{items}</div>
+
+  grid_3:
+    description: "Three-up grid (observations, elimination/candidate grids)."
+    slots: [items]  # list of {title, value, desc} dicts -- rendered as mini-cards
+    skeleton: |
+      <div class="grid-3">{items}</div>
+
+  step_list:
+    description: "An ordered sequence -- problem/fix chains, investigation steps, derivations."
+    slots: [items]  # list of {title, desc}
+    skeleton: |
+      <div class="step-list">{items}</div>
+    item_skeleton: |
+      <div class="step-item"><div class="step-num">{index}</div><div>
+        <div class="step-title">{title}</div>
+        <div class="step-desc">{desc}</div></div></div>
+
+  defbox:
+    description: "One term + definition (observations/framework beats)."
+    slots: [term, body]
+    skeleton: |
+      <div class="defbox">
+        <div class="defbox-term">{term}</div>
+        <div class="defbox-body">{body}</div>
+      </div>
+
+  math_block:
+    description: "One equation with a plain-language label (derivation/mechanism beats). Adapted from the guide markup family -- not in the sample_outputs corpus, needed for real technical content."
+    slots: [label, equation]
+    skeleton: |
+      <div class="math-block">
+        <div class="math-block-label">{label}</div>
+        <div class="math-block-equation">{equation}</div>
+      </div>
+
+  diagram_card:
+    description: "A labeled placeholder for a visual the render stage will eventually draw (visual_description from the ScenePlan). Adapted from the guide markup family."
+    slots: [caption]
+    skeleton: |
+      <div class="diagram-card">
+        <div class="diagram-placeholder"></div>
+        <footer class="diagram-caption">{caption}</footer>
+      </div>
+
+  metric_table:
+    description: "A real comparison table (comparison beats)."
+    slots: [headers, rows]  # headers: list[str]; rows: list[list[str]]
+    skeleton: |
+      <table class="metric-table">
+        <thead><tr>{header_cells}</tr></thead>
+        <tbody>{body_rows}</tbody>
+      </table>
