@@ -1054,6 +1054,51 @@ content-block shape without needing a real call.
 
 ---
 
+## ERR-041 — V1C's rendered checks had two real false-positive bugs, found on the first full live run
+**Date:** 2026-09-11 · **Severity:** major (would have burned the entire H-repair budget on non-issues, every run) · **Status:** fixed · **Component:** `verification/hard/render_rendered.py` · **Live cost:** yes (~$0.56, `runs/v14`)
+
+The first-ever live run of the complete V1C loop (Playwright -> repair -> C3) against the
+real source hit its repair budget (2/2) without ever reaching a clean render, leaving 17
+unresolved `render_issues`. Investigating each one found two genuine measurement bugs in
+the checks themselves, not real problems in the generated page:
+
+1. **`rendered_clipping` false positives on every `<pre class="diagram-pre">` at mobile
+   width.** `diagram-pre` deliberately has `overflow-x:auto` (added specifically so a wide
+   ASCII diagram scrolls horizontally on a narrow viewport instead of being cut off --
+   exactly the "wide content gets its own `overflow-x:auto` container" pattern). The check
+   treated ANY of `hidden|clip|scroll|auto` as "clipping," so this working, intentional
+   scroll behavior was flagged as broken every single time, and the H-repair loop spent a
+   real repair attempt trying to fix something that was never actually a bug.
+2. **`rendered_low_contrast` false positive on `.callout-success`.** Its background is
+   `rgba(52,199,89,0.06)` -- a pale mint wash over the page's white background, which
+   composites to roughly `rgb(243,252,245)` and gives dark-green text a real ~7.7:1
+   contrast ratio. The check's `bgOf()` instead treated any non-fully-transparent
+   background as "found, done" and used the raw, un-composited `rgba(52,199,89,0.06)` as
+   if it were the fully opaque `rgb(52,199,89)` it interpolates toward -- measuring a false
+   ~3.6:1 "failure" against a genuinely vivid green that was never actually on screen.
+
+Together these consumed BOTH real repair attempts in `runs/v14` on non-bugs, meaning the
+budget was exhausted before the loop ever got a chance to fix anything real -- a
+significant finding about the checks' own trustworthiness, not just two isolated bugs.
+
+**Fix:**
+1. `check_rendered_clipping` now only treats `overflow:hidden`/`overflow:clip` as genuine
+   clipping -- `auto`/`scroll` are excluded entirely, since content behind them stays fully
+   reachable and is often a deliberate, working design choice.
+2. `check_rendered_contrast`'s `bgOf()` now walks up collecting every semi-transparent
+   background layer and alpha-composites them (outermost ancestor first) against a white
+   page-default base, instead of stopping at the first non-transparent value and using it
+   unmodified.
+**Live-verified** against real Chromium with two new fixture scenes added to the existing
+deliberately-broken fixture (a `diagram-pre`-style scrollable scene, and a
+`callout-success`-style pale-wash scene) -- both now correctly stay unflagged, while the
+three original genuine defects (real clipping, real invisible content, real low contrast)
+still fire exactly as before.
+**Tests:** `tests/verification/hard/test_render_rendered.py::test_overflow_x_auto_is_not_flagged_as_clipping`,
+`::test_semi_transparent_background_is_alpha_composited_not_treated_as_opaque`.
+
+---
+
 ## Open items (not yet bugs, flagged for future attention)
 
 - **V1B's HV static checks are now the full plan §13 list** (updated 2026-09-11; the note

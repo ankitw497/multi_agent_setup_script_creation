@@ -104,11 +104,17 @@ body { margin: 0; font-family: sans-serif; }
 #invisible-scene { opacity: 0; }
 #low-contrast-scene { color: rgb(230,230,230); background: rgb(255,255,255); }
 #clean-scene { color: rgb(0,0,0); background: rgb(255,255,255); }
+#scrollable-scene { width: 200px; height: 40px; overflow-x: auto; }
+#scrollable-scene .content { width: 500px; white-space: pre; font-family: monospace; }
+#pale-wash-scene { background: rgba(52,199,89,0.06); }
+#pale-wash-scene p { color: rgb(26,92,42); }
 </style></head><body>
 <div id="clipped-scene" data-narration-id="clipped-scene"><div class="content">this text is way too big for its clipped container and will overflow both dimensions of the box</div></div>
 <div id="invisible-scene" data-narration-id="invisible-scene"><p>this scene has real narrated text but the whole thing is invisible</p></div>
 <div id="low-contrast-scene" data-narration-id="low-contrast-scene"><p>pale gray text that fails WCAG contrast against a white background</p></div>
 <div id="clean-scene" data-narration-id="clean-scene"><p>this scene is completely fine, black text on white</p></div>
+<div id="scrollable-scene" data-narration-id="scrollable-scene"><div class="content">a wide ascii diagram that scrolls horizontally instead of being cut off</div></div>
+<div id="pale-wash-scene" data-narration-id="pale-wash-scene"><p>dark green text on a pale semi-transparent green wash, real contrast is high</p></div>
 </body></html>
 """
 
@@ -118,7 +124,10 @@ def _fixture_narration():
 
     return [
         SceneNarration(scene_id=sid, sentences=[SentenceNarration(text="x", sentence_type="transition")])
-        for sid in ("clipped-scene", "invisible-scene", "low-contrast-scene", "clean-scene")
+        for sid in (
+            "clipped-scene", "invisible-scene", "low-contrast-scene", "clean-scene",
+            "scrollable-scene", "pale-wash-scene",
+        )
     ]
 
 
@@ -137,6 +146,31 @@ def test_real_chromium_catches_all_three_deliberately_broken_scenes():
     assert ("low-contrast-scene", "rendered_low_contrast") in codes_by_scene
     # the clean scene must never be flagged by any check, at either viewport
     assert not any(i.scene_id == "clean-scene" for i in issues)
+
+
+@pytest.mark.integration
+def test_overflow_x_auto_is_not_flagged_as_clipping():
+    """Real false positive found live 2026-09-11: a wide ASCII diagram
+    inside a container with overflow-x:auto (the same pattern
+    diagram-pre actually uses) was flagged as "clipping" on every mobile
+    run, even though the content stays fully reachable by scrolling --
+    only overflow:hidden/clip genuinely destroys access to content."""
+    from verification.hard.render_rendered import run_rendered_checks
+
+    issues = run_rendered_checks(_BROKEN_FIXTURE_HTML, _fixture_narration())
+    assert not any(i.scene_id == "scrollable-scene" for i in issues)
+
+
+@pytest.mark.integration
+def test_semi_transparent_background_is_alpha_composited_not_treated_as_opaque():
+    """Real false positive found live 2026-09-11: rgba(52,199,89,0.06) (a
+    pale mint wash) was treated as the fully-opaque rgb(52,199,89) it
+    interpolates toward, turning a real ~7.7:1 contrast into a measured
+    false ~3.6:1 failure."""
+    from verification.hard.render_rendered import run_rendered_checks
+
+    issues = run_rendered_checks(_BROKEN_FIXTURE_HTML, _fixture_narration())
+    assert not any(i.scene_id == "pale-wash-scene" for i in issues)
 
 
 @pytest.mark.integration

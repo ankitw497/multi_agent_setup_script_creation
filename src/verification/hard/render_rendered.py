@@ -80,7 +80,15 @@ def check_rendered_clipping(page, scene_ids: list[str]) -> list[RenderIssue]:
                 const out = [];
                 function walk(node) {
                     const cs = getComputedStyle(node);
-                    if (/hidden|clip|scroll|auto/.test(cs.overflow + cs.overflowX + cs.overflowY)) {
+                    // Only hidden/clip genuinely destroy access to overflowing
+                    // content -- auto/scroll are a deliberate, working
+                    // degradation (e.g. diagram-pre's own overflow-x:auto for
+                    // a wide ASCII diagram on a narrow viewport), not a bug,
+                    // and correctly excluded (real false positive found live
+                    // 2026-09-11: this used to flag every diagram-pre on
+                    // mobile even though the content stays fully reachable
+                    // by scrolling).
+                    if (/hidden|clip/.test(cs.overflow + cs.overflowX + cs.overflowY)) {
                         out.push({
                             scrollWidth: node.scrollWidth, clientWidth: node.clientWidth,
                             scrollHeight: node.scrollHeight, clientHeight: node.clientHeight,
@@ -141,20 +149,35 @@ def check_rendered_contrast(page, scene_ids: list[str]) -> list[RenderIssue]:
         pairs = el.evaluate(
             """el => {
                 function parseRgb(str) {
-                    const m = str.match(/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)/);
-                    return m ? [parseInt(m[1]), parseInt(m[2]), parseInt(m[3])] : null;
+                    const m = str.match(/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)(?:,\\s*([\\d.]+))?\\)/);
+                    if (!m) return null;
+                    return [parseInt(m[1]), parseInt(m[2]), parseInt(m[3]), m[4] !== undefined ? parseFloat(m[4]) : 1];
                 }
                 function bgOf(node) {
+                    // Walks up collecting every semi-transparent background
+                    // layer, then alpha-composites them from the outermost
+                    // ancestor down to the closest one (real bug found live
+                    // 2026-09-11: treating e.g. rgba(52,199,89,0.06) -- a pale
+                    // mint wash -- as if it were the fully-opaque rgb(52,199,89)
+                    // it interpolates toward made a real 7.7:1 contrast look
+                    // like a false 3.6:1 failure).
+                    const layers = [];
                     let cur = node;
                     while (cur) {
                         const cs = getComputedStyle(cur);
-                        if (cs.backgroundColor && cs.backgroundColor !== 'rgba(0, 0, 0, 0)') {
-                            const rgb = parseRgb(cs.backgroundColor);
-                            if (rgb) return rgb;
+                        const rgba = parseRgb(cs.backgroundColor);
+                        if (rgba && rgba[3] > 0) {
+                            layers.push(rgba);
+                            if (rgba[3] >= 1) break;
                         }
                         cur = cur.parentElement;
                     }
-                    return [255, 255, 255];
+                    let result = [255, 255, 255];  // page default -- this design system's own base is white
+                    for (let i = layers.length - 1; i >= 0; i--) {
+                        const [r, g, b, a] = layers[i];
+                        result = [r * a + result[0] * (1 - a), g * a + result[1] * (1 - a), b * a + result[2] * (1 - a)];
+                    }
+                    return result.map(Math.round);
                 }
                 const out = [];
                 const seen = new Set();
@@ -167,7 +190,7 @@ def check_rendered_contrast(page, scene_ids: list[str]) -> list[RenderIssue]:
                     seen.add(parent);
                     const cs = getComputedStyle(parent);
                     const fg = parseRgb(cs.color);
-                    if (fg) out.push({fg, bg: bgOf(parent), tag: parent.tagName});
+                    if (fg) out.push({fg: fg.slice(0, 3), bg: bgOf(parent), tag: parent.tagName});
                 }
                 return out;
             }"""
