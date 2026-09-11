@@ -58,7 +58,7 @@ from facts.seeds import find_formula_claims, seed_assumption_ledger
 from facts.verify import verify_claims
 from facts.web_evidence import WebSearchBackend
 from html_synth.vertical_assembler import synthesize_short_html
-from llm.budget import BudgetCounter, DEFAULT_TIERS
+from llm.budget import BudgetCounter, BudgetTier, DEFAULT_TIERS
 from llm.client import make_llm_client
 from llm.usage import UsageLedger
 from orchestration import paths as P
@@ -132,6 +132,7 @@ def run_full_pipeline(
     references_dir: Path = DEFAULT_REFERENCES_DIR,
     web_backend: WebSearchBackend | None = None,
     story_lead_alias: str | None = None,
+    loop_budget_usd: float | None = None,
     log=print,
 ) -> PipelineRunOutput:
     run_dir = P.next_run_dir(project_root, playlist, video_slug)
@@ -174,7 +175,22 @@ def run_full_pipeline(
         story_lead=story_lead, narration_lead=narration_lead,
         review_lead=review_lead_strong, cm_agent=review_lead_flash, worker=worker,
     )
-    loop_budget = BudgetCounter(tier=DEFAULT_TIERS["longform"])
+    # A reasoning-capable story_lead alias (e.g. gpt-5.6-sol) can cost far
+    # more per call than the longform tier's own $1.00 hard cap allows for
+    # a full loop -- confirmed live (STORY_IMPROVEMENT_PLAN.md Phase 4):
+    # a real comparison run hit BudgetExceeded mid-loop at ~$1.09 spent.
+    # loop_budget_usd lets a caller (e.g. a model A/B comparison) raise
+    # just this stage's cap without touching every other stage's own
+    # independent $1.00 budget.
+    loop_tier = DEFAULT_TIERS["longform"]
+    if loop_budget_usd is not None:
+        base = DEFAULT_TIERS["longform"]
+        scale = loop_budget_usd / base.hard_cap_usd
+        loop_tier = BudgetTier(
+            target_usd=base.target_usd * scale, warning_usd=base.warning_usd * scale,
+            hard_cap_usd=loop_budget_usd,
+        )
+    loop_budget = BudgetCounter(tier=loop_tier)
     story_result = run_story_and_narration_loop(
         source_brief=source_brief, claims=claims, ledger=ledger,
         all_source_unit_ids=[u.id for u in extraction.units],
@@ -275,6 +291,13 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
              "model-tier A/B comparison, STORY_IMPROVEMENT_PLAN.md Phase 4) -- default is the "
              "tier's own default (openai_story_strong / gpt-4o), never changed by this flag alone",
     )
+    parser.add_argument(
+        "--loop-budget-usd", type=float, default=None,
+        help="raise the story+narration loop's own hard budget cap above the longform tier's "
+             "default $1.00 (target/warning scale proportionally) -- needed for a reasoning-"
+             "capable story_lead alias (e.g. gpt-5.6-sol via --story-lead-alias), which can cost "
+             "far more per call than gpt-4o and hit the default cap before the loop finishes",
+    )
     return parser.parse_args(argv)
 
 
@@ -284,7 +307,7 @@ def main(argv: list[str] | None = None) -> int:
         project_root=args.project_root, playlist=args.playlist, video_slug=args.video_slug,
         source_html_path=args.source, target_duration_seconds=args.duration, audience=args.audience,
         run_shorts=not args.no_shorts, shorts_count=args.shorts_count, references_dir=args.references_dir,
-        story_lead_alias=args.story_lead_alias,
+        story_lead_alias=args.story_lead_alias, loop_budget_usd=args.loop_budget_usd,
     )
     print(f"\nfinal_status: {output.final_status}")
     print(f"promoted: {output.promoted}")

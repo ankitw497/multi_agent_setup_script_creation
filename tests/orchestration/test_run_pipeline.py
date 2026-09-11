@@ -313,3 +313,25 @@ def test_story_lead_alias_defaults_to_none(patched, monkeypatch):
     _run(patched)
 
     assert ("strong", None) in calls
+
+
+def test_loop_budget_usd_raises_only_the_loops_own_hard_cap(patched):
+    """Real gap found live 2026-09-11: a gpt-5.6-sol comparison run hit
+    BudgetExceeded mid-loop at ~$1.09 spent, since the story+narration
+    loop shares the same $1.00 longform-tier cap as every other stage.
+    loop_budget_usd must raise ONLY the loop's own cap, not the whole
+    pipeline's default."""
+    _run(patched, loop_budget_usd=3.0)
+
+    (_args, kwargs) = patched.calls["run_story_and_narration_loop"][0]
+    loop_budget = kwargs["budget"]
+    assert loop_budget.tier.hard_cap_usd == 3.0
+    assert loop_budget.tier.target_usd < loop_budget.tier.hard_cap_usd  # still a real, ordered tier
+
+
+def test_loop_budget_usd_defaults_to_the_standard_longform_cap(patched):
+    _run(patched)
+
+    (_args, kwargs) = patched.calls["run_story_and_narration_loop"][0]
+    loop_budget = kwargs["budget"]
+    assert loop_budget.tier.hard_cap_usd == 1.0
