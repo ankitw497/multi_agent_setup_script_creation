@@ -70,7 +70,7 @@ certain first:
 | 7 | ~~Typed formula/numeric state validators~~ [x] code+tests done, live-verify pending | 6 | Fixes the confirmed raw-vs-scaled and dropped-`√d_k` class of bug |
 | 8 | ~~A2b neighbor contract~~ [x] code+tests done, live-verify pending | 5 | Improves transitions; larger change than the above |
 | 9 | ~~Airtime by narrative role, not source volume~~ [x] sub-item #1 done, #2/#3 still open | 7 | Real fix for section bloat, but touches allocation for every run |
-| 10 | Build C4c mid-video cold viewer | 8.2 | New module; do after the cheap retention wins land |
+| 10 | ~~Build C4c mid-video cold viewer~~ [x] code+tests done, live-verify pending | 8.2 | New module; do after the cheap retention wins land |
 
 Everything above item 5 is small and low-risk. Items 6-10 are real work. Item 8.6 (story
 and visual layers informing each other) is deliberately left unscoped pending the cheaper
@@ -828,12 +828,23 @@ precisely the retention/interest measurement every external review has asked for
       strong, not evidence the check is inert. Escalation path (C4b firing on a real weak hook)
       still not observed live -- would need a source with an actually weak opening to trigger
       it. See ERROR_LOG.md.
-- [ ] New `review/cold_viewer_critic.py` (C4c) — mid-video cold viewer, sampled at a few
-      deterministic points (reuse `review/visual_sample.py`'s evenly-spaced selection pattern
-      rather than inventing another sampler): at this point in the video, would a viewer who
-      just arrived know why this is being discussed, and want to keep watching? Still unbuilt.
-- [ ] Wire C4c into `_run_review_block`; route its findings through the existing
-      `CritiqueIssue` `category="pacing"`/`"cognitive_load"` values -- no schema change needed
+- [x] **Built 2026-09-11.** `review/cold_viewer_critic.py` (C4c) — same Haiku->Gemini-flash
+      cascade as C4s/C4a. `select_cold_viewer_checkpoints(plan)` samples a few evenly-spaced
+      scenes from the MIDDLE beats only (excludes first beat -- C4a/C4b's job -- and last beat
+      -- a resolved-payoff context), reusing C3's own sampler (`visual_sample.py`) with
+      `sample_fraction=1.0` so `max_images` alone bounds it (the sampler's own 20%-of-total
+      default would round to zero checkpoints for a short video's few middle scenes). Each
+      checkpoint judged independently on just the title + that one narration snippet.
+- [x] Wired C4c into `_run_review_block`; findings route through the existing `CritiqueIssue`
+      `category="pacing"`/`"cognitive_load"` values -- no schema change needed.
+- [x] Unit tests: `tests/review/test_cold_viewer_critic.py` (checkpoint selection, full
+      cascade behavior, category mapping); `tests/orchestration/test_pipeline.py` (C4c fires
+      with the real title, a flagged verdict produces a real bundle issue). Fixed a fixture gap
+      this surfaced (worker FakeAgent needed a `ColdViewerVerdict` queue too).
+- [x] `.venv/bin/python3 -m pytest -q` green (835 passed, up from 820)
+- [ ] **Live-verify**: not yet run -- confirm `C4c` appears in a real run's `usage.jsonl`
+      against real middle-beat scenes, and (ideally) confirm an escalation to Gemini on a
+      genuinely disorienting mid-video section
 
 ### 8.3 — The §9 Learning gate was designed as a HARD gate and is entirely unbuilt
 
