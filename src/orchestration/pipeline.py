@@ -33,7 +33,7 @@ from review.story_critic import critique_story
 from review.style_critic import critique_style
 from verification.diagnostics.cta import check_cta_position
 from verification.diagnostics.retention import check_retention
-from verification.diagnostics.voice import check_burstiness
+from verification.diagnostics.voice import check_voice
 from verification.hard.grounding import check_grounding_policy, check_numeric_fidelity
 from verification.hard.structure import check_structure
 
@@ -76,7 +76,7 @@ def _run_review_block(
     story_issues = critique_story(plan, narration, agents.review_lead, budget, source_units)
 
     diagnostics = check_retention(plan) + [check_cta_position(plan)]
-    voice_diagnostic = check_burstiness(narration)
+    voice_diagnostic = check_voice(narration)
     diagnostics.append(voice_diagnostic)
 
     style_issues: list = []

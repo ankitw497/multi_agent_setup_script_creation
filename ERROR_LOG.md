@@ -1149,6 +1149,58 @@ code-complete AND live-verified end to end, not just code-complete.
 
 ---
 
+## V1D voice-corpus refit (2026-09-11) -- real data-quality finding, corrupted transcripts excluded
+
+User authorized fitting `voice/fingerprint.py`'s real bands against the 10 real YouTube
+transcripts in `docs/corpus/transcripts/` ("You may use these 10 transcripts then."), a
+higher-leverage item for actual script quality than the remaining infrastructure checklist
+items, per the user's own explicit push-back on prioritization.
+
+**Real finding (data quality, not a code bug):** 4 of the 10 transcripts (`video_2.txt`,
+`video_6.txt`, `video_7.txt`, `video_10.txt`) are raw, unedited auto-caption dumps with
+almost no real sentence-ending punctuation -- 1-2 periods across thousands of words each,
+producing degenerate "one giant sentence" fingerprints (one file alone reports a "sentence"
+5,249 words long) that would have badly skewed every fitted band had they been included in
+`tools/voice_fit.py`'s prototype aggregate naively. Confirmed via direct inspection
+(per-document period counts, words/sentence ratios: 899-5249 for the corrupted four vs
+16-32 for the real six). **User confirmed the fix directly: "Use only valid transcripts."**
+
+**Fix:** `voice/fingerprint.py::compute_metrics()` returns `None` (excluded and recorded in
+`VoiceFingerprint.excluded_documents`, never silently zero-filled or included) for any
+document where `words / len(sentences) > MAX_PLAUSIBLE_WORDS_PER_SENTENCE (100.0)` -- a
+wide-margin threshold, not a close call. `fit_fingerprint_from_corpus_dir()` fitted the
+remaining 6 valid transcripts into 5 metrics (`burstiness`, `contractions_per100w`,
+`you_per100w`, `we_per100w`, `causal_per100w`), each individually inspected against the
+per-document values to confirm the fitted bands reflect genuine document-to-document
+variation, not an artifact.
+
+**A separate real gap found proactively (before it could break anyone else's run):**
+`docs/` is gitignored (`git check-ignore -v` confirms `.gitignore:5:docs/` matches
+`docs/corpus/transcripts/video_1.txt`) -- so production code can never depend on
+`docs/corpus/` existing at runtime. Fixed by fitting once locally and persisting the
+**result** as a checked-in `config/voice_fingerprint.yaml` (matching the existing
+`design_system.yaml` pattern, loaded via `config.loader.load_yaml`), read at runtime by the
+new `voice/fingerprint.py::load_fitted_fingerprint()` -- never recomputed from the raw
+corpus. `verification/diagnostics/voice.py`'s old provisional single-dimension placeholder
+(`check_burstiness`, an unfitted stdev threshold) is replaced by `check_voice()`, wired into
+`orchestration/pipeline.py` unchanged otherwise -- still gates C5 the same way, still
+deliberately never returns RED (a 6-document corpus doesn't license an automatic hard
+failure, matching the placeholder's own original design intent, just with real bands now).
+
+**Tests:** `tests/voice/test_fingerprint.py` (corpus fitting, exclusion, scoring, config
+loading), `tests/verification/diagnostics/test_voice.py` (rewritten against `check_voice`,
+monkeypatched fingerprints for GREEN/AMBER/too-little-text, plus one test against the real
+checked-in config with no monkeypatch).
+
+**Live-verified:** ran `check_voice()` against real, saved production narration
+(`project/attention_series/video-01-attention-coherent-story/runs/v09/final/narration.json`)
+-- loads the real config correctly and reports a real, specific AMBER
+(`burstiness=0.35 outside 0.44-0.66; contractions_per100w=2.94 outside 0.79-2.26;
+causal_per100w=1.87 outside 0.44-1.61`), not a crash or a silent GREEN. Full suite: 701
+passed (up from 689), 16 deselected.
+
+---
+
 ## Open items (not yet bugs, flagged for future attention)
 
 - **V1B's HV static checks are now the full plan §13 list** (updated 2026-09-11; the note
@@ -1175,10 +1227,12 @@ code-complete AND live-verified end to end, not just code-complete.
   `.page-footer .pipeline-step` — the exact shape found on one real source. A
   differently-marked-up "author's own plan" section on a future source would need its
   own extraction rule; nothing generalizes this automatically yet.
-- **C5/voice diagnostics are provisional** (see `verification/diagnostics/voice.py`) —
-  real bands need a fitted corpus, deferred to V1D. C5 is gated on the provisional
-  heuristic in the meantime, which is deliberately capped at AMBER (never RED) so an
-  unfitted signal can't force a real revision cycle on its own.
+- **Voice bands are fitted against only 6 documents** (see the V1D voice-corpus refit entry
+  above) — real, but a small sample. `check_voice` is deliberately capped at AMBER (never
+  RED) for exactly this reason, so it can nudge C5 on but never force a real revision cycle
+  on its own. More channel-specific transcripts (once the channel has published real videos)
+  would let the bands tighten and eventually license a real RED, per V1D's own "bands
+  tighten against the channel's own data" done-when criterion.
 - **`delete_or_compress` has no delete semantics in V1A** (see `editing/targeted_rewrite.py`'s
   own docstring) — it's always executed as a scoped compress-rewrite, never an actual
   removal from `plan.scene_plan`, to avoid leaving the plan's own word-budget target

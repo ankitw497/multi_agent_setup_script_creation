@@ -4,8 +4,8 @@ Conditional by design: the pipeline diagram (plan §8) only calls this when
 a voice diagnostic band is AMBER/RED, so a clean voice signal costs
 nothing. Diagnoses tells that mark narration as model-written (plan
 §11.1), never rewrites -- repair goes to B4 humanize, which is out of this
-scope (no voice corpus exists yet to guard humanize's output against
-drift; see verification/diagnostics/voice.py's own scope note).
+scope (guarding humanize's output against drift with the fitted voice
+corpus is separate follow-up work; see verification/diagnostics/voice.py).
 """
 from __future__ import annotations
 

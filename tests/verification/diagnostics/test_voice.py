@@ -1,41 +1,69 @@
-"""Tests for verification/diagnostics/voice.py -- D* PROVISIONAL (plan §10.4, §11.3)."""
+"""Tests for verification/diagnostics/voice.py -- D* voice diagnostic (plan §10.4, §11.3, V1D)."""
 from narration.models import SceneNarration, SentenceNarration
-from verification.diagnostics.voice import check_burstiness
+from verification.diagnostics import voice as voice_diagnostic
+from verification.diagnostics.voice import check_voice
+from voice.fingerprint import MetricBand, VoiceFingerprint
 
 
 def sentence(text) -> SentenceNarration:
     return SentenceNarration(text=text, sentence_type="transition")
 
 
-def test_varied_sentence_lengths_is_green():
-    narration = [SceneNarration(scene_id="s1", sentences=[
-        sentence("Short."),
-        sentence("A medium length sentence right here."),
-        sentence("This one runs quite a bit longer with several more clauses stitched together."),
-    ])]
-    result = check_burstiness(narration)
+def _wide_open_fingerprint() -> VoiceFingerprint:
+    return VoiceFingerprint(bands={
+        "burstiness": MetricBand(low=0.0, high=999.0),
+        "contractions_per100w": MetricBand(low=0.0, high=999.0),
+        "you_per100w": MetricBand(low=0.0, high=999.0),
+        "we_per100w": MetricBand(low=0.0, high=999.0),
+        "causal_per100w": MetricBand(low=0.0, high=999.0),
+    })
+
+
+def _impossible_fingerprint() -> VoiceFingerprint:
+    return VoiceFingerprint(bands={
+        "burstiness": MetricBand(low=100.0, high=200.0),
+        "contractions_per100w": MetricBand(low=100.0, high=200.0),
+        "you_per100w": MetricBand(low=100.0, high=200.0),
+        "we_per100w": MetricBand(low=100.0, high=200.0),
+        "causal_per100w": MetricBand(low=100.0, high=200.0),
+    })
+
+
+def _narration(n_sentences: int = 20) -> list[SceneNarration]:
+    text = "This is a normal sentence with a reasonable number of words in it."
+    return [SceneNarration(scene_id="s1", sentences=[sentence(text) for _ in range(n_sentences)])]
+
+
+def test_check_voice_within_the_fitted_bands_is_green(monkeypatch):
+    monkeypatch.setattr(voice_diagnostic, "load_fitted_fingerprint", _wide_open_fingerprint)
+    result = check_voice(_narration())
+    assert result.dimension == "voice"
     assert result.band == "GREEN"
 
 
-def test_uniform_sentence_lengths_is_amber_never_red():
-    """Monotone rhythm is a real tell, but this is a provisional, unfitted
-    heuristic -- it must never escalate to RED (see module docstring)."""
-    narration = [SceneNarration(scene_id="s1", sentences=[
-        sentence("one two three four five"),
-        sentence("six seven eight nine ten"),
-        sentence("more words here right now"),
-    ])]
-    result = check_burstiness(narration)
+def test_check_voice_outside_the_fitted_bands_is_amber_never_red(monkeypatch):
+    """A fitted corpus this small (6 documents) never licenses an
+    automatic RED -- see voice/fingerprint.py's own docstring."""
+    monkeypatch.setattr(voice_diagnostic, "load_fitted_fingerprint", _impossible_fingerprint)
+    result = check_voice(_narration())
+    assert result.band == "AMBER"
+
+
+def test_check_voice_too_little_text_is_green_not_a_crash(monkeypatch):
+    monkeypatch.setattr(voice_diagnostic, "load_fitted_fingerprint", _impossible_fingerprint)
+    result = check_voice(_narration(n_sentences=1))
+    assert result.band == "GREEN"
+
+
+def test_check_voice_empty_narration_does_not_crash(monkeypatch):
+    monkeypatch.setattr(voice_diagnostic, "load_fitted_fingerprint", _impossible_fingerprint)
+    result = check_voice([])
+    assert result.band == "GREEN"
+
+
+def test_check_voice_uses_the_real_checked_in_fingerprint_by_default():
+    """No monkeypatch -- confirms the real config file loads and produces
+    a usable result end to end."""
+    result = check_voice(_narration())
+    assert result.dimension == "voice"
     assert result.band in ("GREEN", "AMBER")
-    assert result.band != "RED"
-
-
-def test_too_few_sentences_defaults_to_green():
-    narration = [SceneNarration(scene_id="s1", sentences=[sentence("just one sentence")])]
-    result = check_burstiness(narration)
-    assert result.band == "GREEN"
-
-
-def test_empty_narration_does_not_crash():
-    result = check_burstiness([])
-    assert result.band == "GREEN"

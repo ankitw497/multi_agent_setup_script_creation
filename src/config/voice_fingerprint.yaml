@@ -1,0 +1,40 @@
+# Fitted voice bands (plan §11.2, V1D) -- the CHECKED-IN RESULT of fitting
+# against docs/corpus/transcripts/ (real human-narrated YouTube technical
+# explainer scripts). That directory is gitignored (copyrighted transcript
+# text, local-only) -- this file is what travels with the codebase instead,
+# generated once by voice/fingerprint.py's fit_fingerprint_from_corpus_dir(),
+# not recomputed at runtime.
+#
+# 4 of the original 10 transcripts were excluded: raw, unedited auto-caption
+# dumps with almost no real sentence-ending punctuation (1-2 "sentences"
+# spanning thousands of words each) -- real finding, 2026-09-11, would have
+# badly skewed every band if included. Only genuinely valid, human-edited
+# transcripts were fitted against.
+fitted_from:
+  n_documents: 6
+  excluded_documents:
+    - video_10.txt
+    - video_2.txt
+    - video_6.txt
+    - video_7.txt
+  note: >-
+    Fitted 2026-09-11 against docs/corpus/transcripts/ (gitignored,
+    local-only real YouTube transcripts) -- this file is the checked-in
+    RESULT, not the raw corpus.
+
+bands:
+  burstiness:
+    low: 0.4394
+    high: 0.6577
+  contractions_per100w:
+    low: 0.7865
+    high: 2.2635
+  you_per100w:
+    low: 0.0
+    high: 2.4275
+  we_per100w:
+    low: 0.0
+    high: 4.3942
+  causal_per100w:
+    low: 0.4446
+    high: 1.6124
