@@ -95,9 +95,23 @@ def test_escalation_payload_carries_the_first_pass_verdict():
     assert "first_pass_verdict" in payload
 
 
-def test_uses_pass_id_c4s_for_both_stages():
+def test_uses_pass_id_c4s_for_both_stages_by_default():
     worker = FakeWorker(ColdHookVerdict(flagged=True))
     review_agent = FakeReviewAgent(ColdHookCritique(issues=[]))
     critique_cold_hook("t", "n", "v", worker, review_agent, make_budget())
     assert worker.calls[0]["pass_id"] == "C4s"
     assert review_agent.calls[0]["pass_id"] == "C4s"
+
+
+def test_pass_ids_are_overridable_for_a_non_shorts_caller():
+    """Long-form (STORY_IMPROVEMENT_PLAN.md Phase 8.2) reuses this same
+    critic but wants C4a/C4b labels in the cost report, not the
+    shorts-specific C4s default."""
+    worker = FakeWorker(ColdHookVerdict(flagged=True))
+    review_agent = FakeReviewAgent(ColdHookCritique(issues=[]))
+    critique_cold_hook(
+        "t", "n", "v", worker, review_agent, make_budget(),
+        haiku_pass_id="C4a", gemini_pass_id="C4b",
+    )
+    assert worker.calls[0]["pass_id"] == "C4a"
+    assert review_agent.calls[0]["pass_id"] == "C4b"

@@ -27,6 +27,7 @@ from planning.models import ReplanFeedback, SourceBrief, StoryPlan
 from planning.story_planner import plan_story
 from review.aggregator import aggregate_review
 from review.claim_mapper import map_claims
+from review.cold_hook_critic import critique_cold_hook
 from review.grounding_verifier import verify_grounding
 from review.models import CritiqueIssue, ReviewBundle
 from review.story_critic import critique_story
@@ -51,6 +52,7 @@ class PipelineAgents:
     narration_lead: Agent
     review_lead: Agent  # strong tier: C1, C2b -- correctness-critical, no cheap tier (plan §2.2)
     cm_agent: Agent  # flash tier: CM is mechanical/cheap by design (plan §2.2)
+    worker: Agent  # Haiku, subscription/free -- first tier of the C4a/C4s cold-hook cascade
 
 
 @dataclass
@@ -64,6 +66,26 @@ class PipelineResult:
     log: list[str] = field(default_factory=list)
 
 
+def _hook_context(plan: StoryPlan, narration: list[SceneNarration]) -> tuple[str, str]:
+    """(hook_narration_text, hook_visual_description) from the plan's first
+    beat's own scenes -- the first-positioned beat IS the opening by
+    construction (same reasoning as `verification/diagnostics/pacing.py`'s
+    first-beat fallback), so this doesn't depend on `narrative_beat="hook"`
+    being tagged accurately."""
+    if not plan.beats:
+        return "", ""
+    first_beat_id = plan.beats[0].beat_id
+    hook_scene_ids = {s.scene_id for s in plan.scene_plan if s.beat_id == first_beat_id}
+    hook_narration = " ".join(
+        s.text for scene in narration if scene.scene_id in hook_scene_ids for s in scene.sentences
+    )
+    hook_visual = next(
+        (s.visual_description for s in plan.scene_plan if s.beat_id == first_beat_id and s.visual_description),
+        "",
+    )
+    return hook_narration, hook_visual
+
+
 def _run_review_block(
     plan: StoryPlan, narration: list[SceneNarration], claims: list[Claim],
     all_source_unit_ids: list[str], target_duration_seconds: float,
@@ -75,6 +97,18 @@ def _run_review_block(
     grounding_violations = check_grounding_policy(narration, claims) + check_numeric_fidelity(narration, claims)
     grounding_issues = verify_grounding(narration, claims, agents.review_lead, budget)
     story_issues = critique_story(plan, narration, agents.review_lead, budget, source_units)
+
+    # C4 cold-hook critic (plan §8/§20.7): built for shorts only until now
+    # (STORY_IMPROVEMENT_PLAN.md Phase 8.2) -- long-form's hook got no
+    # independent "would a real viewer actually keep watching" critique at
+    # all. Reuses the exact same Haiku->Gemini-flash cascade shorts already
+    # use; C4a/C4b pass-id labels (not C4s) match this project's own
+    # long-form naming for the cold-viewer tiers (plan §8).
+    hook_narration, hook_visual = _hook_context(plan, narration)
+    cold_hook_issues = critique_cold_hook(
+        plan.title.chosen, hook_narration, hook_visual, agents.worker, agents.review_lead, budget,
+        haiku_pass_id="C4a", gemini_pass_id="C4b",
+    )
 
     diagnostics = check_retention(plan) + [check_cta_position(plan), check_hook_tension_pacing(plan)]
     voice_diagnostic = check_voice(narration)
@@ -91,7 +125,7 @@ def _run_review_block(
         run_id="pipeline",
         structural_issues=structural,
         grounding_violations=grounding_violations,
-        critique_issues=grounding_issues + story_issues + style_issues,
+        critique_issues=grounding_issues + story_issues + cold_hook_issues + style_issues,
         diagnostics=diagnostics,
     )
     return narration, bundle

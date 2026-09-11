@@ -12,6 +12,7 @@ from planning.models import (
 )
 from planning.scene_expander import BeatSceneExpansion
 from review.claim_mapper import ClaimMapperOutput
+from review.cold_hook_critic import ColdHookCritique, ColdHookVerdict
 from review.grounding_verifier import GroundingReview
 from review.story_critic import StoryCritique
 
@@ -117,7 +118,7 @@ def make_bad_expansions() -> list[BeatSceneExpansion]:
     return [_expansion(2, 30), _expansion(2, 30), _expansion(2, 30)]
 
 
-def make_agents(story_lead_responses=None, narration_responses=None, review_responses=None) -> PipelineAgents:
+def make_agents(story_lead_responses=None, narration_responses=None, review_responses=None, worker_responses=None) -> PipelineAgents:
     story_lead = FakeAgent({
         StoryPlan: (story_lead_responses or {}).get(StoryPlan, []),
         StoryStructure: (story_lead_responses or {}).get(StoryStructure, []),
@@ -128,10 +129,18 @@ def make_agents(story_lead_responses=None, narration_responses=None, review_resp
     review_lead = FakeAgent({
         StoryCritique: (review_responses or {}).get("c1", []),
         GroundingReview: (review_responses or {}).get("c2b", []),
+        ColdHookCritique: (review_responses or {}).get("cold_hook", []),
     })
     cm_agent = FakeAgent({ClaimMapperOutput: (review_responses or {}).get("cm", [])})
+    # A clean, non-flagged verdict every time -- the cold-hook cascade
+    # (Phase 8.2) then never escalates to review_lead, so existing tests
+    # don't need to know about it unless they're testing it directly.
+    # Queued generously (20) since it's called once per review cycle and
+    # the loop's own bound (MAX_STORY_REPLANS + MAX_MAJOR_REVISIONS) is
+    # small but this avoids ever running out across any test's cycles.
+    worker = FakeAgent({ColdHookVerdict: worker_responses or [ColdHookVerdict() for _ in range(20)]})
     return PipelineAgents(story_lead=story_lead, narration_lead=narration_lead,
-                           review_lead=review_lead, cm_agent=cm_agent)
+                           review_lead=review_lead, cm_agent=cm_agent, worker=worker)
 
 
 def make_budget():
@@ -515,3 +524,79 @@ def test_targeted_rewrite_actually_calls_b2_with_the_named_beat_not_a_no_op():
     b2_call = next(c for c in agents.narration_lead.calls if c["pass_id"] == "B2")
     assert b2_call["mode"] == "TARGETED_REWRITE"
     assert all("tighten it" == s["required_intent"] for s in b2_call["payload"]["scenes"])
+
+
+def test_cold_hook_critic_receives_the_plans_title_and_first_beats_narration():
+    """STORY_IMPROVEMENT_PLAN.md Phase 8.2: long-form now runs the same
+    cold-hook cascade shorts already had -- confirms the real payload
+    (title + first-beat narration/visual) actually reaches it."""
+    plan = make_plan()
+    agents = make_agents(
+        narration_responses=[GeneratedNarration(scenes=[
+            {"scene_id": "s0", "sentences": [{"text": "opening line", "sentence_type": "transition"}]},
+        ])],
+        review_responses={"c1": [StoryCritique(issues=[])], "c2b": [GroundingReview(issues=[])], "cm": [ClaimMapperOutput(sentences=[])]},
+    )
+    run_story_and_narration_loop(
+        source_brief=__import__("planning.models", fromlist=["SourceBrief"]).SourceBrief(
+            topic="t", core_question="q", viewer_problem="p", central_insight="i"),
+        claims=[], ledger=AssumptionLedger(), all_source_unit_ids=["u1"],
+        target_duration_seconds=600.0, agents=agents, budget=make_budget(), initial_plan=plan,
+    )
+
+    assert len(agents.worker.calls) == 1
+    payload = agents.worker.calls[0]["payload"]
+    assert payload["title"] == "t"  # plan.title.chosen from make_plan()
+
+
+def test_cold_hook_uses_c4a_c4b_pass_ids_not_the_shorts_c4s_default():
+    plan = make_plan()
+    flagged = ColdHookVerdict(clarity="confusing", flagged=True, confidence="high")
+    agents = make_agents(
+        narration_responses=[make_empty_narration_response()],
+        review_responses={
+            "c1": [StoryCritique(issues=[])], "c2b": [GroundingReview(issues=[])],
+            "cold_hook": [ColdHookCritique(issues=[])], "cm": [ClaimMapperOutput(sentences=[])],
+        },
+        worker_responses=[flagged],
+    )
+    run_story_and_narration_loop(
+        source_brief=__import__("planning.models", fromlist=["SourceBrief"]).SourceBrief(
+            topic="t", core_question="q", viewer_problem="p", central_insight="i"),
+        claims=[], ledger=AssumptionLedger(), all_source_unit_ids=["u1"],
+        target_duration_seconds=600.0, agents=agents, budget=make_budget(), initial_plan=plan,
+    )
+
+    assert agents.worker.calls[0]["pass_id"] == "C4a"
+    cold_hook_call = next(c for c in agents.review_lead.calls if c["schema"] is ColdHookCritique)
+    assert cold_hook_call["pass_id"] == "C4b"
+
+
+def test_a_flagged_cold_hook_verdict_produces_a_real_issue_in_the_bundle():
+    plan = make_plan()
+    flagged = ColdHookVerdict(clarity="confusing", flagged=True, confidence="high")
+    cold_hook_issue = {
+        "issue_id": "ch1", "severity": "major", "category": "hook", "layer": "STORY",
+        "problem": "generic opening, no curiosity gap", "why_it_matters": "loses cold viewers immediately",
+        "recommended_intent": "open with a specific, concrete tension", "repair_owner": "story_lead",
+    }
+    agents = make_agents(
+        narration_responses=[make_empty_narration_response(), GeneratedNarration(scenes=[])],
+        review_responses={
+            "c1": [StoryCritique(issues=[]), StoryCritique(issues=[])],
+            "c2b": [GroundingReview(issues=[]), GroundingReview(issues=[])],
+            "cold_hook": [ColdHookCritique(issues=[cold_hook_issue])],
+            "cm": [ClaimMapperOutput(sentences=[]), ClaimMapperOutput(sentences=[])],
+        },
+        worker_responses=[flagged],
+    )
+    result = run_story_and_narration_loop(
+        source_brief=__import__("planning.models", fromlist=["SourceBrief"]).SourceBrief(
+            topic="t", core_question="q", viewer_problem="p", central_insight="i"),
+        claims=[], ledger=AssumptionLedger(), all_source_unit_ids=["u1"],
+        target_duration_seconds=600.0, agents=agents, budget=make_budget(), initial_plan=plan,
+    )
+
+    hook_issues = [i for i in result.review_bundle.issues if i.category == "hook"]
+    assert len(hook_issues) == 1
+    assert hook_issues[0].problem == "generic opening, no curiosity gap"

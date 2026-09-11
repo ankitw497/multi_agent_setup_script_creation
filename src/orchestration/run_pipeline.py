@@ -172,7 +172,7 @@ def run_full_pipeline(
     # ---- A2 -> B1 -> review -> A3 (the bounded story+narration loop) ----
     agents = PipelineAgents(
         story_lead=story_lead, narration_lead=narration_lead,
-        review_lead=review_lead_strong, cm_agent=review_lead_flash,
+        review_lead=review_lead_strong, cm_agent=review_lead_flash, worker=worker,
     )
     loop_budget = BudgetCounter(tier=DEFAULT_TIERS["longform"])
     story_result = run_story_and_narration_loop(

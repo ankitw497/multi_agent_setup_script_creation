@@ -93,10 +93,16 @@ def _issue_from_haiku_verdict(verdict: ColdHookVerdict) -> CritiqueIssue:
 def critique_cold_hook(
     title: str, hook_narration: str, hook_visual: str, worker: Agent,
     review_agent: Agent | None = None, budget: BudgetCounter | None = None,
+    haiku_pass_id: str = "C4s", gemini_pass_id: str = "C4s",
 ) -> list[CritiqueIssue]:
+    """`haiku_pass_id`/`gemini_pass_id` default to "C4s" (this module's
+    original shorts-only naming) so every existing caller is unaffected.
+    The long-form caller passes "C4a"/"C4b" instead, matching
+    `IMPLEMENTATION_PLAN.md`'s own naming for the long-form cold-viewer
+    tiers -- purely a cost-report label, no behavior difference."""
     payload = {"title": title, "hook_narration": hook_narration, "hook_visual": hook_visual}
     haiku_verdict = worker.run(
-        pass_id="C4s", mode="COLD_HOOK_HAIKU", task_prompt=_HAIKU_PROMPT,
+        pass_id=haiku_pass_id, mode="COLD_HOOK_HAIKU", task_prompt=_HAIKU_PROMPT,
         payload=payload, schema=ColdHookVerdict, timeout_s=120,
     )
 
@@ -108,7 +114,7 @@ def critique_cold_hook(
 
     escalation_payload = {**payload, "first_pass_verdict": haiku_verdict.model_dump()}
     gemini_result = review_agent.run(
-        pass_id="C4s", mode="COLD_HOOK_GEMINI", task_prompt=_GEMINI_PROMPT,
+        pass_id=gemini_pass_id, mode="COLD_HOOK_GEMINI", task_prompt=_GEMINI_PROMPT,
         payload=escalation_payload, schema=ColdHookCritique, budget=budget, estimated_usd=0.01, timeout_s=120,
     )
     return gemini_result.issues
