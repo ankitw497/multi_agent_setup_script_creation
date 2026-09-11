@@ -66,7 +66,7 @@ certain first:
 | 3 | Build the §9 Learning gate | 8.3 | Deterministic, cheap, a designed hard gate that was simply skipped |
 | 4 | Retention diagnostics read narration, not planner flags | 8.4 | Turns three always-GREEN diagnostics into real signal |
 | 5 | Reject regressing revision cycles + narrow B2's blast radius | 8.5 | Stops the loop making things worse; cheap guard |
-| 6 | C1 also reviews H's screen prose | 6 | A whole artifact currently has zero critique coverage |
+| 6 | ~~C3 also reviews H's screen prose~~ [x] code+tests done, live-verify pending | 6 | A whole artifact currently has zero critique coverage |
 | 7 | Typed formula/numeric state validators | 6 | Fixes the confirmed raw-vs-scaled and dropped-`√d_k` class of bug |
 | 8 | A2b neighbor contract | 5 | Improves transitions; larger change than the above |
 | 9 | Airtime by narrative role, not source volume | 7 | Real fix for section bloat, but touches allocation for every run |
@@ -198,6 +198,33 @@ screen prose does not exist yet.
 
 (b) is likely cheaper -- C3 already exists, already runs at the right point, and already has a
 repair path. Decide before building.
+
+**[x] Decided and implemented (b).** `review/visual_critic.py`'s `TASK_PROMPT` now carries
+REPETITION (against `must_not_repeat`/`running_example`) and OVERCLAIM checks
+(`category="repetition"`/`"clarity"`, `layer="NARRATION"`, `repair_owner="html_author"`,
+severity capped at major/minor -- never critical, so these never trigger an H repair loop on
+their own, only get surfaced). `scene_payload()` gained optional `scene_function`,
+`must_not_repeat`, `running_example` params; `html_pipeline.py` threads
+`plan.scene_plan[i].scene_function`/`.must_not_repeat` and `plan.running_example` into each
+call. **Coverage caveat, not fixed:** this only covers C3's *sampled* scenes
+(`review/visual_sample.py::select_scenes_for_visual_audit`), not full coverage -- a real,
+accepted limitation of reusing C3 rather than building a dedicated full-coverage pass.
+
+**Bug found and fixed while implementing this:** `html_pipeline.py`'s
+`synthesize_and_repair_video_html()` computed C3's full `visual_issues` list but only
+extracted the `structural` (critical-severity) subset into `render_issues` -- every ordinary
+`visual_mismatch`/major/minor finding, including the brand-new repetition/overclaim findings
+this fix adds, was silently discarded: never returned in `HtmlSynthesisResult`, never written
+anywhere. Fixed by adding `HtmlSynthesisResult.visual_critique_issues: list[CritiqueIssue]`
+capturing the full list, now written to `render_report.json` by `reporting/emit_html.py`. See
+ERROR_LOG.md for the live-verify entry (once run).
+
+Tests: `tests/review/test_visual_critic.py` (payload/prompt), `tests/orchestration/
+test_html_repair_loop.py` (two new tests forcing the real C3 code path via direct mocks of
+`run_rendered_checks`/`capture_scene_screenshots`, since both are function-local imports --
+every pre-existing test in this file blocks Playwright or opts out of rendered checks and so
+never exercised this code path), `tests/reporting/test_emit_html.py`. Full suite: 786 passed.
+Live-verify: `[ ]` not yet run against a real source.
 
 ### BUG-5 — H receives none of the shared story state (Phase 6)
 
@@ -544,13 +571,12 @@ reviews this artifact at all** -- only spoken narration. So the on-screen text a
 actually reads has zero critique coverage today, not even the OVERCLAIM check Phase 3 already
 built. This is a bigger, more concrete version of this phase's "cross-artifact" scope:
 
-- [ ] Get H's generated `screen_prose`/component content under REPETITION/OVERCLAIM review --
-      a real, currently fully-uncovered artifact. **See BUG-4 above before starting**: C1 runs
-      inside the story loop, which finishes before H is ever called, so simply extending
-      `critique_story()`'s payload is NOT implementable -- the screen prose doesn't exist yet
-      at that point. Choose between a post-H critique pass and folding it into C3 (which
-      already runs post-H and already has an H-repair route); BUG-4 records why (b) looks
-      cheaper
+- [x] Get H's generated `screen_prose`/component content under REPETITION/OVERCLAIM review --
+      a real, previously fully-uncovered artifact. **See BUG-4 above**: folded into C3
+      (`review/visual_critic.py`), which already runs post-H and already has an H-repair
+      route. Code+tests done (full suite 786 passed); live-verify against a real source still
+      `[ ]`. Coverage is limited to C3's sampled scenes, not every scene -- an accepted
+      limitation, not a bug.
 - [ ] **Do not** reach for "add more critic passes" or "escalate to a stronger model" as the
       first response to a missed on-screen overclaim -- the honest cause here is zero coverage,
       not weak coverage. Only consider giving C1 an escalation tier (matching the existing

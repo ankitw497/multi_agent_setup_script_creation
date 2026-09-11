@@ -1531,6 +1531,59 @@ title/hook) to confirm live, tracked as a residual gap in Phase 8.2, not blockin
 
 ---
 
+## ERR-044 — H's screen prose had zero critique coverage; C3's non-structural findings were silently dropped
+
+**Date:** 2026-09-11 · **Severity:** major (a whole artifact the viewer reads was never reviewed at all; a second, independent bug then discarded the fix's own output) · **Status:** fixed, live-verify pending · **Component:** `review/visual_critic.py`, `orchestration/html_pipeline.py`, `reporting/emit_html.py`
+
+**Where:** BUG-4 (STORY_IMPROVEMENT_PLAN.md Phase 6) established that C1
+(`review/story_critic.py`) cannot review H's `screen_prose` -- C1 runs inside the story/
+narration loop, which completes *before* `synthesize_and_repair_video_html()` (H) is ever
+called, so extending C1's payload is not implementable as written. Confirmed by a second
+independent visual audit (`video-01-attention-model-c-gpt56sol-tuned/runs/v01`): two real
+overclaim sentences existed only in H's on-screen article prose, invisible to every existing
+critic.
+
+**Fix:** folded a repetition/overclaim check into C3 (`review/visual_critic.py`), which
+already runs post-H with an existing H-repair route -- cheaper than a new pass, per BUG-4's
+own analysis. `TASK_PROMPT` gained REPETITION (checked against `must_not_repeat`/
+`running_example`) and OVERCLAIM sections, both capped at major/minor severity
+(`repair_owner="html_author"`, `layer="NARRATION"`) so they never trigger H's structural
+repair loop on their own, only get surfaced. `scene_payload()` gained optional
+`scene_function`/`must_not_repeat`/`running_example` params; `html_pipeline.py` threads
+`plan.scene_plan[i]`'s metadata and `plan.running_example` into each call.
+
+**A second, separate real bug found while wiring this in:** `html_pipeline.py`'s C3-invocation
+block computed the full `visual_issues` list but only ever extracted the `structural`
+(critical-severity, RENDERER-layer) subset into `render_issues` via
+`_visual_critique_to_render_issues()` -- every ordinary `visual_mismatch` and every major/minor
+finding, including the new repetition/overclaim findings this same fix adds, was silently
+discarded: never returned in `HtmlSynthesisResult`, never written to `render_report.json`,
+never visible anywhere. Fixed by adding `HtmlSynthesisResult.visual_critique_issues:
+list[CritiqueIssue]`, capturing C3's full output, now written to `render_report.json` by
+`reporting/emit_html.py`.
+
+**Tests:** `tests/review/test_visual_critic.py` -- payload/prompt coverage plus the usual
+no-hardcoded-topic-vocabulary guard. `tests/orchestration/test_html_repair_loop.py` -- two new
+tests that force the real C3 code path via direct `monkeypatch.setattr` on
+`verification.hard.render_rendered.run_rendered_checks`/`capture_scene_screenshots` (both are
+function-local imports, so the usual module-attribute patch used elsewhere in this file
+doesn't reach them); confirmed necessary because every pre-existing test in this file either
+blocks Playwright or opts out of rendered checks, so none of them exercised this code path at
+all before. `tests/reporting/test_emit_html.py` -- one new test for the report field. Full
+suite: 786 passed, 16 deselected.
+
+**Coverage caveat, not a bug:** C3 only reviews its own *sampled* scenes
+(`review/visual_sample.py::select_scenes_for_visual_audit`), not every scene H generates --
+an accepted, deliberate limitation of reusing C3 rather than building a dedicated
+full-coverage pass.
+
+**Not yet live-verified**: no real pipeline run has exercised this change yet. Needs a run
+with `enable_rendered_checks=True` reaching a clean rendered state (so C3 actually executes)
+to confirm a real `category="repetition"`/`"clarity"` finding appears in a real
+`render_report.json`'s `visual_critique_issues`.
+
+---
+
 ## Open items (not yet bugs, flagged for future attention)
 
 - **A2b's per-beat expansion doesn't always self-track its own new concepts within one
