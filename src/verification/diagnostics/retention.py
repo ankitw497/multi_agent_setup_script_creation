@@ -14,12 +14,17 @@ fitted the way voice bands eventually will be.
 from __future__ import annotations
 
 from planning.archetypes import get_archetype_spec
-from planning.models import StoryPlan
+from planning.models import SourceBrief, StoryPlan
 from review.models import DiagnosticResult
+from verification.hard.text_overlap import overlap as _content_overlap
 
 PLANNING_WPM = 167
 PAYOFF_GAP_SECONDS = 90.0  # plan §10.2: "payoff gap > ~75-90s with no state change"
 VALLEY_BEAT_COUNT = 2  # plan §10.2: "valley = consecutive beats with [no observable field true]"
+# Deliberately soft (AMBER, not a hard gate) -- novelty is a judgment call and a
+# word-overlap heuristic shouldn't block a run on its own (STORY_IMPROVEMENT_PLAN.md
+# Phase 8.3). Reuses the same threshold check_promise_chain already uses for the same reason.
+NOVELTY_OVERLAP_THRESHOLD = 0.15
 
 
 def _beat_seconds(plan: StoryPlan) -> dict[str, float]:
@@ -103,6 +108,36 @@ def check_payoff_gap(plan: StoryPlan) -> DiagnosticResult:
         dimension="retention.payoff_gap", band=band, value=round(worst, 1), target=f"<={PAYOFF_GAP_SECONDS:.0f}s",
         evidence=(f"longest stretch with no state change: {worst:.1f}s starting at beat {worst_start!r}"
                   if worst > 0 else "no gap -- every beat advances something observable"),
+    )
+
+
+def check_novelty_coverage(plan: StoryPlan, source_brief: SourceBrief) -> DiagnosticResult:
+    """plan §9 Learning gate, soft part (STORY_IMPROVEMENT_PLAN.md Phase 8.3):
+    `SourceBrief.novelty_statement` ("what this audience doesn't already
+    know") was collected by A1, explicitly requested in its own prompt, and
+    then never read by anything downstream -- confirmed via a full grep of
+    the codebase. This is the first thing that actually reads it, banded as
+    a diagnostic (never a hard gate) since "does the plan actually teach
+    the stated novelty" is a judgment call a word-overlap heuristic can
+    only approximate."""
+    if not source_brief.novelty_statement.strip():
+        return DiagnosticResult(
+            dimension="retention.novelty_coverage", band="GREEN",
+            evidence="no novelty_statement given -- nothing to check coverage against",
+        )
+    covered = any(
+        _content_overlap(source_brief.novelty_statement, b.learning_objective) >= NOVELTY_OVERLAP_THRESHOLD
+        for b in plan.beats if b.learning_objective.strip()
+    )
+    band = "GREEN" if covered else "AMBER"
+    return DiagnosticResult(
+        dimension="retention.novelty_coverage", band=band,
+        evidence=(
+            f"novelty_statement={source_brief.novelty_statement!r} is reflected in at least one "
+            "beat's learning_objective" if covered else
+            f"no beat's learning_objective shares real content with novelty_statement="
+            f"{source_brief.novelty_statement!r} -- the plan may not actually teach the stated novelty"
+        ),
     )
 
 

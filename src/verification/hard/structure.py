@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from planning.archetypes import get_archetype_spec
-from planning.models import StoryPlan
+from planning.models import SourceBrief, StoryPlan
 
 from .text_overlap import DEFAULT_OVERLAP_THRESHOLD
 from .text_overlap import overlap as _promise_overlap
@@ -129,6 +129,44 @@ def check_promise_chain(plan: StoryPlan) -> list[StructuralIssue]:
     return issues
 
 
+def check_learning_gate(plan: StoryPlan, source_brief: SourceBrief) -> list[StructuralIssue]:
+    """plan §9 Learning gate, structural part (`IMPLEMENTATION_PLAN.md:669`):
+    "no central_insight; a major beat with no learning_objective;
+    viewer_can_now not reachable from the beats' objectives." Designed as a
+    hard gate from the start; confirmed entirely unbuilt
+    (STORY_IMPROVEMENT_PLAN.md Phase 8.3) until now.
+
+    "Major beat" is approximated as any beat with a non-blank
+    `archetype_role` -- `story_planner.py`'s own prompt already treats a
+    blank `archetype_role` as the rare exception, not the norm, so this
+    reuses an existing convention rather than inventing a new one.
+    """
+    issues: list[StructuralIssue] = []
+
+    if not source_brief.central_insight.strip():
+        issues.append(StructuralIssue("no_central_insight", "source_brief.central_insight is empty"))
+
+    major_beats = [b for b in plan.beats if b.archetype_role.strip()]
+    missing_objective = [b.beat_id for b in major_beats if not b.learning_objective.strip()]
+    if missing_objective:
+        issues.append(StructuralIssue(
+            "beat_missing_learning_objective",
+            f"beat(s) with a real archetype_role have no learning_objective: {missing_objective}",
+        ))
+
+    if plan.beats and not any(
+        _promise_overlap(plan.ending.viewer_can_now, b.learning_objective) >= PROMISE_OVERLAP_THRESHOLD
+        for b in plan.beats if b.learning_objective.strip()
+    ):
+        issues.append(StructuralIssue(
+            "viewer_can_now_unreachable",
+            f"ending.viewer_can_now={plan.ending.viewer_can_now!r} shares no real content "
+            "with any beat's learning_objective",
+        ))
+
+    return issues
+
+
 def check_cta_placement(plan: StoryPlan) -> list[StructuralIssue]:
     """plan §9 CTA hard gate (partial -- `max_ctas<=2` is already enforced
     at the model level by CTAContract's own Field bound, so it can never
@@ -160,8 +198,15 @@ def check_cta_placement(plan: StoryPlan) -> list[StructuralIssue]:
 
 def check_structure(
     plan: StoryPlan, target_duration_seconds: float, all_source_unit_ids: list[str],
+    source_brief: SourceBrief | None = None,
 ) -> list[StructuralIssue]:
-    """The full V* structural pass -- every hard check, one call."""
+    """The full V* structural pass -- every hard check, one call.
+
+    `source_brief` is optional (default `None` skips `check_learning_gate`
+    entirely) so existing callers/tests that don't have one in scope keep
+    working unchanged -- every real caller in `orchestration/pipeline.py`
+    does have it and should pass it.
+    """
     return (
         check_word_budget_matches_target(plan, target_duration_seconds)
         + check_every_beat_has_source_units(plan)
@@ -170,4 +215,5 @@ def check_structure(
         + check_core_roles_present(plan)
         + check_promise_chain(plan)
         + check_cta_placement(plan)
+        + (check_learning_gate(plan, source_brief) if source_brief is not None else [])
     )

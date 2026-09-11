@@ -1,11 +1,17 @@
 """Tests for verification/diagnostics/retention.py -- D* (plan §10.2)."""
 from planning.models import (
-    CTAContract, EndingContract, HookContract, ScenePlan, StoryBeat, StoryPlan, TitleContract,
+    CTAContract, EndingContract, HookContract, ScenePlan, SourceBrief, StoryBeat, StoryPlan, TitleContract,
 )
 from verification.diagnostics.retention import (
-    PAYOFF_GAP_SECONDS, VALLEY_BEAT_COUNT, check_driver_coverage, check_payoff_gap, check_retention,
-    check_valleys,
+    PAYOFF_GAP_SECONDS, VALLEY_BEAT_COUNT, check_driver_coverage, check_novelty_coverage, check_payoff_gap,
+    check_retention, check_valleys,
 )
+
+
+def make_source_brief(**overrides) -> SourceBrief:
+    base = dict(topic="t", core_question="q", viewer_problem="p", central_insight="i")
+    base.update(overrides)
+    return SourceBrief(**base)
 
 
 def make_plan(beats, scene_plan=None) -> StoryPlan:
@@ -103,3 +109,35 @@ def test_check_retention_returns_all_three_diagnostics():
     results = check_retention(plan)
     dimensions = {r.dimension for r in results}
     assert dimensions == {"retention.driver_coverage", "retention.valley", "retention.payoff_gap"}
+
+
+# ---- novelty coverage (plan §9, STORY_IMPROVEMENT_PLAN.md Phase 8.3) --------------------------
+
+def test_no_novelty_statement_given_is_green_not_a_crash():
+    plan = make_plan([beat("B01", learning_objective="explain attention")])
+    result = check_novelty_coverage(plan, make_source_brief(novelty_statement=""))
+    assert result.band == "GREEN"
+
+
+def test_novelty_reflected_in_a_beats_learning_objective_is_green():
+    plan = make_plan([beat("B01", learning_objective="explain how attention retrieves context")])
+    result = check_novelty_coverage(
+        plan, make_source_brief(novelty_statement="most viewers don't know attention retrieves context on demand"),
+    )
+    assert result.band == "GREEN"
+
+
+def test_novelty_unreflected_in_any_beats_learning_objective_is_amber_not_a_hard_failure():
+    """Deliberately soft -- novelty is a judgment call, this must never
+    block a run on its own (STORY_IMPROVEMENT_PLAN.md Phase 8.3)."""
+    plan = make_plan([beat("B01", learning_objective="a completely unrelated statement about cats")])
+    result = check_novelty_coverage(
+        plan, make_source_brief(novelty_statement="most viewers don't know attention retrieves context on demand"),
+    )
+    assert result.band == "AMBER"
+
+
+def test_no_beat_has_any_learning_objective_is_amber():
+    plan = make_plan([beat("B01")])
+    result = check_novelty_coverage(plan, make_source_brief(novelty_statement="a real novelty claim about retrieval"))
+    assert result.band == "AMBER"

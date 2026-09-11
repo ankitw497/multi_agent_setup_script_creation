@@ -54,14 +54,20 @@ def make_plan(scene_words=70, n_scenes=24, source_units=None, archetype="build")
         title=TitleContract(chosen="t", promise="understand how attention retrieves context"),
         hook=HookContract(viewer_problem="x", tension="y", promise="you will understand how attention retrieves context"),
         cta=CTAContract(primary_after_beat="B02"),  # not the first beat -- see check_cta_placement
-        ending=EndingContract(resolve_hook="now you understand how attention retrieves context end to end",
-                               compressed_mental_model="y", capstone_payoff="z", viewer_can_now="do x"),
+        ending=EndingContract(
+            resolve_hook="now you understand how attention retrieves context end to end",
+            compressed_mental_model="y", capstone_payoff="z",
+            viewer_can_now="explain how attention retrieves context instead of relying on a fixed summary",
+        ),
         beats=[StoryBeat(beat_id="B01", purpose="x", source_unit_ids=source_units,
-                          archetype_stage="desired_capability", forward_driver="x", new_information=True),
+                          archetype_stage="desired_capability", forward_driver="x", new_information=True,
+                          learning_objective="diagnose why a fixed summary loses context"),
                StoryBeat(beat_id="B02", purpose="x", source_unit_ids=source_units,
-                          archetype_stage="problem_to_solution_pair", forward_driver="y", payoff=True),
+                          archetype_stage="problem_to_solution_pair", forward_driver="y", payoff=True,
+                          learning_objective="explain how attention retrieves context instead of a fixed summary"),
                StoryBeat(beat_id="B03", purpose="x", source_unit_ids=source_units,
-                          archetype_stage="assembled_system", forward_driver="z", new_information=True)],
+                          archetype_stage="assembled_system", forward_driver="z", new_information=True,
+                          learning_objective="assemble the complete attention mechanism from its parts")],
         scene_plan=scene_plan,
     )
 
@@ -80,14 +86,20 @@ def make_structure(archetype="build") -> StoryStructure:
         title=TitleContract(chosen="t", promise="understand how attention retrieves context"),
         hook=HookContract(viewer_problem="x", tension="y", promise="you will understand how attention retrieves context"),
         cta=CTAContract(primary_after_beat="B02"),
-        ending=EndingContract(resolve_hook="now you understand how attention retrieves context end to end",
-                               compressed_mental_model="y", capstone_payoff="z", viewer_can_now="do x"),
+        ending=EndingContract(
+            resolve_hook="now you understand how attention retrieves context end to end",
+            compressed_mental_model="y", capstone_payoff="z",
+            viewer_can_now="explain how attention retrieves context instead of relying on a fixed summary",
+        ),
         beats=[StoryBeat(beat_id="B01", purpose="x", source_unit_ids=["u1"],
-                          archetype_stage="desired_capability", forward_driver="x", new_information=True),
+                          archetype_stage="desired_capability", forward_driver="x", new_information=True,
+                          learning_objective="diagnose why a fixed summary loses context"),
                StoryBeat(beat_id="B02", purpose="x", source_unit_ids=["u1"],
-                          archetype_stage="problem_to_solution_pair", forward_driver="y", payoff=True),
+                          archetype_stage="problem_to_solution_pair", forward_driver="y", payoff=True,
+                          learning_objective="explain how attention retrieves context instead of a fixed summary"),
                StoryBeat(beat_id="B03", purpose="x", source_unit_ids=["u1"],
-                          archetype_stage="assembled_system", forward_driver="z", new_information=True)],
+                          archetype_stage="assembled_system", forward_driver="z", new_information=True,
+                          learning_objective="assemble the complete attention mechanism from its parts")],
     )
 
 

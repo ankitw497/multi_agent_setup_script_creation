@@ -5,13 +5,20 @@ Two of these tests replay REAL defects found in live A2 runs on
 this check actually catches what happened, not just synthetic cases.
 """
 from planning.models import (
-    CTAContract, EndingContract, HookContract, MiniPayoff, ScenePlan, StoryBeat, StoryPlan, TitleContract,
+    CTAContract, EndingContract, HookContract, MiniPayoff, ScenePlan, SourceBrief, StoryBeat, StoryPlan,
+    TitleContract,
 )
 from verification.hard.structure import (
     check_core_roles_present, check_cta_placement, check_every_beat_has_source_units,
-    check_promise_chain, check_referential_integrity, check_source_coverage, check_structure,
-    check_word_budget_matches_target,
+    check_learning_gate, check_promise_chain, check_referential_integrity, check_source_coverage,
+    check_structure, check_word_budget_matches_target,
 )
+
+
+def make_source_brief(**overrides) -> SourceBrief:
+    base = dict(topic="t", core_question="q", viewer_problem="p", central_insight="a real insight")
+    base.update(overrides)
+    return SourceBrief(**base)
 
 
 def make_plan(**overrides) -> StoryPlan:
@@ -230,3 +237,96 @@ def test_check_structure_on_a_fully_clean_plan_is_empty():
         scene_plan=[ScenePlan(scene_id=f"s{i}", beat_id="B01", word_budget=70) for i in range(24)],  # ~1680 words
     )
     assert check_structure(plan, target_duration_seconds=600.0, all_source_unit_ids=["u1", "u2", "u3"]) == []
+
+
+# ---- learning gate (plan §9, STORY_IMPROVEMENT_PLAN.md Phase 8.3) -----------------------------
+
+def test_empty_central_insight_is_flagged():
+    plan = make_plan(beats=[
+        StoryBeat(beat_id="B01", purpose="x", source_unit_ids=["u1"], archetype_role="mechanism",
+                  learning_objective="explain the mechanism"),
+    ])
+    issues = check_learning_gate(plan, make_source_brief(central_insight=""))
+    codes = {i.code for i in issues}
+    assert "no_central_insight" in codes
+
+
+def test_a_beat_with_a_real_archetype_role_and_no_learning_objective_is_flagged():
+    plan = make_plan(beats=[
+        StoryBeat(beat_id="B01", purpose="x", source_unit_ids=["u1"], archetype_role="mechanism"),
+    ])
+    issues = check_learning_gate(plan, make_source_brief())
+    codes = {i.code for i in issues}
+    assert "beat_missing_learning_objective" in codes
+
+
+def test_a_beat_with_no_archetype_role_is_never_required_to_have_one():
+    """A blank archetype_role is a valid, real state (plan §14) -- not
+    every scene has to instantiate a named archetype stage, so a beat with
+    no role at all should not be held to the learning-objective
+    requirement the way a "major" beat is."""
+    plan = make_plan(beats=[
+        StoryBeat(beat_id="B01", purpose="x", source_unit_ids=["u1"], archetype_role=""),
+    ], ending=EndingContract(resolve_hook="x", compressed_mental_model="y", capstone_payoff="z", viewer_can_now="do x"))
+    issues = check_learning_gate(plan, make_source_brief())
+    codes = {i.code for i in issues}
+    assert "beat_missing_learning_objective" not in codes
+
+
+def test_viewer_can_now_unreachable_from_any_beats_learning_objective_is_flagged():
+    plan = make_plan(
+        ending=EndingContract(resolve_hook="x", compressed_mental_model="y", capstone_payoff="z",
+                               viewer_can_now="explain how attention retrieves context"),
+        beats=[StoryBeat(beat_id="B01", purpose="x", source_unit_ids=["u1"], archetype_role="mechanism",
+                          learning_objective="a completely unrelated statement about cats")],
+    )
+    issues = check_learning_gate(plan, make_source_brief())
+    codes = {i.code for i in issues}
+    assert "viewer_can_now_unreachable" in codes
+
+
+def test_viewer_can_now_reachable_in_different_words_is_not_flagged():
+    plan = make_plan(
+        ending=EndingContract(resolve_hook="x", compressed_mental_model="y", capstone_payoff="z",
+                               viewer_can_now="explain how attention retrieves context instead of a fixed summary"),
+        beats=[StoryBeat(beat_id="B01", purpose="x", source_unit_ids=["u1"], archetype_role="mechanism",
+                          learning_objective="explain how attention retrieves context for a token")],
+    )
+    issues = check_learning_gate(plan, make_source_brief())
+    codes = {i.code for i in issues}
+    assert "viewer_can_now_unreachable" not in codes
+
+
+def test_a_fully_clean_plan_passes_the_learning_gate():
+    plan = make_plan(
+        ending=EndingContract(resolve_hook="x", compressed_mental_model="y", capstone_payoff="z",
+                               viewer_can_now="explain how attention retrieves context"),
+        beats=[StoryBeat(beat_id="B01", purpose="x", source_unit_ids=["u1"], archetype_role="mechanism",
+                          learning_objective="explain how attention retrieves context")],
+    )
+    assert check_learning_gate(plan, make_source_brief()) == []
+
+
+def test_no_beats_at_all_does_not_crash_the_learning_gate():
+    plan = make_plan(beats=[])
+    assert check_learning_gate(plan, make_source_brief()) == []
+
+
+def test_check_structure_skips_the_learning_gate_when_no_source_brief_is_given():
+    """Backward compatible: existing callers/tests with no SourceBrief in
+    scope keep working unchanged."""
+    plan = make_plan(beats=[
+        StoryBeat(beat_id="B01", purpose="x", source_unit_ids=["u1"], archetype_role="mechanism"),
+    ])
+    issues = check_structure(plan, target_duration_seconds=600.0, all_source_unit_ids=["u1"])
+    assert "beat_missing_learning_objective" not in {i.code for i in issues}
+
+
+def test_check_structure_includes_the_learning_gate_when_a_source_brief_is_given():
+    plan = make_plan(beats=[
+        StoryBeat(beat_id="B01", purpose="x", source_unit_ids=["u1"], archetype_role="mechanism"),
+    ])
+    issues = check_structure(
+        plan, target_duration_seconds=600.0, all_source_unit_ids=["u1"], source_brief=make_source_brief(),
+    )
+    assert "beat_missing_learning_objective" in {i.code for i in issues}

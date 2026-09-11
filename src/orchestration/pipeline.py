@@ -34,7 +34,7 @@ from review.story_critic import critique_story
 from review.style_critic import critique_style
 from verification.diagnostics.cta import check_cta_position
 from verification.diagnostics.pacing import check_hook_tension_pacing
-from verification.diagnostics.retention import check_retention
+from verification.diagnostics.retention import check_novelty_coverage, check_retention
 from verification.diagnostics.voice import check_voice
 from verification.hard.grounding import check_grounding_policy, check_numeric_fidelity
 from verification.hard.structure import check_structure
@@ -90,8 +90,9 @@ def _run_review_block(
     plan: StoryPlan, narration: list[SceneNarration], claims: list[Claim],
     all_source_unit_ids: list[str], target_duration_seconds: float,
     agents: PipelineAgents, budget: BudgetCounter, source_units: list[SourceUnit],
+    source_brief: SourceBrief,
 ) -> tuple[list[SceneNarration], ReviewBundle]:
-    structural = check_structure(plan, target_duration_seconds, all_source_unit_ids)
+    structural = check_structure(plan, target_duration_seconds, all_source_unit_ids, source_brief)
 
     narration = map_claims(narration, claims, agents.cm_agent, budget)
     grounding_violations = check_grounding_policy(narration, claims) + check_numeric_fidelity(narration, claims)
@@ -110,7 +111,9 @@ def _run_review_block(
         haiku_pass_id="C4a", gemini_pass_id="C4b",
     )
 
-    diagnostics = check_retention(plan) + [check_cta_position(plan), check_hook_tension_pacing(plan)]
+    diagnostics = check_retention(plan) + [
+        check_cta_position(plan), check_hook_tension_pacing(plan), check_novelty_coverage(plan, source_brief),
+    ]
     voice_diagnostic = check_voice(narration)
     diagnostics.append(voice_diagnostic)
 
@@ -205,6 +208,7 @@ def run_story_and_narration_loop(
     while True:
         narration, bundle = _run_review_block(
             plan, narration, claims, all_source_unit_ids, target_duration_seconds, agents, budget, source_units,
+            source_brief,
         )
         log.append(f"review: {len(bundle.hard_failures)} hard failures, {len(bundle.issues)} issues")
 
@@ -222,7 +226,7 @@ def run_story_and_narration_loop(
             return PipelineResult(plan, narration, bundle, status, story_replans_used, major_revisions_used, log)
 
         # status == REVISE: ask A3 what to do about it.
-        structural = check_structure(plan, target_duration_seconds, all_source_unit_ids)
+        structural = check_structure(plan, target_duration_seconds, all_source_unit_ids, source_brief)
         grounding_violations = check_grounding_policy(narration, claims)
         revision_plan = plan_revision(
             plan, structural, grounding_violations, bundle.issues, agents.story_lead, budget,
