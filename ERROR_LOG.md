@@ -838,6 +838,24 @@ chased further per the ERR-010/ERR-031 precedent against over-fitting a prompt t
 observed run — worth revisiting only if a future run shows this recurring often.
 **Tests:** `tests/planning/test_story_planner.py::test_prompt_instructs_populating_archetype_role_with_the_render_vocabulary`.
 
+**Full e2e confirmation (2026-09-11, `runs/v12`, $0.5036, no retry needed):** the committed
+`orchestration/run_pipeline.py` CLI ran genuinely fresh start to finish -- S0 (12 units) →
+S2/C2a (68 claims) → A1 → the loop (archetype=derivation) → H/HV (8 beats, **0 render
+issues**) → shorts (SC/A2s/run_short/vertical HV, **0 issues**) -- with all of ERR-032
+through ERR-035's fixes in play together for the first time. Result: **8/8 beats** got a
+valid `archetype_role` (7 `mechanism`, 1 `observations`); the emitted `page.html` contains
+**12 real `diagram_card` instances** (e.g. a query/key matching diagram for "it", an
+unrestricted-attention diagram showing every position attending every other) and **8 real
+`math_block` equations** (e.g. "Query-key similarity score", "Variance of an unscaled dot
+product"); zero `DM Serif`/`DM Sans`, `-apple-system` present; the short's own
+`.short-visual` block rendered a real state-flow diagram ("Softmax gradient visualizations
+→ Saturated gradients without √d_k → Stable gradients with √d_k") with no serif font. Final
+status was `FAIL` and correctly not promoted -- on three real, pre-existing content-quality
+findings unrelated to any of this session's fixes: two source units never covered, a
+title/hook promise mismatch, and C1 correctly catching that the source's own production
+notes dictate `build` while A2 chose `derivation` (an archetype-classification dispute the
+review loop is specifically designed to catch, not a bug in this fix set).
+
 ---
 
 ## Open items (not yet bugs, flagged for future attention)
