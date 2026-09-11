@@ -163,6 +163,24 @@ class RunningExample(BaseModel):
     values: dict[str, str] = Field(default_factory=dict)  # named quantities/objects, e.g. {"item_a": "9.6", "item_b": "2.4"}
 
 
+class FormulaStage(BaseModel):
+    """One stage in a formula/expression the source builds up progressively
+    across beats (e.g. a raw score -> a scaled score -> a normalized form
+    -> a final output) -- STORY_IMPROVEMENT_PLAN.md Phase 6 item 7.
+    Registered once during A2, in derivation order; most videos have none
+    of these (empty list is the normal case) -- only set when the source
+    actually centers on an expression that evolves stage by stage, the
+    same "typed formula-state object" the confirmed B8 regression bug
+    (a later equation card silently dropping an already-derived term)
+    showed was needed."""
+
+    stage_id: str
+    expression: str  # the exact symbolic form for this stage, e.g. "QK^T / sqrt(d_k)"
+    values: dict[str, str] = Field(default_factory=dict)  # this stage's own worked numbers, e.g. {"cat": "1.7"} --
+    # distinct from an earlier/later stage's numbers for the SAME named quantities (raw vs. scaled scores are
+    # different numbers, never the same dict reused across stages)
+
+
 class ViewerLedger(BaseModel):
     """Transient accumulator threaded through A2b's per-beat loop
     (`planning/story_planner.py`) -- not persisted on `StoryPlan` itself.
@@ -174,6 +192,7 @@ class ViewerLedger(BaseModel):
 
     viewer_knows: list[str] = Field(default_factory=list)  # concept labels already taught
     running_example: RunningExample = Field(default_factory=RunningExample)
+    formula_stages: list[FormulaStage] = Field(default_factory=list)  # set once by A2, never mutated here
 
 
 class ScenePlan(BaseModel):
@@ -191,6 +210,7 @@ class ScenePlan(BaseModel):
     scene_function: SceneFunction = "standard"
     new_concepts: list[str] = Field(default_factory=list)  # concept labels this scene introduces for the first time
     must_not_repeat: list[str] = Field(default_factory=list)  # already-taught concepts this scene builds on, never re-derives
+    formula_stage_id: str = ""  # which registered FormulaStage (if any) this scene's equation/diagram represents
 
 
 class StoryStructure(BaseModel):
@@ -224,6 +244,7 @@ class StoryStructure(BaseModel):
     mini_payoffs: list[MiniPayoff] = Field(default_factory=list)
     ending: EndingContract
     running_example: RunningExample = Field(default_factory=RunningExample)  # V2: the one example every scene reuses
+    formula_stages: list[FormulaStage] = Field(default_factory=list)  # Phase 6: empty unless the source has an evolving formula
 
 
 class StoryPlan(StoryStructure):

@@ -107,6 +107,23 @@ expansion (A2b) and narration will be told to reuse -- do not leave it
 blank if the hook has a real concrete illustration, and never invent a
 second, different example for the same underlying concept.
 
+If (and only if) the source builds up a mathematical or algorithmic
+expression progressively across multiple beats -- a raw form that later
+gets refined, scaled, normalized, or combined into a final form -- register
+each distinct stage ONCE in `formula_stages`, in the order the source
+derives them, each with a short `stage_id` (e.g. "raw_score",
+"scaled_score", "output") and its exact symbolic `expression` as the
+source states it. If the source works a running numeric example through
+these stages, also give each stage its OWN `values` dict for that stage's
+actual worked numbers (e.g. `{"item_a": "4.8"}` for an early stage, a
+DIFFERENT number for the same named quantity at a later stage once the
+source's own transformation has actually been applied to it) -- never
+reuse one stage's numbers as another's; if the source
+never actually changes the numbers between stages, leave `values` empty
+for the later stage rather than restating an unchanged number as if it
+were newly computed. Leave `formula_stages` empty for any source that has
+no such evolving expression -- most sources will not.
+
 The CTA's `intent` should default to VALUE_LINKED (it names the payoff just
 earned and the channel's promise) unless there's a clear reason for another
 intent. `primary_after_beat` must be a beat that has a real payoff, not the
@@ -219,7 +236,7 @@ def plan_story(
     # existing calls.
     beat_word_budgets = allocate_beat_word_budgets(structure.beats, target_duration_seconds)
     scene_plan = []
-    ledger = ViewerLedger(running_example=structure.running_example)
+    ledger = ViewerLedger(running_example=structure.running_example, formula_stages=structure.formula_stages)
     for beat in structure.beats:
         target_words = beat_word_budgets.get(beat.beat_id, 0)
         if target_words <= 0:

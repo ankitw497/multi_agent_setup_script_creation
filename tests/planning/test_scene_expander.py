@@ -1,7 +1,7 @@
 """Tests for planning/scene_expander.py -- A2b (ERR-010/ERR-023 fix)."""
 from facts.models import Claim
 from llm.budget import BudgetCounter, DEFAULT_TIERS
-from planning.models import RunningExample, StoryBeat, ViewerLedger
+from planning.models import FormulaStage, RunningExample, StoryBeat, ViewerLedger
 from planning.scene_expander import BeatSceneExpansion, expand_beat_scenes
 
 
@@ -138,6 +138,33 @@ def test_scene_function_and_must_not_repeat_flow_into_the_scene_plan():
 
     assert scenes[0].scene_function == "derivation"
     assert scenes[0].must_not_repeat == ["Q/K/V roles"]
+
+
+def test_formula_stages_are_passed_to_the_model():
+    ledger = make_ledger(formula_stages=[FormulaStage(stage_id="raw_score", expression="QK^T")])
+    story_lead = FakeStoryLead(BeatSceneExpansion(scenes=[]))
+    expand_beat_scenes(make_beat(), 100, [], story_lead, make_budget(), ledger)
+
+    payload = story_lead.calls[0]["payload"]
+    assert payload["formula_stages"] == [{"stage_id": "raw_score", "expression": "QK^T", "values": {}}]
+
+
+def test_formula_stage_id_flows_into_the_scene_plan():
+    story_lead = FakeStoryLead(BeatSceneExpansion(scenes=[
+        {"visual_description": "x", "formula_stage_id": "scaled_score"},
+    ]))
+    scenes, _ledger = expand_beat_scenes(make_beat(), 100, [], story_lead, make_budget(), make_ledger())
+
+    assert scenes[0].formula_stage_id == "scaled_score"
+
+
+def test_formula_stages_pass_through_unchanged_in_the_returned_ledger():
+    stages = [FormulaStage(stage_id="raw_score", expression="QK^T")]
+    ledger = make_ledger(formula_stages=stages)
+    story_lead = FakeStoryLead(BeatSceneExpansion(scenes=[]))
+    _scenes, updated_ledger = expand_beat_scenes(make_beat(), 100, [], story_lead, make_budget(), ledger)
+
+    assert updated_ledger.formula_stages == stages
 
 
 def test_prompt_has_no_hardcoded_topic_vocabulary():

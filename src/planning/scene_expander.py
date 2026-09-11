@@ -74,6 +74,15 @@ content is the same running illustration, reuse its exact named
 objects/values in `visual_description` rather than inventing a new
 example for the same idea -- the viewer should not have to rebuild their
 mental model from scratch every beat.
+
+If `formula_stages` is non-empty and one of this beat's scenes visually
+presents one of those registered stages (an equation, a worked
+computation, a diagram of that step), set that scene's `formula_stage_id`
+to the matching `stage_id` so its on-screen form can be checked against
+the registered expression later -- once a stage has been reached, a later
+scene representing the same computation must show that stage's form, not
+an earlier, already-superseded one. Leave `formula_stage_id` blank for
+every scene that isn't presenting one of these registered stages.
 """
 
 
@@ -84,6 +93,7 @@ class ExpandedScene(BaseModel):
     scene_function: SceneFunction = "standard"
     new_concepts: list[str] = Field(default_factory=list)
     must_not_repeat: list[str] = Field(default_factory=list)
+    formula_stage_id: str = ""
 
 
 class BeatSceneExpansion(BaseModel):
@@ -106,6 +116,7 @@ def expand_beat_scenes(
         "available_claims": [_claim_payload(c) for c in beat_claims],
         "viewer_knows": ledger.viewer_knows,
         "running_example": ledger.running_example.model_dump(),
+        "formula_stages": [s.model_dump() for s in ledger.formula_stages],
     }
     result = story_lead.run(
         pass_id="A2b", mode="SCENE_EXPANSION", task_prompt=TASK_PROMPT,
@@ -118,6 +129,7 @@ def expand_beat_scenes(
             narrative_job=beat.purpose, visual_description=s.visual_description,
             word_budget=s.word_budget, scene_function=s.scene_function,
             new_concepts=s.new_concepts, must_not_repeat=s.must_not_repeat,
+            formula_stage_id=s.formula_stage_id,
         )
         for i, s in enumerate(result.scenes, start=1)
     ]
@@ -126,5 +138,8 @@ def expand_beat_scenes(
         for concept in scene.new_concepts:
             if concept not in new_viewer_knows:
                 new_viewer_knows.append(concept)
-    updated_ledger = ViewerLedger(viewer_knows=new_viewer_knows, running_example=ledger.running_example)
+    updated_ledger = ViewerLedger(
+        viewer_knows=new_viewer_knows, running_example=ledger.running_example,
+        formula_stages=ledger.formula_stages,
+    )
     return scenes, updated_ledger

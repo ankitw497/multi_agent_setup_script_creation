@@ -339,6 +339,27 @@ def test_viewer_ledger_carries_the_running_example_unchanged_across_beats():
         assert call["payload"]["running_example"]["values"] == {"trophy": "9.6"}
 
 
+def test_formula_stages_carry_from_structure_into_the_ledger_passed_to_a2b():
+    from planning.models import FormulaStage, SourceBrief
+
+    structure = make_plan(
+        beats=[StoryBeat(beat_id="B01", purpose="a", source_unit_ids=["u1"])],
+        formula_stages=[FormulaStage(stage_id="raw_score", expression="QK^T")],
+    )
+    story_lead = SequencedStoryLead(
+        structure_response=structure, beat_responses=[BeatSceneExpansion(scenes=[])],
+    )
+
+    plan_story(
+        SourceBrief(topic="t", core_question="q", viewer_problem="p", central_insight="i"),
+        [], AssumptionLedger(), story_lead, BudgetCounter(tier=DEFAULT_TIERS["longform"]),
+        target_duration_seconds=600, source_units=[],
+    )
+
+    a2b_call = next(c for c in story_lead.calls if c["pass_id"] == "A2b")
+    assert a2b_call["payload"]["formula_stages"] == [{"stage_id": "raw_score", "expression": "QK^T", "values": {}}]
+
+
 def test_scene_plan_result_carries_new_concepts_and_scene_function_through_to_the_final_plan():
     from planning.models import SourceBrief
 
@@ -365,6 +386,13 @@ def test_prompt_instructs_populating_running_example_from_the_hook_illustration(
 
     assert "running_example" in TASK_PROMPT
     assert "reuses" in TASK_PROMPT.lower() or "reuse" in TASK_PROMPT.lower()
+
+
+def test_prompt_instructs_registering_formula_stages_when_the_source_has_an_evolving_expression():
+    from planning.story_planner import TASK_PROMPT
+
+    assert "formula_stages" in TASK_PROMPT
+    assert "stage_id" in TASK_PROMPT
 
 
 def test_prompt_has_no_hardcoded_topic_vocabulary():

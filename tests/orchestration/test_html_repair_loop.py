@@ -207,6 +207,43 @@ def test_playwright_unavailable_is_recorded_as_a_visible_degradation_and_skips_c
     assert not any(c["mode"] == "VISUAL_AUDITOR" for c in visual_auditor.calls)
 
 
+def test_formula_stage_regression_is_a_real_static_issue_that_drives_a_repair(monkeypatch):
+    """STORY_IMPROVEMENT_PLAN.md Phase 6 item 7: a scene claiming a
+    registered formula stage whose rendered content is missing that
+    stage's own form is a real static RenderIssue, wired into the same
+    static-check loop as check_render_static/check_render_content --
+    confirms it actually drives a beat repair, not just that the check
+    function itself returns the right value in isolation."""
+    from planning.models import FormulaStage
+
+    monkeypatch.setattr(html_pipeline_module, "check_render_static", lambda *a, **k: [])
+    monkeypatch.setattr(html_pipeline_module, "check_render_content", lambda *a, **k: [])
+    _block_playwright(monkeypatch)
+    agent = FakeAgent({
+        HeroContent: [HeroContent(badge="b", title="t", subtitle="s")] * 5,
+        BeatVisual: [
+            # First pass: B02's card is missing the registered scaled form.
+            BeatVisual(beat_id="B01", heading="First", scenes=[{"scene_id": "s1", "screen_prose": "raw: QK^T"}]),
+            BeatVisual(beat_id="B02", heading="Second", scenes=[{"scene_id": "s2", "screen_prose": "regressed form"}]),
+            # Repair pass: B02 now carries the correct scaled form.
+            BeatVisual(beat_id="B02", heading="Second", scenes=[{"scene_id": "s2", "screen_prose": "QK^T / sqrt(d_k)"}]),
+        ],
+    })
+
+    plan = make_plan()
+    plan.formula_stages = [
+        FormulaStage(stage_id="raw_score", expression="QK^T"),
+        FormulaStage(stage_id="scaled_score", expression="QK^T / sqrt(d_k)"),
+    ]
+    plan.scene_plan[0].formula_stage_id = "raw_score"
+    plan.scene_plan[1].formula_stage_id = "scaled_score"
+
+    result = synthesize_and_repair_video_html(plan, make_narration(), [], agent, agent, make_budget())
+
+    assert result.repairs_used == 1
+    assert result.render_issues == []
+
+
 def test_c3_payload_carries_scene_function_must_not_repeat_and_running_example(monkeypatch):
     """STORY_IMPROVEMENT_PLAN.md Phase 6 (BUG-4): C3 is the only place H's
     screen prose gets any repetition/overclaim check at all -- confirms

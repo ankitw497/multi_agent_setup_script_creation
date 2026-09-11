@@ -22,6 +22,7 @@ from planning.models import StoryPlan
 from review.models import CritiqueIssue
 from review.visual_critic import critique_visuals, scene_payload
 from review.visual_sample import select_scenes_for_visual_audit
+from verification.hard.formula_consistency import check_formula_stage_consistency
 from verification.hard.render import RenderIssue, check_render_content, check_render_static
 
 MAX_HTML_REPAIRS = 2
@@ -52,6 +53,7 @@ def synthesize_video_html(
     render_issues = (
         check_render_static(video_script_html, page_html, narration, claims)
         + check_render_content(page_html, plan, hero, beat_visuals, narration)
+        + check_formula_stage_consistency(plan, beat_visuals)
     )
     return HtmlSynthesisResult(
         video_script_html=video_script_html, page_html=page_html,
@@ -122,6 +124,7 @@ def synthesize_and_repair_video_html(
         static_issues = (
             check_render_static(video_script_html, page_html, narration, claims)
             + check_render_content(page_html, plan, hero, beat_visuals, narration)
+            + check_formula_stage_consistency(plan, beat_visuals)
         )
         if not static_issues or not apply_repairs(static_issues):
             break
@@ -182,6 +185,7 @@ def synthesize_and_repair_video_html(
                 render_issues = render_issues + (
                     check_render_static(video_script_html, page_html, narration, claims)
                     + check_render_content(page_html, plan, hero, beat_visuals, narration)
+                    + check_formula_stage_consistency(plan, beat_visuals)
                 )
             elif structural:
                 render_issues = render_issues + structural
