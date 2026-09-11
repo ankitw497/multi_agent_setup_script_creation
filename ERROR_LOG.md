@@ -1201,6 +1201,46 @@ passed (up from 689), 16 deselected.
 
 ---
 
+## Run-directory structure: `final/` could hold shorts from a run that FAILed; three subfolders were always empty (2026-09-11, user-reported)
+
+User inspected a real run dir (`runs/v16`) and asked why `extraction/`, `facts/`, and
+`revisions/` were always empty, and why `final/` was inconsistent -- it held `shorts/1/`
+(real short deliverables) but none of the long-form's own files (`script.md`,
+`narration.json`, `quality_report.json`, etc.), because that run's `final_status` was FAIL.
+
+**Two real gaps, both in `orchestration/run_pipeline.py` / `orchestration/paths.py`:**
+
+1. `run_pipeline.py` wrote each short's deliverables directly into
+   `run_dir/final/shorts/<i>/` as soon as `run_short()` returned -- before the overall
+   `final_status` was even computed, and with no check on the *short's own* `final_status`
+   either. So `runs/vNN/final/` could (and did, in `v16`) contain real-looking short output
+   from a run that explicitly failed and was never promoted, and could equally contain a
+   short that itself failed its own hard gate while the long-form passed. `final/` stopped
+   meaning "the finished deliverable" and started meaning "whatever happened to get written."
+2. `paths.py::RUN_SUBDIRS` scaffolds `extraction/`, `facts/`, and `revisions/` in every
+   run (plan §16 names them for S0's parse output, the verified claim registry, and
+   per-attempt revision diffs) but nothing has ever written into them -- `run_pipeline.py`
+   threads all of that forward in memory only, never to disk. Three guaranteed-empty
+   folders in every single run, forever.
+
+**Fix:** shorts are now computed into an in-memory list (`short_artifacts`) and only
+written under `run_dir/final/shorts/<i>/` inside the same `final_status in ("PASS",
+"PASS_WARN")` branch that already gates the long-form's `emit_final_deliverables` --
+and only for the shorts whose *own* `short_result.final_status` also passed (excluded ones
+are logged, not silently dropped). Net effect: whenever a run's `final/` exists at all, it
+holds the long-form deliverables and every short that passed together, consistently --
+never a partial mix, never a failed run's output masquerading as final. `RUN_SUBDIRS`
+drops the three dead entries; nothing currently persists that data, so nothing currently
+needs the folders (see `paths.py`'s own updated docstring -- add them back if/when
+something actually writes into them).
+
+**Tests:** `tests/orchestration/test_run_pipeline.py` — `test_a_passing_short_is_written_into_final_when_the_run_passes`,
+`test_a_failed_short_is_excluded_from_final_even_when_the_run_passes`,
+`test_no_shorts_are_written_into_final_when_the_overall_run_fails`. Full suite: 704 passed
+(up from 701), 16 deselected.
+
+---
+
 ## Open items (not yet bugs, flagged for future attention)
 
 - **V1B's HV static checks are now the full plan §13 list** (updated 2026-09-11; the note

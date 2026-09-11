@@ -6,12 +6,18 @@
 
 This replaces the plan's generic `runs/<id>/` root (plan §16) with a
 project/playlist/video hierarchy: `runs/vNN/` under a video's own folder
-holds exactly the same internal structure plan §16 describes
-(extraction/, facts/, planning/, drafts/, reviews/, revisions/, html/,
-usage.jsonl, run_manifest.json) -- only the root changed, not the shape.
+holds the working subset of plan §16's structure that `run_pipeline.py`
+actually writes to (planning/, drafts/, reviews/, html/, usage.jsonl) --
+only the root changed, not the shape. plan §16 also names extraction/,
+facts/, and revisions/ for S0's parse output, the verified claim
+registry, and per-attempt revision diffs respectively; nothing persists
+those to disk yet (they're handed forward in memory only, see
+`run_pipeline.py`'s own module docstring), so they're deliberately not
+scaffolded here -- an empty folder in every single run is worse than no
+folder at all. Add them back if/when something actually writes into them.
 `final/` always holds the latest successful run's deliverables, promoted
-by `promote_to_final()` once the orchestrator (not yet built) has a
-policy-gate result to act on.
+by `promote_to_final()` once a run reaches a PASS/PASS_WARN policy-gate
+result.
 """
 from __future__ import annotations
 
@@ -19,7 +25,7 @@ import re
 import shutil
 from pathlib import Path
 
-RUN_SUBDIRS = ("extraction", "facts", "planning", "drafts", "reviews", "revisions", "html")
+RUN_SUBDIRS = ("planning", "drafts", "reviews", "html")
 
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 

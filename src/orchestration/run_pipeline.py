@@ -196,7 +196,13 @@ def run_full_pipeline(
     emit_html_deliverables(html_result, run_dir / "html")
 
     # ---- shorts: SC -> A2s -> run_short -> vertical HTML, same in-memory plan/narration/claims ----
+    # Computed in memory only here -- nothing is written under run_dir/final/
+    # yet. A short's own deliverables land in final/ only once we know the
+    # overall run actually finishes PASS/PASS_WARN (below), same rule the
+    # long-form side already follows: final/ never holds a partial or
+    # failed artifact, so it's never misleading to browse.
     short_results: list[ShortRunResult] = []
+    short_artifacts: list[tuple[int, ShortRunResult, str]] = []
     if run_shorts:
         candidates = find_candidates(story_result.plan, story_result.narration, claims, worker)
         log(f"SC: {len(candidates)} candidates")
@@ -213,14 +219,13 @@ def run_full_pipeline(
                 short_budget = BudgetCounter(tier=DEFAULT_TIERS["short"])
                 short_result = run_short(short_plan, claims, shorts_agents, short_budget)
                 log(f"run_short #{i}: final_status={short_result.final_status}, ${short_budget.spent_usd:.4f}")
-                short_dir = emit_short_deliverables(short_result, run_dir / "final" / "shorts" / str(i))
 
                 short_html = synthesize_short_html(short_plan, short_result.narration)
-                (short_dir / "short.html").write_text(short_html)
                 vertical_issues = check_vertical_short(short_html, short_result.narration)
                 log(f"  vertical HV: {len(vertical_issues)} issues")
 
                 short_results.append(short_result)
+                short_artifacts.append((i, short_result, short_html))
 
     # ---- final emission + promotion, gated on the loop's status combined with H/HV's ----
     final_status = _combine_final_status(story_result.final_status, html_result)
@@ -230,11 +235,17 @@ def run_full_pipeline(
             story_result, run_dir, run_id, usage_ledger,
             degraded_capabilities=html_result.degraded_capabilities,
         )
+        for i, short_result, short_html in short_artifacts:
+            if short_result.final_status not in ("PASS", "PASS_WARN"):
+                log(f"  short #{i}: final_status={short_result.final_status} -- excluded from final/")
+                continue
+            short_dir = emit_short_deliverables(short_result, run_dir / "final" / "shorts" / str(i))
+            (short_dir / "short.html").write_text(short_html)
         P.promote_to_final(run_dir, project_root, playlist, video_slug)
         promoted = True
         log(f"promoted to: {P.final_dir(project_root, playlist, video_slug)}")
     else:
-        log(f"final_status={final_status} (story={story_result.final_status}) -- not promoting")
+        log(f"final_status={final_status} (story={story_result.final_status}) -- not promoting (shorts excluded too)")
 
     total_cost = usage_ledger.total_billed_microusd() / 1_000_000
     log(f"total cost: ${total_cost:.4f}")

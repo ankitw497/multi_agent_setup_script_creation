@@ -245,3 +245,40 @@ def test_a_degraded_html_pass_caps_promotion_at_pass_warn_never_pass(patched):
 
     assert output.promoted is True  # PASS_WARN still promotes
     assert output.final_status == "PASS_WARN"
+
+
+def test_a_passing_short_is_written_into_final_when_the_run_passes(patched):
+    """final/ should hold both the long-form and its shorts together --
+    never a run's own final/ with shorts but no script, or vice versa."""
+    rp.run_short.return_value = SimpleNamespace(final_status="PASS", narration=[SimpleNamespace(scene_id="hook")])
+
+    _run(patched)
+
+    assert "emit_short_deliverables" in patched.calls
+    short_dir_arg = patched.calls["emit_short_deliverables"][0][0][1]
+    assert short_dir_arg == patched.run_dir / "final" / "shorts" / "1"
+
+
+def test_a_failed_short_is_excluded_from_final_even_when_the_run_passes(patched):
+    """A short can fail its own hard gate independently of the long-form --
+    it must not end up looking like a finished deliverable in final/."""
+    rp.run_short.return_value = SimpleNamespace(final_status="FAIL", narration=[SimpleNamespace(scene_id="hook")])
+
+    output = _run(patched)
+
+    assert output.promoted is True  # the long-form itself still passed
+    assert "emit_short_deliverables" not in patched.calls
+
+
+def test_no_shorts_are_written_into_final_when_the_overall_run_fails(patched):
+    """Shorts are still computed (so their own FAIL/PASS is visible in the
+    log/PipelineRunOutput), but none of them belong in final/ when the
+    run as a whole didn't reach PASS/PASS_WARN."""
+    rp.run_short.return_value = SimpleNamespace(final_status="PASS", narration=[SimpleNamespace(scene_id="hook")])
+    rp.run_story_and_narration_loop.return_value = make_story_result("FAIL")
+
+    output = _run(patched)
+
+    assert output.promoted is False
+    assert "emit_short_deliverables" not in patched.calls
+    assert "run_short" in patched.calls  # still computed, just not promoted
