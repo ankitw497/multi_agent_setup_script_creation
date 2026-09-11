@@ -69,3 +69,28 @@ def test_evidence_names_the_measured_seconds():
     assert "22s" in result.evidence  # 60/167*60 = 21.56... -> "22s" at .0f precision
     assert result.value == 21.6  # the raw value field keeps 1 decimal of precision
     assert result.target == "<= 30s"
+
+
+def test_a_later_beats_hook_tagged_scene_does_not_inflate_the_measurement():
+    """BUG-2 (found 2026-09-11 via a real gpt-5.6-sol plan): A2b tags
+    narrative_beat="hook" onto the first scene of MANY beats as a
+    per-section rhetorical device, not exclusively the video's true
+    opening. A real plan had it on 7 different beats and the old
+    (pre-fix) implementation summed all of them, reporting 143s for a
+    hook that was actually 64s. Only the first beat's own scenes may
+    count, regardless of what's tagged elsewhere in the plan."""
+    beats = [
+        StoryBeat(beat_id="B01", purpose="hook"),
+        StoryBeat(beat_id="B02", purpose="teach"),
+        StoryBeat(beat_id="B03", purpose="teach more"),
+    ]
+    scenes = [
+        ScenePlan(scene_id="s1", beat_id="B01", narrative_beat="hook", word_budget=60),  # ~21.6s -- the real hook
+        ScenePlan(scene_id="s2", beat_id="B02", narrative_beat="teaching", word_budget=100),
+        # A2b also tagged this LATER beat's opening scene "hook" -- a per-section device,
+        # not the video's true opening. Must not be added to the measurement.
+        ScenePlan(scene_id="s3", beat_id="B03", narrative_beat="hook", word_budget=100),
+    ]
+    result = check_hook_tension_pacing(make_plan(beats, scenes))
+    assert result.band == "GREEN"
+    assert result.value == 21.6  # B01's own scene only, not B01 + B03
