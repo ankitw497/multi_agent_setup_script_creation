@@ -6,6 +6,16 @@ well-scoped call per beat to hit ITS OWN target -- a few hundred words
 across 2-6 scenes is an aggregate an LLM can actually satisfy reliably,
 unlike the full 20-30-scene, ~1670-word system-wide sum A2 used to be
 asked for in one shot.
+
+V2 narrative-continuity fix (STORY_IMPROVEMENT_PLAN.md Phase 1): this pass
+used to expand each beat in total isolation -- the direct mechanical cause
+of cross-scene repetition (any concept could get independently
+re-explained by several different beats, each unaware the others had
+already covered it). `expand_beat_scenes()` now takes and returns a
+`ViewerLedger` threaded through `story_planner.py`'s existing per-beat
+loop, so each beat knows what earlier beats already taught. No new LLM
+call -- the loop was already sequential; this just carries state between
+its existing calls.
 """
 from __future__ import annotations
 
@@ -14,7 +24,7 @@ from pydantic import BaseModel, Field
 from agents.base import Agent
 from facts.models import Claim
 from llm.budget import BudgetCounter
-from planning.models import NarrativeBeat, ScenePlan, StoryBeat
+from planning.models import NarrativeBeat, ScenePlan, SceneFunction, StoryBeat, ViewerLedger
 
 TASK_PROMPT = """\
 Break this ONE beat into concrete scenes whose word_budgets together land
@@ -36,6 +46,34 @@ the `visual_description` for the scene grounded in it must reference that
 concrete illustration directly -- do not compress a claim like "changing
 X to Y flips the answer" into a vaguer restatement like "context matters
 for meaning."
+
+You are also given `viewer_knows` -- concept labels already taught by
+EARLIER beats -- and `running_example` (the one running illustration for
+this whole video, if one has been set). The viewer has continuous memory
+across the entire video: never plan a scene that re-explains a concept
+already in `viewer_knows` from scratch. For each scene, set `scene_function`
+honestly:
+  - `standard`: a genuine first explanation of a concept not yet taught.
+  - `derivation`: builds on a concept already in `viewer_knows` to reach
+    something new -- list the concept(s) it builds on (not re-explains) in
+    `must_not_repeat`; reference them in ≤1 sentence, never re-derive them.
+  - `recap`: the scene's whole job is compressing prior material (e.g.
+    before a payoff or a section boundary) -- keep it brief by design.
+  - `preview`: a very short forward mention of something not taught yet,
+    naming it without explaining its mechanism (the derivation scene that
+    actually teaches it comes later).
+List any genuinely NEW concept this beat introduces for the first time in
+`new_concepts` (short, topic-specific labels naming the actual concept
+this source teaches -- e.g. "the retry backoff formula" for a networking
+source, "the balance invariant" for a tree-rotation source) so later beats
+know not to re-teach it -- do not list a concept that is already in the
+given `viewer_knows`.
+
+If `running_example` is set (label/description/values), and this beat's
+content is the same running illustration, reuse its exact named
+objects/values in `visual_description` rather than inventing a new
+example for the same idea -- the viewer should not have to rebuild their
+mental model from scratch every beat.
 """
 
 
@@ -43,6 +81,9 @@ class ExpandedScene(BaseModel):
     narrative_beat: NarrativeBeat = "teaching"
     visual_description: str = ""
     word_budget: int = Field(ge=30, le=100, default=60)
+    scene_function: SceneFunction = "standard"
+    new_concepts: list[str] = Field(default_factory=list)
+    must_not_repeat: list[str] = Field(default_factory=list)
 
 
 class BeatSceneExpansion(BaseModel):
@@ -55,25 +96,35 @@ def _claim_payload(claim: Claim) -> dict:
 
 def expand_beat_scenes(
     beat: StoryBeat, target_words: int, claims: list[Claim], story_lead: Agent,
-    budget: BudgetCounter,
-) -> list[ScenePlan]:
+    budget: BudgetCounter, ledger: ViewerLedger,
+) -> tuple[list[ScenePlan], ViewerLedger]:
     beat_claims = [c for c in claims if c.source_unit in set(beat.source_unit_ids)]
     payload = {
         "beat_id": beat.beat_id, "purpose": beat.purpose, "archetype_role": beat.archetype_role,
         "forward_driver": beat.forward_driver, "learning_objective": beat.learning_objective,
         "target_words": target_words,
         "available_claims": [_claim_payload(c) for c in beat_claims],
+        "viewer_knows": ledger.viewer_knows,
+        "running_example": ledger.running_example.model_dump(),
     }
     result = story_lead.run(
         pass_id="A2b", mode="SCENE_EXPANSION", task_prompt=TASK_PROMPT,
         payload=payload, schema=BeatSceneExpansion, budget=budget, estimated_usd=0.03,
     )
-    return [
+    scenes = [
         ScenePlan(
             scene_id=f"{beat.beat_id}_s{i:02d}", beat_id=beat.beat_id,
             archetype_role=beat.archetype_role, narrative_beat=s.narrative_beat,
             narrative_job=beat.purpose, visual_description=s.visual_description,
-            word_budget=s.word_budget,
+            word_budget=s.word_budget, scene_function=s.scene_function,
+            new_concepts=s.new_concepts, must_not_repeat=s.must_not_repeat,
         )
         for i, s in enumerate(result.scenes, start=1)
     ]
+    new_viewer_knows = list(ledger.viewer_knows)
+    for scene in scenes:
+        for concept in scene.new_concepts:
+            if concept not in new_viewer_knows:
+                new_viewer_knows.append(concept)
+    updated_ledger = ViewerLedger(viewer_knows=new_viewer_knows, running_example=ledger.running_example)
+    return scenes, updated_ledger

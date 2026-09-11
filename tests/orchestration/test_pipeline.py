@@ -32,11 +32,14 @@ def make_plan(scene_words=70, n_scenes=24, source_units=None, archetype="build")
     from planning.models import ScenePlan
 
     # Scenes distributed across all three beats (not all dumped on B01) so
-    # the retention/CTA diagnostics (plan §10.2, §10.3) see a realistic
-    # timing shape too, not just a plan that happens to pass the word-count
-    # hard check. B01 (hook, ~small) + B02 (early mini-payoff, hosts the
-    # CTA at a real ~20-40% mark) + B03 (the bulk of the remaining content).
-    b1_n = min(3, max(1, n_scenes // 8))
+    # the retention/CTA/pacing diagnostics (plan §10.2, §10.3) see a
+    # realistic timing shape too, not just a plan that happens to pass the
+    # word-count hard check. B01 (hook, ALWAYS just 1 scene -- a real hook
+    # must land its tension within ~30s per plan §10.2 regardless of total
+    # video length, see verification/diagnostics/pacing.py) + B02 (early
+    # mini-payoff, hosts the CTA at a real ~20-40% mark) + B03 (the bulk of
+    # the remaining content).
+    b1_n = 1
     b2_n = min(4, max(1, n_scenes // 6))
     b3_n = max(0, n_scenes - b1_n - b2_n)
     scene_plan = (
@@ -96,12 +99,14 @@ def _expansion(n_scenes, word_budget) -> BeatSceneExpansion:
 
 def make_good_expansions() -> list[BeatSceneExpansion]:
     """One response per beat in make_structure()'s order (B01, B02, B03):
-    3+4+17=24 scenes * 70 words = 1680 words total, within tolerance of the
-    ~1670-word target for a 600s video. Asymmetric (not an even 8/8/8)
-    so the CTA -- hosted on B02 in make_structure() -- lands at a real
-    ~29% mark for the CTA-position diagnostic (plan §10.3's 20-40% band),
-    not ~67% the way an even split would put it."""
-    return [_expansion(3, 70), _expansion(4, 70), _expansion(17, 70)]
+    1+4+19=24 scenes * 70 words = 1680 words total, within tolerance of the
+    ~1670-word target for a 600s video. B01 (the hook) is a single ~70-word
+    scene (~25s) so the pacing diagnostic (plan §10.2's "tension reached
+    inside ~30s") reads GREEN, not RED. Asymmetric otherwise (not an even
+    8/8/8) so the CTA -- hosted on B02 in make_structure() -- lands at a
+    real ~21% mark for the CTA-position diagnostic (plan §10.3's 20-40%
+    band), not ~67% the way an even split would put it."""
+    return [_expansion(1, 70), _expansion(4, 70), _expansion(19, 70)]
 
 
 def make_bad_expansions() -> list[BeatSceneExpansion]:

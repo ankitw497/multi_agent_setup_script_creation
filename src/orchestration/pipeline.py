@@ -32,6 +32,7 @@ from review.models import CritiqueIssue, ReviewBundle
 from review.story_critic import critique_story
 from review.style_critic import critique_style
 from verification.diagnostics.cta import check_cta_position
+from verification.diagnostics.pacing import check_hook_tension_pacing
 from verification.diagnostics.retention import check_retention
 from verification.diagnostics.voice import check_voice
 from verification.hard.grounding import check_grounding_policy, check_numeric_fidelity
@@ -75,7 +76,7 @@ def _run_review_block(
     grounding_issues = verify_grounding(narration, claims, agents.review_lead, budget)
     story_issues = critique_story(plan, narration, agents.review_lead, budget, source_units)
 
-    diagnostics = check_retention(plan) + [check_cta_position(plan)]
+    diagnostics = check_retention(plan) + [check_cta_position(plan), check_hook_tension_pacing(plan)]
     voice_diagnostic = check_voice(narration)
     diagnostics.append(voice_diagnostic)
 

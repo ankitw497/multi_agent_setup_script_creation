@@ -12,6 +12,7 @@ runs/
 !README.md
 !BUILD_PLAN.md
 !ERROR_LOG.md
+!STORY_IMPROVEMENT_PLAN.md
 project/
 
 .venv/

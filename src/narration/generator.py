@@ -42,6 +42,38 @@ For each scene:
   subscribe".
 - Do not invent a technical claim that is not in the claim registry. Reduce
   words, never the causal reasoning a mechanism needs to make sense.
+
+The viewer has continuous memory across the entire video -- do not treat any
+scene as a standalone article. Each scene carries `scene_function`,
+`new_concepts`, and `must_not_repeat`, set by the planner:
+- `scene_function=standard`: a genuine first explanation -- write it in full.
+- `scene_function=derivation`: this scene builds on concepts listed in
+  `must_not_repeat`. Reference each in ONE short clause (e.g. "since we
+  already have X from before,...") -- do not re-explain or re-derive it,
+  even briefly, as if for the first time.
+- `scene_function=recap`: compress everything it touches into 1-2 bridging
+  sentences on the way to what's new -- never restate it at full length.
+- `scene_function=preview`: keep it to a single short forward-looking line
+  naming what's coming, without explaining the mechanism yet.
+If `running_example` is set (non-empty `label`), and a scene's content is
+the same running illustration, reuse its exact named objects and values
+verbatim -- never invent new numbers or a different example for the same
+underlying idea; the viewer should not have to rebuild their mental model
+from scratch every scene.
+
+State a claim whose `verification_status` is VERIFIED as plain, direct fact
+-- never hedge a verified technical claim with "is believed to", "is
+thought to", or "seems to"; that phrasing belongs to genuine uncertainty,
+not to a fact the pipeline has already confirmed. When describing a soft,
+weighted, or probabilistic mechanism, prefer language that reflects a
+weighted contribution over language implying a single hard selection (a
+higher-scoring option "contributes more strongly," not "is the one
+selected," unless the real mechanism genuinely does pick exactly one).
+When a behavior is actually produced by several components acting
+together, describe what one component contributes rather than claiming it
+alone fully causes or resolves the outcome. Never state a detail specific
+to one architecture, algorithm, or implementation as if it were universal
+to every version of the underlying general idea.
 """
 
 
@@ -81,12 +113,15 @@ def generate_narration(plan: StoryPlan, claims: list[Claim], narration_lead: Age
             "narrative_job": scene.narrative_job, "archetype_role": scene.archetype_role,
             "narrative_beat": scene.narrative_beat, "visual_description": scene.visual_description,
             "word_budget": scene.word_budget,
+            "scene_function": scene.scene_function, "new_concepts": scene.new_concepts,
+            "must_not_repeat": scene.must_not_repeat,
             "available_claims": [_claim_payload(c) for c in beat_claims],
         })
 
     payload = {
         "story_promise": plan.story_promise, "central_question": plan.central_question,
         "hook": plan.hook.model_dump(), "cta": plan.cta.model_dump(), "ending": plan.ending.model_dump(),
+        "running_example": plan.running_example.model_dump(),
         "scenes": scenes_payload,
     }
 

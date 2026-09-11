@@ -1241,7 +1241,62 @@ something actually writes into them).
 
 ---
 
+## V2 narrative-continuity fix -- Phases 1-3 live-verified (2026-09-11, `runs/v17`/`v18`)
+
+Implemented `STORY_IMPROVEMENT_PLAN.md`'s Phases 1-3 against real feedback
+(`multi_agent_script_and_model_feedback.md`): a Viewer Knowledge Ledger threaded
+through A2b (Phase 1), a deterministic hook-tension pacing diagnostic (Phase 2), and
+strengthened C1 repetition/pacing/overclaim checks + a narration hedge-language fix
+(Phase 3). Full details and the file-by-file diff are in `STORY_IMPROVEMENT_PLAN.md`;
+this entry records what two live runs actually confirmed.
+
+**Phase 1 (`runs/v17`):** the ledger genuinely prevents cross-beat repetition. "queries"/
+"keys"/"values" are each tagged as a `new_concept` exactly once (`beat_2_s03`) and every
+later touch across beats 3/4/5/6/7/9/10 is correctly tagged into `must_not_repeat`, never
+re-listed as new. The actual narration text for those `derivation`-tagged scenes
+references the concept in one clause without re-deriving it (e.g. `beat_9_s02`: "each
+with its own query, key, and value projections"). `running_example` was populated
+correctly from the hook's own concrete illustration. The `runs/v13` hedge-language bug
+("is then believed to pass through...") does not recur in either run.
+
+**Phase 2 (`runs/v18`):** `pacing.hook_tension` appears in `review_bundle.json` and fired
+a genuine RED -- "hook scenes take 172s of narration before the central tension is
+established" (target ≤30s) -- independently reproducing almost the exact magnitude the
+original feedback complained about (~180s observed there). Confirms the diagnostic is
+wired correctly end to end and catches a real, present defect, not just a synthetic one.
+
+**Phase 3 (`runs/v18`):** the new REPETITION check on C1 fired a real, correct catch:
+"The narration explains the exact same softmax concept using nearly identical sentences
+back-to-back: beat_4_s01 states 'Softmax turns that whole row into positive weights that
+add up to exactly one' ... beat_4_s02 [restates the same]." Inspecting `plan.json`
+explains why Phase 1's ledger didn't already prevent this: both scenes belong to the SAME
+beat's own A2b expansion call, and the model tagged `beat_4_s01`'s `new_concepts` as
+`["softmax for attention"]` but never carried that same-call concept into `beat_4_s02`'s
+own `must_not_repeat` list (`beat_4_s02` is tagged `scene_function=derivation` but lists
+unrelated concepts). This is a real, legitimate residual gap: the ledger reliably tracks
+concepts ACROSS beats (proven in Phase 1's evidence above) but doesn't guarantee a beat's
+own expansion call perfectly self-tracks new concepts introduced earlier in that SAME
+call. Not treated as a bug to chase further right now -- this is exactly the two-layer
+defense the phased design intended (Phase 1 prevents most repetition structurally, Phase
+3's C1 check is the safety net for what slips through), and it worked as designed here.
+The narration also visibly reflects the OVERCLAIM soft-language guidance unprompted:
+`beat_4_s02` reads "a blend across all the values, weighted by relevance, not a single
+pick."
+
+**Full suite:** 731 passed, 16 deselected (up from 689 before this fix began).
+
+---
+
 ## Open items (not yet bugs, flagged for future attention)
+
+- **A2b's per-beat expansion doesn't always self-track its own new concepts within one
+  call** (see the V2 Phase 3 entry above) -- a beat's own multiple scenes can still repeat
+  a concept introduced earlier in the SAME beat's expansion, even though the ledger
+  correctly prevents repetition ACROSS beats. Currently relied on C1's new REPETITION
+  check as a safety net (confirmed working live) rather than a structural fix; a future
+  pass could have `expand_beat_scenes()` feed each scene's own prior sibling scenes'
+  `new_concepts` back into the same call's later scenes if this recurs often enough to
+  matter after more real runs.
 
 - **V1B's HV static checks are now the full plan §13 list** (updated 2026-09-11; the note
   below is superseded). `verification/hard/render.py` covers parsing, unique ids, scene

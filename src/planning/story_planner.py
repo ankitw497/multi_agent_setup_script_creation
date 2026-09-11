@@ -23,7 +23,7 @@ from llm.budget import BudgetCounter
 
 from .archetypes import ALL_ARCHETYPES, load_archetype_specs
 from .beat_word_budget import allocate_beat_word_budgets
-from .models import ReplanFeedback, SourceBrief, StoryPlan, StoryStructure
+from .models import ReplanFeedback, SourceBrief, StoryPlan, StoryStructure, ViewerLedger
 from .scene_expander import expand_beat_scenes
 
 TASK_PROMPT = """\
@@ -94,6 +94,18 @@ directly, not abstract it into a general statement. "The same word can
 mean two different things depending on context" is the kind of vague
 restatement to avoid when the source already hands you the literal
 sentence pair that proves it -- use the literal example.
+
+If you used a concrete illustration for the hook, ALSO populate
+`running_example` with that same illustration, structured for reuse:
+`label` (a short name for it), `description` (one sentence), and `values`
+(a dict of the concrete named quantities/objects involved, in whatever
+shape this source's own illustration actually takes -- named measurements
+with their numbers for a numeric example, named entities and the property
+that distinguishes them for a qualitative one, named steps and their
+outputs for a process). This is the ONE example every later beat's scene
+expansion (A2b) and narration will be told to reuse -- do not leave it
+blank if the hook has a real concrete illustration, and never invent a
+second, different example for the same underlying concept.
 
 The CTA's `intent` should default to VALUE_LINKED (it names the payoff just
 earned and the channel's promise) unless there's a clear reason for another
@@ -199,12 +211,20 @@ def plan_story(
     # A2b (ERR-010/ERR-023 fix): each beat's own word target is computed
     # deterministically, then filled by one small, independently-achievable
     # call per beat -- never one call asked to sum the whole plan itself.
+    # V2 fix (STORY_IMPROVEMENT_PLAN.md Phase 1): a ViewerLedger threads
+    # through this loop beat-to-beat -- each beat's expansion now knows
+    # what earlier beats already taught, instead of expanding in isolation
+    # (the mechanical cause of cross-scene repetition). No extra LLM call:
+    # the loop was already sequential, this just carries state between its
+    # existing calls.
     beat_word_budgets = allocate_beat_word_budgets(structure.beats, target_duration_seconds)
     scene_plan = []
+    ledger = ViewerLedger(running_example=structure.running_example)
     for beat in structure.beats:
         target_words = beat_word_budgets.get(beat.beat_id, 0)
         if target_words <= 0:
             continue
-        scene_plan.extend(expand_beat_scenes(beat, target_words, claims, story_lead, budget))
+        beat_scenes, ledger = expand_beat_scenes(beat, target_words, claims, story_lead, budget, ledger)
+        scene_plan.extend(beat_scenes)
 
     return StoryPlan(**structure.model_dump(exclude={"scene_plan"}), scene_plan=scene_plan)

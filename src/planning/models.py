@@ -26,6 +26,13 @@ CTAIntent = Literal["VALUE_LINKED", "SERIES_LINKED", "CHANNEL_PROMISE", "MINIMAL
 Continuity = Literal["continues_from_previous", "new", "transforms"]
 QuestionProgress = Literal["none", "partial_answer", "resolved"]
 ConceptDensity = Literal["low", "medium", "high"]
+# V2 narrative-continuity fix: distinguishes a scene's storytelling function so
+# narration knows how much to say about a concept it touches -- "preview" (a
+# one-line mention before it's taught), "derivation" (builds on something
+# already taught, referenced not re-explained), "recap" (deliberate
+# compression of prior material), or "standard" (a normal first explanation).
+# See STORY_IMPROVEMENT_PLAN.md Phase 1.
+SceneFunction = Literal["preview", "derivation", "recap", "standard"]
 
 
 class ArchetypeSpec(BaseModel):
@@ -143,6 +150,32 @@ class SemanticObject(BaseModel):
     continuity: Continuity = "new"
 
 
+class RunningExample(BaseModel):
+    """The one concrete illustration a video anchors on and reuses across
+    scenes (V2 narrative-continuity fix, STORY_IMPROVEMENT_PLAN.md Phase 1)
+    -- set once during A2 from the same concrete illustration the hook
+    prompt already extracts, then threaded unchanged through A2b and into
+    B1 so later scenes reuse the same named objects/values instead of each
+    scene rebuilding its own example from scratch."""
+
+    label: str = ""
+    description: str = ""
+    values: dict[str, str] = Field(default_factory=dict)  # named quantities/objects, e.g. {"item_a": "9.6", "item_b": "2.4"}
+
+
+class ViewerLedger(BaseModel):
+    """Transient accumulator threaded through A2b's per-beat loop
+    (`planning/story_planner.py`) -- not persisted on `StoryPlan` itself.
+    Each beat's `expand_beat_scenes()` call receives the ledger built from
+    every prior beat's `new_concepts` and returns an updated one; this is
+    what lets a later beat know a concept was already taught, instead of
+    each beat being expanded in total isolation (the mechanical cause of
+    cross-scene repetition -- see STORY_IMPROVEMENT_PLAN.md's "Why")."""
+
+    viewer_knows: list[str] = Field(default_factory=list)  # concept labels already taught
+    running_example: RunningExample = Field(default_factory=RunningExample)
+
+
 class ScenePlan(BaseModel):
     scene_id: str
     beat_id: str
@@ -155,6 +188,9 @@ class ScenePlan(BaseModel):
     word_budget: int = Field(default=60, ge=30, le=100)  # plan §9: 40-80 target, 30-100 hard
     components: list[str] = Field(default_factory=list)
     semantic_objects: list[SemanticObject] = Field(default_factory=list)
+    scene_function: SceneFunction = "standard"
+    new_concepts: list[str] = Field(default_factory=list)  # concept labels this scene introduces for the first time
+    must_not_repeat: list[str] = Field(default_factory=list)  # already-taught concepts this scene builds on, never re-derives
 
 
 class StoryStructure(BaseModel):
@@ -187,6 +223,7 @@ class StoryStructure(BaseModel):
     beats: list[StoryBeat] = Field(default_factory=list)
     mini_payoffs: list[MiniPayoff] = Field(default_factory=list)
     ending: EndingContract
+    running_example: RunningExample = Field(default_factory=RunningExample)  # V2: the one example every scene reuses
 
 
 class StoryPlan(StoryStructure):

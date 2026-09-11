@@ -59,6 +59,37 @@ Check, in order:
 6. ENDING. Does it resolve the hook's specific promise? Is there an earned
    capstone, or does it just stop after covering the material?
 
+7. REPETITION. Does any concept get substantively re-explained after it
+   was already taught earlier in the narration, without being a
+   deliberately marked recap or compression? The viewer has continuous
+   memory across the entire video -- a scene that re-derives something
+   from scratch a second or third time (not just briefly referencing it
+   to build on it) is a real defect, not stylistic reinforcement. Name the
+   concept and every scene_id where it recurs. Use `category: repetition`.
+
+8. PACING. Does the hook resolve its central tension quickly, or does the
+   narration spend multiple scenes on setup/context before the first real
+   mechanism or payoff begins? A viewer should understand the central
+   problem within the hook itself, not several scenes later. Use
+   `category: pacing`.
+
+9. OVERCLAIM. Flag narration that states more certainty or mechanism than
+   is actually justified by the source, regardless of the video's topic:
+   - Hard-selection language describing a mechanism that is actually
+     soft/weighted or probabilistic -- narrating a graded, weighted
+     contribution as if it were a single discrete pick.
+   - Claiming one single component or step fully causes or resolves an
+     outcome that the source actually attributes to several components
+     acting together -- narrating a partial contribution as if it were the
+     entire explanation.
+   - A detail specific to one particular architecture, algorithm,
+     implementation, or system stated as if it were universal to every
+     version of the underlying general idea.
+   - A motivation or limitation claim overstated as an absolute
+     ("X can only ever do one thing") where the source's actual claim is
+     narrower or conditional.
+   Use `category: clarity`.
+
 Rate severity honestly: critical = the story doesn't work as this
 archetype; major = a real story defect a viewer would notice; minor =
 polish. Every issue needs a concrete `recommended_intent` (what must

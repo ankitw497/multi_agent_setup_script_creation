@@ -2,12 +2,13 @@
 from facts.models import Claim
 from narration.generator import GeneratedNarration, generate_narration
 from planning.models import (
-    CTAContract, EndingContract, HookContract, ScenePlan, StoryBeat, StoryPlan, TitleContract,
+    CTAContract, EndingContract, HookContract, RunningExample, ScenePlan, StoryBeat, StoryPlan,
+    TitleContract,
 )
 
 
-def make_plan() -> StoryPlan:
-    return StoryPlan(
+def make_plan(**overrides) -> StoryPlan:
+    base = dict(
         archetype="build", selection_reason="x", story_promise="learn why", central_question="why?",
         title=TitleContract(chosen="t", promise="p"),
         hook=HookContract(viewer_problem="x", tension="y", promise="z"),
@@ -16,6 +17,8 @@ def make_plan() -> StoryPlan:
         beats=[StoryBeat(beat_id="B01", purpose="intro", source_unit_ids=["u1"])],
         scene_plan=[ScenePlan(scene_id="s1", beat_id="B01", word_budget=60, narrative_job="open the loop")],
     )
+    base.update(overrides)
+    return StoryPlan(**base)
 
 
 class FakeNarrationLead:
@@ -104,3 +107,63 @@ def test_uses_a_longer_timeout_for_this_potentially_large_call():
     narration_lead = FakeNarrationLead(GeneratedNarration(scenes=[]))
     generate_narration(plan, [], narration_lead)
     assert narration_lead.calls[0]["timeout_s"] == 300
+
+
+def test_passes_scene_function_new_concepts_and_must_not_repeat_per_scene():
+    """V2 narrative-continuity fix (STORY_IMPROVEMENT_PLAN.md Phase 1): the
+    writer must see each scene's causal-continuity metadata, not just its
+    narrative_job, so it knows when to compress instead of re-explain."""
+    plan = make_plan(scene_plan=[
+        ScenePlan(
+            scene_id="s1", beat_id="B01", word_budget=60, narrative_job="open the loop",
+            scene_function="derivation", new_concepts=["scaling"], must_not_repeat=["Q/K/V roles"],
+        ),
+    ])
+    narration_lead = FakeNarrationLead(GeneratedNarration(scenes=[]))
+    generate_narration(plan, [], narration_lead)
+
+    scene_payload = narration_lead.calls[0]["payload"]["scenes"][0]
+    assert scene_payload["scene_function"] == "derivation"
+    assert scene_payload["new_concepts"] == ["scaling"]
+    assert scene_payload["must_not_repeat"] == ["Q/K/V roles"]
+
+
+def test_prompt_instructs_not_hedging_verified_claims():
+    """Real bug confirmed live (STORY_IMPROVEMENT_PLAN.md Phase 3, feedback
+    §9): a saved run (runs/v13/drafts/narration_final.json) contains "is
+    then believed to pass through a learned output projection" -- verifier-
+    style hedging leaking into narration for a claim that was already
+    verified. The prompt never told B1 to state verified facts plainly."""
+    from narration.generator import TASK_PROMPT
+
+    assert "VERIFIED" in TASK_PROMPT
+    assert "is believed to" in TASK_PROMPT
+
+
+def test_prompt_instructs_the_preview_derivation_recap_distinction():
+    from narration.generator import TASK_PROMPT
+
+    assert "scene_function" in TASK_PROMPT
+    assert "must_not_repeat" in TASK_PROMPT
+
+
+def test_prompt_has_no_hardcoded_topic_vocabulary():
+    """Overfitting guard (user-flagged, STORY_IMPROVEMENT_PLAN.md): this
+    prompt runs once per full video regardless of topic -- must state its
+    overclaim/hedge guidance generically, not via attention/Q-K-V-specific
+    examples baked in from the one video this fix was diagnosed against."""
+    from narration.generator import TASK_PROMPT
+
+    lowered = TASK_PROMPT.lower()
+    for term in ("q/k/v", "softmax", "multi-head", "q asks", "k matches", "v carries"):
+        assert term not in lowered, f"found topic-specific term {term!r} in a generic per-video prompt"
+
+
+def test_passes_the_running_example_to_the_writer():
+    plan = make_plan(running_example=RunningExample(label="trophy/suitcase", values={"trophy": "9.6"}))
+    narration_lead = FakeNarrationLead(GeneratedNarration(scenes=[]))
+    generate_narration(plan, [], narration_lead)
+
+    payload = narration_lead.calls[0]["payload"]
+    assert payload["running_example"]["label"] == "trophy/suitcase"
+    assert payload["running_example"]["values"] == {"trophy": "9.6"}

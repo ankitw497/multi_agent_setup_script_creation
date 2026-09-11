@@ -127,3 +127,68 @@ def test_no_issues_is_a_valid_clean_result():
 
     issues = critique_story(make_plan(), make_narration(), review_lead, BudgetCounter(tier=DEFAULT_TIERS["longform"]), source_units=[])
     assert issues == []
+
+
+def test_prompt_instructs_checking_for_cross_scene_repetition():
+    """V2 narrative-continuity fix (STORY_IMPROVEMENT_PLAN.md Phase 3):
+    reuses the existing `category="repetition"` value in review/models.py's
+    Category literal -- this check was never asked for before, even though
+    the schema already supported it."""
+    from review.story_critic import TASK_PROMPT
+
+    assert "REPETITION" in TASK_PROMPT
+    assert "category: repetition" in TASK_PROMPT
+
+
+def test_prompt_instructs_checking_hook_pacing():
+    from review.story_critic import TASK_PROMPT
+
+    assert "PACING" in TASK_PROMPT
+    assert "category: pacing" in TASK_PROMPT
+
+
+def test_prompt_instructs_checking_technical_overclaims():
+    """feedback (multi_agent_script_and_model_feedback.md §8): hard-selection
+    language for a soft/weighted mechanism, claiming a distributed behavior
+    is fully resolved by one component, architecture-specific-as-universal
+    claims, and overstated motivation/limitation claims. Phrased generically
+    (no hardcoded topic vocabulary) so it applies to any video's subject,
+    not just the one the original feedback was about -- see
+    STORY_IMPROVEMENT_PLAN.md's overfitting note."""
+    from review.story_critic import TASK_PROMPT
+
+    assert "OVERCLAIM" in TASK_PROMPT
+    assert "soft/weighted or probabilistic" in TASK_PROMPT
+    assert "universal to every" in TASK_PROMPT
+    assert "underlying general idea" in TASK_PROMPT
+
+
+def test_prompt_has_no_hardcoded_topic_vocabulary():
+    """Overfitting guard (user-flagged, STORY_IMPROVEMENT_PLAN.md): C1 runs
+    on every video's narration regardless of topic -- the REPETITION/
+    PACING/OVERCLAIM checks must be phrased generically, not via
+    attention/Q-K-V-specific examples baked in from the one video the
+    original feedback was diagnosed against."""
+    from review.story_critic import TASK_PROMPT
+
+    lowered = TASK_PROMPT.lower()
+    for term in ("q/k/v", "softmax", "multi-head", "highest-matching"):
+        assert term not in lowered, f"found topic-specific term {term!r} in a generic per-video prompt"
+
+
+def test_returns_a_repetition_issue_when_the_critic_flags_one():
+    review_lead = FakeReviewLead(StoryCritique(issues=[{
+        "issue_id": "I001", "severity": "major", "category": "repetition", "layer": "NARRATION",
+        "scene_ids": ["s3", "s7", "s9"],
+        "problem": "Q/K/V roles are fully re-derived three separate times.",
+        "why_it_matters": "The viewer re-learns the same mechanism instead of the story advancing.",
+        "recommended_intent": "Keep the first full explanation; compress the other two to a one-clause reference.",
+        "repair_owner": "narration_lead",
+    }]))
+    from llm.budget import BudgetCounter, DEFAULT_TIERS
+
+    issues = critique_story(make_plan(), make_narration(), review_lead, BudgetCounter(tier=DEFAULT_TIERS["longform"]), source_units=[])
+
+    assert len(issues) == 1
+    assert issues[0].category == "repetition"
+    assert issues[0].scene_ids == ["s3", "s7", "s9"]

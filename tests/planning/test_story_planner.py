@@ -3,18 +3,23 @@ import pytest
 
 from facts.models import AssumptionLedger, Claim
 from llm.budget import BudgetCounter, DEFAULT_TIERS
-from planning.models import CTAContract, EndingContract, HookContract, StoryPlan, TitleContract
+from planning.models import (
+    CTAContract, EndingContract, HookContract, RunningExample, StoryBeat, StoryPlan, TitleContract,
+)
+from planning.scene_expander import BeatSceneExpansion
 from planning.story_planner import plan_story
 
 
-def make_plan(archetype="build") -> StoryPlan:
-    return StoryPlan(
+def make_plan(archetype="build", **overrides) -> StoryPlan:
+    base = dict(
         archetype=archetype, selection_reason="x", story_promise="x", central_question="x",
         title=TitleContract(chosen="t", promise="p"),
         hook=HookContract(viewer_problem="x", tension="y", promise="z"),
         cta=CTAContract(primary_after_beat="B01"),
         ending=EndingContract(resolve_hook="x", compressed_mental_model="y", capstone_payoff="z", viewer_can_now="do x"),
     )
+    base.update(overrides)
+    return StoryPlan(**base)
 
 
 class FakeStoryLead:
@@ -25,6 +30,25 @@ class FakeStoryLead:
     def run(self, **kwargs):
         self.calls.append(kwargs)
         return self._response
+
+
+class SequencedStoryLead:
+    """Returns `structure_response` for the single A2 call, then pops one
+    prepared `BeatSceneExpansion` per A2b call in order -- lets a test
+    exercise `plan_story()`'s REAL multi-beat loop (the actual mechanism
+    the V2 ledger fix lives in), not just one isolated
+    `expand_beat_scenes()` call the way `test_scene_expander.py` does."""
+
+    def __init__(self, structure_response: StoryPlan, beat_responses: list[BeatSceneExpansion]):
+        self._structure_response = structure_response
+        self._beat_responses = list(beat_responses)
+        self.calls = []
+
+    def run(self, **kwargs):
+        self.calls.append(kwargs)
+        if kwargs["pass_id"] == "A2":
+            return self._structure_response
+        return self._beat_responses.pop(0)
 
 
 def test_passes_archetype_reference_table_to_the_model():
@@ -247,3 +271,106 @@ def test_requests_a_generous_max_tokens_override():
         target_duration_seconds=600, source_units=[],
     )
     assert story_lead.calls[0]["max_tokens"] >= 4000
+
+
+def test_viewer_ledger_threads_across_multiple_beats_end_to_end():
+    """V2 narrative-continuity fix (STORY_IMPROVEMENT_PLAN.md Phase 1) --
+    the actual mechanism that fixes cross-scene repetition: beat 2's scene
+    expansion call must receive beat 1's `new_concepts` as `viewer_knows`,
+    through `plan_story()`'s REAL loop (`allocate_beat_word_budgets` +
+    `expand_beat_scenes`), not just in an isolated unit test. This is the
+    single most important behavior in Phase 1 -- without it, every beat is
+    still expanded in isolation regardless of what the ledger model itself
+    can represent."""
+    from planning.models import SourceBrief
+
+    structure = make_plan(beats=[
+        StoryBeat(beat_id="B01", purpose="teach Q/K/V", source_unit_ids=["u1"]),
+        StoryBeat(beat_id="B02", purpose="build the score", source_unit_ids=["u1"]),
+    ])
+    story_lead = SequencedStoryLead(
+        structure_response=structure,
+        beat_responses=[
+            BeatSceneExpansion(scenes=[{"visual_description": "x", "new_concepts": ["Q/K/V roles"]}]),
+            BeatSceneExpansion(scenes=[{"visual_description": "y", "new_concepts": ["compatibility score"]}]),
+        ],
+    )
+
+    plan_story(
+        SourceBrief(topic="t", core_question="q", viewer_problem="p", central_insight="i"),
+        [], AssumptionLedger(), story_lead, BudgetCounter(tier=DEFAULT_TIERS["longform"]),
+        target_duration_seconds=600, source_units=[],
+    )
+
+    a2b_calls = [c for c in story_lead.calls if c["pass_id"] == "A2b"]
+    assert len(a2b_calls) == 2
+    assert a2b_calls[0]["payload"]["viewer_knows"] == []
+    assert a2b_calls[1]["payload"]["viewer_knows"] == ["Q/K/V roles"]
+
+
+def test_viewer_ledger_carries_the_running_example_unchanged_across_beats():
+    from planning.models import SourceBrief
+
+    structure = make_plan(
+        beats=[
+            StoryBeat(beat_id="B01", purpose="a", source_unit_ids=["u1"]),
+            StoryBeat(beat_id="B02", purpose="b", source_unit_ids=["u1"]),
+        ],
+        running_example=RunningExample(label="trophy/suitcase", values={"trophy": "9.6"}),
+    )
+    story_lead = SequencedStoryLead(
+        structure_response=structure,
+        beat_responses=[BeatSceneExpansion(scenes=[]), BeatSceneExpansion(scenes=[])],
+    )
+
+    plan_story(
+        SourceBrief(topic="t", core_question="q", viewer_problem="p", central_insight="i"),
+        [], AssumptionLedger(), story_lead, BudgetCounter(tier=DEFAULT_TIERS["longform"]),
+        target_duration_seconds=600, source_units=[],
+    )
+
+    a2b_calls = [c for c in story_lead.calls if c["pass_id"] == "A2b"]
+    for call in a2b_calls:
+        assert call["payload"]["running_example"]["label"] == "trophy/suitcase"
+        assert call["payload"]["running_example"]["values"] == {"trophy": "9.6"}
+
+
+def test_scene_plan_result_carries_new_concepts_and_scene_function_through_to_the_final_plan():
+    from planning.models import SourceBrief
+
+    structure = make_plan(beats=[StoryBeat(beat_id="B01", purpose="a", source_unit_ids=["u1"])])
+    story_lead = SequencedStoryLead(
+        structure_response=structure,
+        beat_responses=[BeatSceneExpansion(scenes=[
+            {"visual_description": "x", "scene_function": "derivation", "must_not_repeat": ["Q/K/V roles"]},
+        ])],
+    )
+
+    result = plan_story(
+        SourceBrief(topic="t", core_question="q", viewer_problem="p", central_insight="i"),
+        [], AssumptionLedger(), story_lead, BudgetCounter(tier=DEFAULT_TIERS["longform"]),
+        target_duration_seconds=600, source_units=[],
+    )
+
+    assert result.scene_plan[0].scene_function == "derivation"
+    assert result.scene_plan[0].must_not_repeat == ["Q/K/V roles"]
+
+
+def test_prompt_instructs_populating_running_example_from_the_hook_illustration():
+    from planning.story_planner import TASK_PROMPT
+
+    assert "running_example" in TASK_PROMPT
+    assert "reuses" in TASK_PROMPT.lower() or "reuse" in TASK_PROMPT.lower()
+
+
+def test_prompt_has_no_hardcoded_topic_vocabulary():
+    """Overfitting guard (user-flagged, STORY_IMPROVEMENT_PLAN.md): A2 plans
+    every future video regardless of topic -- the `running_example`
+    instruction must describe the FORMAT generically, not via a fixed
+    example (e.g. a specific trophy/suitcase sentence pair) tied to the one
+    source this fix happened to be diagnosed against."""
+    from planning.story_planner import TASK_PROMPT
+
+    lowered = TASK_PROMPT.lower()
+    for term in ("trophy", "suitcase", "q/k/v", "softmax", "multi-head"):
+        assert term not in lowered, f"found topic-specific term {term!r} in a generic per-video prompt"
