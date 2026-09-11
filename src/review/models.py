@@ -21,6 +21,7 @@ Category = Literal[
     "hook", "archetype", "causal_flow", "clarity", "pacing",
     "mini_payoff", "cognitive_load", "ending", "repetition",
     "micro_arc",  # short-format analogue of "archetype" (plan §20.3) -- shorts have no archetype
+    "visual_mismatch",  # C3 (plan §13, V1C): the screen doesn't show what the narration says
 ]
 
 Layer = Literal["SOURCE", "STORY", "NARRATION", "VOICE", "VISUAL", "RENDERER", "TECHNICAL"]
