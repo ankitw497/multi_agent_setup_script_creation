@@ -128,6 +128,38 @@ def test_passes_scene_function_new_concepts_and_must_not_repeat_per_scene():
     assert scene_payload["must_not_repeat"] == ["Q/K/V roles"]
 
 
+def test_claim_importance_reaches_the_payload():
+    """Real bug found 2026-09-11 (live e2e run): the grounding-policy hard
+    gate (verification/hard/grounding.py) requires CORE/SUPPORTING claims
+    to be VERIFIED/CONTEXT_DEPENDENT to be narrated at all -- but B1 was
+    never given `importance`, so it structurally couldn't have followed
+    that rule even if instructed to. A live run produced 61 grounding
+    hard failures from exactly this gap."""
+    plan = make_plan()
+    claims = [Claim(claim_id="C001", source_unit="u1", claim="x", type="mechanism", importance="CORE")]
+    narration_lead = FakeNarrationLead(GeneratedNarration(scenes=[{"scene_id": "s1", "sentences": []}]))
+
+    generate_narration(plan, claims, narration_lead)
+
+    payload = narration_lead.calls[0]["payload"]
+    assert payload["scenes"][0]["available_claims"][0]["importance"] == "CORE"
+
+
+def test_prompt_instructs_the_full_grounding_policy_not_just_verified_phrasing():
+    """The other half of the same live bug: the prompt only ever told B1
+    how to PHRASE a VERIFIED claim, never what to do with an UNVERIFIED or
+    REJECTED one -- so it narrated everything as if verified, matching
+    verification/hard/grounding.py's own CORE/SUPPORTING/OPTIONAL/REJECTED
+    policy table exactly, which the prompt now must mirror."""
+    from narration.generator import TASK_PROMPT
+
+    assert "REJECTED" in TASK_PROMPT
+    assert "UNVERIFIED" in TASK_PROMPT
+    assert "CONTEXT_DEPENDENT" in TASK_PROMPT
+    assert "OPTIONAL" in TASK_PROMPT
+    assert "no hedge makes it acceptable" in TASK_PROMPT
+
+
 def test_prompt_instructs_not_hedging_verified_claims():
     """Real bug confirmed live (STORY_IMPROVEMENT_PLAN.md Phase 3, feedback
     §9): a saved run (runs/v13/drafts/narration_final.json) contains "is

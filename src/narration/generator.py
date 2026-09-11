@@ -64,7 +64,23 @@ from scratch every scene.
 State a claim whose `verification_status` is VERIFIED as plain, direct fact
 -- never hedge a verified technical claim with "is believed to", "is
 thought to", or "seems to"; that phrasing belongs to genuine uncertainty,
-not to a fact the pipeline has already confirmed. When describing a soft,
+not to a fact the pipeline has already confirmed. Every claim also carries
+`importance` (CORE/SUPPORTING/OPTIONAL) and `verification_status`
+together, and they gate whether a claim may be narrated AT ALL, not just
+how confidently to phrase it:
+  - REJECTED: never narrate this claim, in any form, regardless of importance.
+  - UNVERIFIED with importance CORE or SUPPORTING: do not narrate this
+    specific fact -- no hedge makes it acceptable. Either omit it, or, if
+    the scene genuinely needs that content, ground it in a different
+    VERIFIED or CONTEXT_DEPENDENT claim instead.
+  - UNVERIFIED with importance OPTIONAL: only narrate it with an explicit
+    hedge ("approximately," "roughly," "in this example," "under these
+    assumptions," or similar) -- never state it as settled fact.
+  - CONTEXT_DEPENDENT: narrate it as true within the stated context, not
+    as a universal fact.
+This is a hard requirement, not a style preference -- a scene that skips a
+claim it can't ground this way is correct; a scene that narrates it anyway
+is not. When describing a soft,
 weighted, or probabilistic mechanism, prefer language that reflects a
 weighted contribution over language implying a single hard selection (a
 higher-scoring option "contributes more strongly," not "is the one
@@ -101,7 +117,10 @@ def _claims_for_beat(beat_id: str, plan: StoryPlan, claims: list[Claim]) -> list
 
 
 def _claim_payload(claim: Claim) -> dict:
-    return {"claim_id": claim.claim_id, "claim": claim.claim, "verification_status": claim.verification_status}
+    return {
+        "claim_id": claim.claim_id, "claim": claim.claim,
+        "verification_status": claim.verification_status, "importance": claim.importance,
+    }
 
 
 def generate_narration(plan: StoryPlan, claims: list[Claim], narration_lead: Agent) -> list[SceneNarration]:
