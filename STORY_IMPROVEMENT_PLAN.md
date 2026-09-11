@@ -53,6 +53,31 @@ scenes**. Traced to specific real gaps, not hypothetical ones:
 
 ---
 
+## Where to start next (recommended order across the open phases)
+
+Phases 1-4 are done. Phases 5-8 are open, but they are NOT equally urgent, and phase numbers
+are chronological (order discovered), not priority. Recommended order, smallest-and-most-
+certain first:
+
+| # | Item | Phase | Why first |
+|---|---|---|---|
+| 1 | Thread the ledger into B2 | 8.1 | It's an outright bug silently undoing Phase 1 on every run; ~20 lines |
+| 2 | Wire `critique_cold_hook` into long-form | 8.2 | The critic already exists and is tested -- it's one call site |
+| 3 | Build the §9 Learning gate | 8.3 | Deterministic, cheap, a designed hard gate that was simply skipped |
+| 4 | Retention diagnostics read narration, not planner flags | 8.4 | Turns three always-GREEN diagnostics into real signal |
+| 5 | Reject regressing revision cycles + narrow B2's blast radius | 8.5 | Stops the loop making things worse; cheap guard |
+| 6 | C1 also reviews H's screen prose | 6 | A whole artifact currently has zero critique coverage |
+| 7 | Typed formula/numeric state validators | 6 | Fixes the confirmed raw-vs-scaled and dropped-`√d_k` class of bug |
+| 8 | A2b neighbor contract | 5 | Improves transitions; larger change than the above |
+| 9 | Airtime by narrative role, not source volume | 7 | Real fix for section bloat, but touches allocation for every run |
+| 10 | Build C4c mid-video cold viewer | 8.2 | New module; do after the cheap retention wins land |
+
+Everything above item 5 is small and low-risk. Items 6-10 are real work. Item 8.6 (story
+and visual layers informing each other) is deliberately left unscoped pending the cheaper
+partial fixes above.
+
+---
+
 ## Phase 1 — Viewer Knowledge Ledger threaded through A2b (highest leverage)
 
 **Fixes:** the mechanical cause of cross-scene repetition (feedback §2.2, §3, §4, §5, §6, §7).
@@ -440,6 +465,15 @@ its own ~30s retention target despite the overall video having slack elsewhere. 
 word-budget-matches-target (the existing `check_word_budget_matches_target` hard check) does
 not catch this -- it only checks the sum, never the distribution.
 
+**The concrete mechanism, confirmed 2026-09-11**: `beat_word_budget.py::allocate_beat_word_budgets()`
+splits the target duration proportionally to `len(beat.source_unit_ids)` -- i.e. **airtime is
+proportional to how much SOURCE MATERIAL a beat cites, not to its narrative importance or
+retention value**. Run C's real allocation shows the effect exactly: B1 through B9 each got
+precisely 193 words, B10/B11 got ~290. The hook received the same budget as the multi-head
+section, because they happened to cite a similar number of source units. The "hook is too
+long / masking is too long" complaints every review has raised are therefore not narration
+failures at all -- they are decided at allocation time, before a word is written.
+
 - [ ] `planning/beat_word_budget.py` — allow the plan's own archetype/hook to declare
       `retention_deadlines` (central_problem/mechanism_preview/first_payoff seconds), and
       weight the deterministic per-beat allocation to respect them, not just split
@@ -493,7 +527,153 @@ knowing the video's own current mode:
 
 ---
 
-## Final verification (Phases 1-4 done; Phases 5-7 still open)
+## Phase 8 — Measure the viewer's experience, not the planner's self-report
+
+**Why this phase exists.** User report (2026-09-11): *"the pipeline is ready but the script
+is not coming out to be good -- narration has mistakes, viewer retention and interest aren't
+taken into account, story building, causal link, viewer should learn something new."* A code
+audit traced each complaint to a specific, confirmed gap. The pattern underneath all of them:
+
+> The pipeline is genuinely strong at **verifying facts** -- claims, grounding, numeric
+> fidelity, render integrity are all real, built and working. It has almost no independent
+> measurement of **whether the result is a good watch**. Every retention/learning signal is
+> either self-reported by the planner or entirely absent. That asymmetry is the quality
+> ceiling, and Phase 4 already demonstrated a stronger model does not move it.
+
+### 8.1 — BUG: every revision cycle silently discards the Viewer Knowledge Ledger
+
+`editing/targeted_rewrite.py` (B2) regenerates a flagged scene's narration from scratch using
+B1's own `GeneratedNarration` schema, but its payload contains **none** of Phase 1's fields --
+no `scene_function`, no `must_not_repeat`, no `new_concepts`, no `running_example` (grep
+returns empty). So the anti-repetition and example-lock machinery is live in A2b and B1, then
+thrown away by the exact pass most likely to reintroduce those defects. Every real run hits
+B2 (both comparison runs ran it twice). This is the most likely mechanism behind repetition
+issues that never clear across revision rounds, and a plausible one for the confirmed
+`dog/park/bone` running-example drift.
+
+- [ ] `editing/targeted_rewrite.py` — add `scene_function`, `new_concepts`, `must_not_repeat`
+      per scene and the shared `running_example` to B2's payload, matching what
+      `narration/generator.py` already sends; extend B2's `TASK_PROMPT` with the same
+      compress-don't-re-derive and reuse-the-locked-example rules B1 already carries
+- [ ] Unit test: B2's payload carries the ledger fields (FakeAgent-based, mirroring
+      `tests/narration/test_generator.py::test_passes_scene_function_new_concepts_and_must_not_repeat_per_scene`)
+- [ ] Regression test: a scene rewritten by B2 does not lose its `scene_function`/`must_not_repeat`
+
+### 8.2 — No cold-viewer critique exists for long-form at all
+
+`review/cold_hook_critic.py` (C4s) is built, tested and good -- and is wired **only** into
+`orchestration/shorts_pipeline.py`. `orchestration/pipeline.py::_run_review_block` never calls
+it. A 60-second short gets its hook judged by a cold viewer; a 12-minute video's hook gets
+nothing. `IMPLEMENTATION_PLAN.md` §8/§10.2 additionally specifies **C4c, a MID-VIDEO cold
+viewer** asking *"do you know why this is being discussed?"* -- unbuilt entirely. This is
+precisely the retention/interest measurement every external review has asked for.
+
+- [ ] `orchestration/pipeline.py` — call the existing `critique_cold_hook` on the long-form
+      opening inside `_run_review_block` (reuse the existing Haiku→Gemini-flash cascade as-is;
+      no new agent identity needed)
+- [ ] New `review/cold_viewer_critic.py` (C4c) — mid-video cold viewer, sampled at a few
+      deterministic points (reuse `review/visual_sample.py`'s evenly-spaced selection pattern
+      rather than inventing another sampler): at this point in the video, would a viewer who
+      just arrived know why this is being discussed, and want to keep watching?
+- [ ] Wire C4c into `_run_review_block`; route its findings through the existing
+      `CritiqueIssue` `category="pacing"`/`"cognitive_load"` values -- no schema change needed
+- [ ] Unit tests for both (FakeAgent-based); confirm the cascade still short-circuits on a
+      clean, confident Haiku verdict so a good hook stays free
+
+### 8.3 — The §9 Learning gate was designed as a HARD gate and is entirely unbuilt
+
+`IMPLEMENTATION_PLAN.md:669` specifies: *"Learning (structural part): no `central_insight`; a
+major beat with no `learning_objective`; `viewer_can_now` not reachable from the beats'
+objectives."* None of it exists. `verification/hard/structure.py`'s gates are word budget,
+source units, source coverage, referential integrity, core roles, promise chain, CTA
+placement -- no learning gate. Worse, `SourceBrief.novelty_statement` ("what this audience
+doesn't already know") is collected by A1, explicitly asked for in its prompt, and then
+**never read by anything downstream** -- it exists only as a field. `learning_objective` is
+passed to A2b/H/candidate_finder but never validated as non-empty or meaningful. Shorts have
+`check_central_insight_present`; long-form has no equivalent.
+
+- [ ] `verification/hard/structure.py` — add `check_learning_gate(plan, source_brief)`:
+      `central_insight` non-empty; every beat carrying an `archetype_role` has a non-empty
+      `learning_objective`; `ending.viewer_can_now` has real word-overlap with at least one
+      beat's `learning_objective` (reuse `check_promise_chain`'s existing word-overlap
+      heuristic rather than writing a second one)
+- [ ] Thread `source_brief` into `check_structure()`'s signature so `novelty_statement` is
+      finally reachable by a check; flag a plan whose beats show no overlap with the stated
+      novelty as a diagnostic (AMBER), not a hard failure -- novelty is a judgment call and a
+      word-overlap heuristic shouldn't block a run on its own
+- [ ] Unit tests mirroring `tests/verification/hard/test_structure.py`'s existing style
+- [ ] **Live-verify**: confirm the gate fires on a real plan with a blank `learning_objective`,
+      and does NOT fire on a genuinely well-formed plan (so it isn't inert or over-strict)
+
+### 8.4 — Retention diagnostics grade the planner's own homework
+
+`verification/diagnostics/retention.py::_is_state_change()` reads
+`beat.new_information or beat.payoff or beat.visual_mode_change or beat.question_progress != "none"`
+-- **every one of those is a boolean A2 sets about its own plan.** `check_driver_coverage`
+only checks `forward_driver.strip()` is non-empty; it never checks the driver actually drives
+anything. A model that dutifully fills in its fields passes by construction. Confirmed live:
+run C returned GREEN on all three retention diagnostics (`driver_coverage`, `valley`,
+`payoff_gap`) while the human review scored retention/pacing as that run's *weakest*
+dimension. These currently measure schema compliance, not viewer experience.
+
+- [ ] `verification/diagnostics/retention.py` — derive state-change from the NARRATION against
+      the ledger (did this beat's scenes actually introduce anything in `new_concepts`, or was
+      it all `must_not_repeat` references?) instead of trusting the planner's booleans. The
+      Phase 1 ledger makes this possible for the first time -- it wasn't available when these
+      diagnostics were written
+- [ ] Keep the self-reported fields as a SECONDARY signal (a beat claiming
+      `new_information=True` whose scenes introduce zero `new_concepts` is itself a useful
+      finding -- a planner/narration disagreement), not as the primary measurement
+- [ ] Unit tests: a beat that declares `new_information=True` but whose scenes introduce no
+      new concepts is flagged; a genuinely informative beat is not
+
+### 8.5 — The revision loop does not converge, and can regress
+
+Measured across both comparison runs (`final/status.json` logs):
+
+| | run A (`gpt-4o`) | run C (`gpt-5.6-sol` tuned) |
+|---|---|---|
+| critique issues | 4 → 3 → 3 | 5 → 3 → 3 |
+| hard failures | 2 → 2 → 1 | 2 → 2 → **3** |
+
+Critique issues plateau and never clear. Run C rewrote **6 beats to apply 1 fix** and finished
+with MORE hard failures than it started with -- the blast radius of a repair exceeds the
+defect, so each cycle re-rolls grounding/quality dice across six beats. Contributing cause:
+`orchestration/routing.py` only has `REPLAN` / `TARGETED_REWRITE` / `NONE`. The design's
+dedicated repair paths -- **B3 precision edit** (*"verbose/repetitive only"*), **B4 humanize**
+(*"voice RED or C5 major"*), **C6 entailment** -- have no modules at all, so a voice finding, a
+verbosity finding and a factual finding all funnel into the same generic narration rewrite.
+
+- [ ] `orchestration/pipeline.py` — before accepting a revision cycle's output, compare the new
+      issue/hard-failure counts against the previous cycle's; if a rewrite made things strictly
+      worse, keep the previous narration rather than the regression (the loop already retains
+      a "best candidate" concept at exhaustion -- apply it per-cycle, not only at the end)
+- [ ] `editing/targeted_rewrite.py` — narrow the default blast radius: rewrite only the scenes
+      A3 actually named, never a whole beat's worth of scenes, unless the issue is explicitly
+      beat-level
+- [ ] Decide (and record) whether B3/B4/C6 are genuinely wanted or should be formally dropped
+      from the design -- right now they are neither built nor removed, and `routing.py`'s
+      missing branches mean C5's voice findings have nowhere to go except a content rewrite
+      that isn't designed to fix voice. Either is defensible; the current in-between is not
+- [ ] Unit tests: a regressing cycle is rejected; a genuinely improving cycle is accepted
+
+### 8.6 — Story and visual layers never inform each other
+
+`run_pipeline.py` runs `run_story_and_narration_loop()` to completion, and only then calls
+`synthesize_and_repair_video_html()`. H's own `MAX_HTML_REPAIRS` loop can fix render issues
+and C3 visual mismatches, but nothing the visual layer learns can ever feed back into the
+story. Combined with Phase 6's finding that C1 never sees H's screen prose, the on-screen
+half of the product is effectively outside the quality loop entirely.
+
+- [ ] Scope this one deliberately before building: full bidirectional feedback is a large
+      architectural change and may not be worth it. The cheaper 80% is probably Phase 6's
+      "C1 also reviews H's screen prose" plus letting a CRITICAL C3 `visual_mismatch` finding
+      raise a narration-level issue rather than only an H-repair -- evaluate that first and
+      only go further if a real run shows it insufficient
+
+---
+
+## Final verification (Phases 1-4 done; Phases 5-8 still open)
 
 - [x] `.venv/bin/python3 -m pytest -q` green throughout (checked after each phase; 744 passed
       as of the Phase 4 config fix, up from 689 before this work began)

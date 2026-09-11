@@ -1409,6 +1409,69 @@ Phase 2/6/7 items, logged here because the findings are real and reproducible.
 
 ---
 
+## Code audit: B2 discards the Viewer Knowledge Ledger + four structural quality gaps (2026-09-11)
+
+User report: *"the pipeline is ready but the script is not coming out to be good -- narration
+has mistakes, viewer retention and interest aren't taken into account, story building, causal
+link, viewer should learn something new."* Audited the code against `IMPLEMENTATION_PLAN.md`'s
+own design rather than against the external feedback docs. Five confirmed findings, all now
+tracked as `STORY_IMPROVEMENT_PLAN.md` Phase 8:
+
+**1. Real bug -- every revision cycle silently discards Phase 1's ledger.**
+`editing/targeted_rewrite.py` (B2) regenerates a flagged scene's narration from scratch using
+B1's own schema, but its payload contains NONE of `scene_function`, `new_concepts`,
+`must_not_repeat`, `running_example` (grep returns empty). The anti-repetition and
+example-lock machinery is live in A2b and B1, then thrown away by the exact pass most likely
+to reintroduce those defects -- and every real run hits B2 (both comparison runs ran it
+twice). Most likely mechanism behind repetition issues that never clear across revision
+rounds, and a plausible one for the confirmed `dog/park/bone` drift.
+
+**2. No cold-viewer critique exists for long-form.** `review/cold_hook_critic.py` (C4s) is
+built, tested and wired -- but ONLY into `orchestration/shorts_pipeline.py`.
+`orchestration/pipeline.py::_run_review_block` never calls it, so a 60-second short's hook is
+judged by a cold viewer and a 12-minute video's hook is not. `IMPLEMENTATION_PLAN.md` §8/§10.2
+also specifies C4c (mid-video cold viewer, *"do you know why this is being discussed?"*) --
+unbuilt entirely.
+
+**3. The §9 Learning hard gate is entirely unbuilt.** `IMPLEMENTATION_PLAN.md:669` specifies
+it (no `central_insight`; a major beat with no `learning_objective`; `viewer_can_now` not
+reachable from the beats' objectives). `verification/hard/structure.py` has no such check.
+`SourceBrief.novelty_statement` is collected by A1, explicitly requested in its prompt, and
+then never read by anything downstream -- it exists only as a field. Shorts have
+`check_central_insight_present`; long-form has no equivalent.
+
+**4. Retention diagnostics grade the planner's own self-report.**
+`verification/diagnostics/retention.py::_is_state_change()` reads
+`beat.new_information or beat.payoff or beat.visual_mode_change or beat.question_progress`
+-- all booleans A2 sets about its own plan; `check_driver_coverage` only checks
+`forward_driver` is a non-empty string. A model that fills in its fields passes by
+construction. Confirmed live: run C returned GREEN on all three retention diagnostics while
+the human review scored retention/pacing as that run's weakest dimension.
+
+**5. The revision loop does not converge and can regress.** Across both comparison runs,
+critique issues went 4→3→3 and 5→3→3 (plateau, never clear); hard failures went 2→2→1 and
+2→2→**3**. Run C rewrote 6 beats to apply 1 fix and finished worse than it started.
+`orchestration/routing.py` has only `REPLAN`/`TARGETED_REWRITE`/`NONE` -- the design's
+dedicated B3 (precision edit), B4 (humanize) and C6 (entailment) paths have no modules, so
+voice, verbosity and factual findings all funnel into one generic narration rewrite.
+
+**Also noted**: `beat_word_budget.py` allocates airtime proportionally to
+`len(beat.source_unit_ids)` -- airtime tracks how much source material a beat cites, not its
+narrative importance. Run C's allocation: B1-B9 each exactly 193 words, B10/B11 ~290. The
+hook got the same budget as the multi-head section. Every review's "hook too long / masking
+too long" complaint is therefore decided at allocation time, not in narration. Tracked in
+Phase 7.
+
+**Pattern underneath all five**: the pipeline is strong at verifying FACTS (claims, grounding,
+numeric fidelity, render integrity -- all real and working) and has almost no independent
+measurement of whether the result is a good WATCH. Every retention/learning signal is either
+self-reported by the planner or absent. Phase 4 already demonstrated that a stronger model
+does not move this ceiling.
+
+Not yet fixed -- logged here because the findings are real and code-confirmed.
+
+---
+
 ## Open items (not yet bugs, flagged for future attention)
 
 - **A2b's per-beat expansion doesn't always self-track its own new concepts within one
