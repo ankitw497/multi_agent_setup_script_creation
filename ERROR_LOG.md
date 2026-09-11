@@ -1630,6 +1630,46 @@ its best-seen candidate (still `FAIL` overall, on pre-existing, unrelated hard f
 
 ---
 
+## ERR-045 — B1 never received claim `importance`, and the prompt never said what to do with an UNVERIFIED/REJECTED claim
+
+**Date:** 2026-09-11 · **Severity:** critical (61 hard failures on one real run -- the dominant cause of that run's FAIL) · **Status:** fixed · **Component:** `narration/generator.py` · **Live cost:** yes (found via `video-01-attention-phase-e2e-verify/runs/v01`, part of that run's $0.7596)
+
+**Where:** live e2e verification of this session's Phase 5/6/7/8.2 work (user-requested) surfaced
+61 `grounding_policy_violation` hard failures in one run's `review_bundle.json`, all from
+`verification/hard/grounding.py`'s policy table: `UNVERIFIED` + importance `CORE`/`SUPPORTING`
+must never be narrated (no hedge can save it); `UNVERIFIED` + `OPTIONAL` needs an explicit
+hedge; `REJECTED` never narrated at all.
+
+**Root cause, confirmed by reading the actual code, not assumed run-to-run variance:**
+`narration/generator.py::_claim_payload()` sent the model `claim_id`/`claim`/
+`verification_status` but **never `importance`** -- B1 could not have applied the
+CORE/SUPPORTING/OPTIONAL distinction even if told to, the field never reached it. Separately,
+`TASK_PROMPT` only ever instructed "state a VERIFIED claim as plain fact" -- nothing told the
+model what to do for `UNVERIFIED`/`CONTEXT_DEPENDENT`/`REJECTED` claims, so it just narrated
+all of them as if verified. This is a deterministic gap, not LLM randomness -- every run with
+any UNVERIFIED claims would hit this the same way, and this source's real C2a verification
+pass legitimately returned many UNVERIFIED claims.
+
+**Fix:** `_claim_payload()` now includes `importance`; `TASK_PROMPT` gained an explicit policy
+paragraph mirroring `grounding.py`'s own rule table verbatim (REJECTED never narrated;
+UNVERIFIED+CORE/SUPPORTING never narrated regardless of hedging; UNVERIFIED+OPTIONAL only with
+an explicit hedge; CONTEXT_DEPENDENT narrated as context-scoped, not universal).
+
+**Also confirmed, not fixed (accepted as a known limitation):** the same run's one
+`hook_promise_unpaid_by_ending` hard failure was a false positive from `check_promise_chain`'s
+deliberately crude word-overlap proxy -- `hook.promise` and `ending.resolve_hook` were
+semantically matched (both about pronoun resolution via learned context) but shared almost no
+literal words. The check's own docstring already documents this as "not real semantic
+judgement"; not worth a special case.
+
+**Tests:** `tests/narration/test_generator.py` -- `importance` reaches the payload; prompt
+mirrors the full policy table. Full suite: 837 passed, 16 deselected.
+
+**Not yet live-verified**: this fix landed after the run that found it; needs a fresh run to
+confirm the grounding-violation count actually drops.
+
+---
+
 ## Open items (not yet bugs, flagged for future attention)
 
 - **A2b's per-beat expansion doesn't always self-track its own new concepts within one
