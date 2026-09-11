@@ -723,17 +723,34 @@ nothing. `IMPLEMENTATION_PLAN.md` §8/§10.2 additionally specifies **C4c, a MID
 viewer** asking *"do you know why this is being discussed?"* -- unbuilt entirely. This is
 precisely the retention/interest measurement every external review has asked for.
 
-- [ ] `orchestration/pipeline.py` — call the existing `critique_cold_hook` on the long-form
-      opening inside `_run_review_block` (reuse the existing Haiku→Gemini-flash cascade as-is;
-      no new agent identity needed)
+- [x] **Fixed 2026-09-11.** `orchestration/pipeline.py` — calls the existing `critique_cold_hook`
+      on the long-form opening inside `_run_review_block`, reusing the existing
+      Haiku→Gemini-flash cascade as-is (no new agent identity). `PipelineAgents` gained a
+      `worker` field (`run_pipeline.py` already built one, just hadn't threaded it through);
+      new `_hook_context(plan, narration)` extracts the first beat's narration text and
+      `visual_description` (same "first beat is the opening" reasoning as `pacing.py`'s
+      fallback, not dependent on `narrative_beat="hook"` tags -- see BUG-2, still open, for
+      why those tags aren't reliable). `critique_cold_hook()` gained optional
+      `haiku_pass_id`/`gemini_pass_id` params (default `"C4s"`, unchanged for shorts) so
+      long-form logs as `C4a`/`C4b` per `IMPLEMENTATION_PLAN.md`'s own naming -- cost-report
+      label only
+- [x] Unit tests: `tests/orchestration/test_pipeline.py` --
+      `test_cold_hook_critic_receives_the_plans_title_and_first_beats_narration`,
+      `test_cold_hook_uses_c4a_c4b_pass_ids_not_the_shorts_c4s_default`,
+      `test_a_flagged_cold_hook_verdict_produces_a_real_issue_in_the_bundle`;
+      `tests/review/test_cold_hook_critic.py::test_pass_ids_are_overridable_for_a_non_shorts_caller`;
+      confirmed the cascade still short-circuits on a clean, confident Haiku verdict (existing
+      tests use a clean default and never call the Gemini escalation)
+- [x] `.venv/bin/python3 -m pytest -q` green (752 passed, up from 748)
+- [ ] **Live-verify**: a real long-form run shows a `C4a`/`C4b` entry in `usage.jsonl`, and (on
+      a source with a genuinely weak hook) a real `category="hook"` issue in
+      `review_bundle.json` that a clean run doesn't produce -- not yet run
 - [ ] New `review/cold_viewer_critic.py` (C4c) — mid-video cold viewer, sampled at a few
       deterministic points (reuse `review/visual_sample.py`'s evenly-spaced selection pattern
       rather than inventing another sampler): at this point in the video, would a viewer who
-      just arrived know why this is being discussed, and want to keep watching?
+      just arrived know why this is being discussed, and want to keep watching? Still unbuilt.
 - [ ] Wire C4c into `_run_review_block`; route its findings through the existing
       `CritiqueIssue` `category="pacing"`/`"cognitive_load"` values -- no schema change needed
-- [ ] Unit tests for both (FakeAgent-based); confirm the cascade still short-circuits on a
-      clean, confident Haiku verdict so a good hook stays free
 
 ### 8.3 — The §9 Learning gate was designed as a HARD gate and is entirely unbuilt
 
