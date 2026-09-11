@@ -1359,6 +1359,56 @@ explicit "only if it demonstrably helps" criterion.
 
 ---
 
+## Second visual HTML audit confirms two real accuracy bugs + a zero-coverage critique gap (2026-09-11)
+
+Independently verified an external review's specific claims against
+`video-01-attention-model-c-gpt56sol-tuned/runs/v01`'s real HTML/narration (same
+render-with-Playwright-and-read-the-screenshots approach as the first audit) rather than
+taking the review at its word. Both headline "accuracy" bugs are real:
+
+- **Raw vs. scaled score confusion**: `B2_s02` narration states *"'Cat' scores 4.8, 'tired'
+  scores 2.6, 'stairs' only 1.2"* as the initial match score. `B7_s01` narration: *"Take the
+  **scaled** scores for 'it' — cat 4.8, stairs 1.2, tired 2.6"* -- the identical three numbers,
+  now called "scaled." Scaling divides by `√d_k`, so scaled values should differ from raw.
+- **Missing scaling term regresses a later equation**: `B7_s03` narration correctly states the
+  full equation verbally ("softmax of QK-transpose over square root of d_k, times V"). `B8`'s
+  own rendered `math-block-equation` is `softmax(QK^T)_row` -- no `/√d_k` -- one beat later,
+  reusing the same 4.8/1.2/2.6 numbers and calling them "raw scores against every key" in its
+  diagram caption.
+
+**Bigger structural finding**: two of the review's other flagged sentences (an
+architecture-universality overclaim in the position section: *"a position signal gets fused
+into every token's representation before attention runs"*; an unnecessary empirical claim in
+the multi-head section: *"Heads start out with unremarkable, largely uncommitted attention
+patterns"*) are **not in the spoken narration at all** -- confirmed via direct text search of
+`narration_final.json` (absent) vs. the rendered HTML (present, in `subsection-body` /
+`screen_prose`, `html_synth/synthesizer.py`'s own separately-generated on-screen article
+text). `review/story_critic.py` (C1) only ever receives spoken narration -- **the on-screen
+text a viewer actually reads has zero critique coverage today**, including Phase 3's own
+OVERCLAIM check. Not "the checker used a weak model and missed it" -- there is no checker for
+this artifact at all. See `STORY_IMPROVEMENT_PLAN.md` Phase 6 for the fix (extend C1's payload
+to include H's screen prose) and the explicit recommendation against reaching for "more
+passes" or "a stronger model" as the first response to this class of miss.
+
+Also verified the review's own timing table is precise, not estimated: computed real
+word-count-based durations from `narration_final.json` per beat and got 12:39 total vs. the
+review's stated ~12:40, with individual beats matching almost exactly (B1 1:04, B11 1:20).
+
+**A real bug found in this project's own code while doing this verification**: cross-checking
+the review's correct "hook = 64s" against this run's own `pacing.hook_tension` diagnostic
+(which reported 143s) surfaced a genuine bug in `verification/diagnostics/pacing.py`'s
+`check_hook_tension_pacing()` -- it sums every scene tagged `narrative_beat="hook"` **anywhere
+in the plan**, but A2b tags "hook" onto the first scene of many different beats
+(`B1_s01, B2_s01, B3_s01, B4_s01, B9_s01, B10_s01, B11_s01` in this real plan) as a
+per-section rhetorical device, not exclusively the video's true opening -- so the diagnostic
+accidentally summed hook-tagged scenes scattered near the end of the video too. Fix tracked in
+`STORY_IMPROVEMENT_PLAN.md` Phase 2: restrict the scan to the plan's first beat only.
+
+Not yet fixed -- all of the above are now tracked as concrete `STORY_IMPROVEMENT_PLAN.md`
+Phase 2/6/7 items, logged here because the findings are real and reproducible.
+
+---
+
 ## Open items (not yet bugs, flagged for future attention)
 
 - **A2b's per-beat expansion doesn't always self-track its own new concepts within one

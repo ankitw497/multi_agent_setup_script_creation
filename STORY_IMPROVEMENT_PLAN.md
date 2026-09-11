@@ -120,6 +120,24 @@ diagnostics, not an invented threshold.
       before the central tension is established" (target ≤30s) -- independently
       reproducing almost the exact magnitude the original feedback complained about
       (~180s). Confirms the diagnostic is wired correctly end to end. See ERROR_LOG.md.
+- [ ] **Real bug found** (2026-09-11, while independently verifying an external review's
+      timing table against `video-01-attention-model-c-gpt56sol-tuned/runs/v01`): the review's
+      own precise word-count-based timing (hook = 64s) was exactly right; this diagnostic
+      instead reported 143s. Root cause: `check_hook_tension_pacing()` sums every scene
+      tagged `narrative_beat="hook"` **anywhere in the whole plan**, but A2b tags "hook" onto
+      the first scene of MANY beats (`B1_s01, B2_s01, B3_s01, B4_s01, B9_s01, B10_s01,
+      B11_s01` in this real plan) as a per-section rhetorical device, not exclusively the
+      video's true opening -- so the sum accidentally included hook-tagged scenes scattered
+      near the END of the video. Fix: restrict the scan to the plan's FIRST beat's own scenes
+      only (the existing fallback path was actually the correct, safe behavior all along --
+      make it the primary path, or intersect the "hook"-tag scan with the first beat's own
+      scene ids, never the whole plan)
+- [ ] Regression test: a plan where a later beat's scene is also tagged `narrative_beat="hook"`
+      must not inflate the measured hook duration
+- [ ] `.venv/bin/python3 -m pytest -q` green
+- [ ] **Re-verify live** against the same `video-01-attention-model-c-gpt56sol-tuned` plan --
+      confirm the diagnostic now reports ~64s (or whatever the first beat's real total is),
+      not 143s
 
 ---
 
@@ -333,34 +351,149 @@ diagram entities... a render should fail validation if these diverge materially.
       reliable by regex alone, so treat this as a diagnostic signal (AMBER-banded), not a hard
       gate that blocks promotion on its own -- pair it with a C1-style judgment check for the
       cases the heuristic can't resolve confidently
-- [ ] **Technical invariants** (item #10): add an optional `invariants` section the source can
-      declare (or S2a/S2b can extract deterministically, similar to how `AssumptionLedger`
-      already captures source-declared constants) -- e.g. equation form, operation order
-      ("mask applied before softmax, not after"), tensor/data orientation. Validate narration
-      and H's screen prose against these as a new `verification/hard/` check (Python string/
-      pattern matching against the declared invariant, not model judgment) where the invariant
-      is concrete enough to check mechanically; fall back to flagging for C1's OVERCLAIM check
-      otherwise. Scope narrowly at first -- start with whatever invariant the real source
-      material actually states explicitly, not a speculative general framework
-- [ ] **Numeric state tracking** (item #9): distinct from entity consistency -- when a
-      calculation genuinely spans multiple scenes (raw values -> scaled -> normalized -> final),
-      the SAME numbers must reuse, not just the same named objects. `RunningExample.values`
-      already holds arbitrary key/value pairs -- extend `narration/generator.py`'s prompt to
-      explicitly require reusing prior numeric values already established for the same
-      calculation, rather than inventing new illustrative numbers at each step. No new schema
-      needed; this is a prompt-strength and validation gap, not a modeling gap
+
+### Confirmed by a second, independent visual audit (2026-09-11, `video-01-attention-model-c-gpt56sol-tuned/runs/v01`)
+
+Rendered and read the `gpt-5.6-sol` (tuned) run's real HTML/narration directly, verifying an
+external review's specific claims rather than taking them on faith. Both of the review's
+headline "accuracy" bugs are real:
+
+- **Raw vs. scaled score confusion**: `B2_s02` narration states *"'Cat' scores 4.8, 'tired'
+  scores 2.6, 'stairs' only 1.2"* as the initial match score. `B7_s01` narration: *"Take the
+  **scaled** scores for 'it' — cat 4.8, stairs 1.2, tired 2.6"* -- the identical three numbers,
+  now called "scaled." Scaling divides by `√d_k`, so scaled values should differ from raw ones.
+- **Missing scaling term in a later equation card**: `B7_s03`'s narration correctly states the
+  complete equation verbally ("softmax of QK-transpose over square root of d_k, times V"), but
+  `B8`'s own `math-block-equation` in the rendered HTML is literally `softmax(QK^T)_row` --
+  the `/√d_k` term silently disappears one beat later, even though B8 reuses the exact same
+  4.8/1.2/2.6 example and calls them "raw scores against every key" in its diagram caption.
+
+**A bigger, structural gap this trace surfaced**: two of the review's other flagged sentences
+(an architecture-universality overclaim in the position section, an unnecessary empirical
+claim in the multi-head section) turned out to **not be in the spoken narration at all** --
+they're in H's separately-generated on-screen article prose (`synthesize_beat_visual()`'s
+`screen_prose`/`subsection-body` output). **C1 (`review/story_critic.py`) never receives or
+reviews this artifact at all** -- only spoken narration. So the on-screen text a viewer
+actually reads has zero critique coverage today, not even the OVERCLAIM check Phase 3 already
+built. This is a bigger, more concrete version of this phase's "cross-artifact" scope:
+
+- [ ] `review/story_critic.py` — extend `critique_story()`'s payload to also include H's
+      generated `screen_prose`/component content per scene (not just spoken narration), and
+      extend the REPETITION/OVERCLAIM checks to explicitly cover it. This is a real, currently
+      fully-uncovered artifact, not a hypothetical gap
+- [ ] **Do not** reach for "add more critic passes" or "escalate to a stronger model" as the
+      first response to a missed on-screen overclaim -- the honest cause here is zero coverage,
+      not weak coverage. Only consider giving C1 an escalation tier (matching the existing
+      `A3/A4/C3/C4b/C5` pattern in `config/models.yaml`) as a later, separately-tested
+      hypothesis if misses persist after C1 actually has the content in scope
+- [ ] **Technical invariants** (item #10), sharpened into a typed formula-state object rather
+      than a loose "invariants" bag, per the review's own concrete proposal:
+      ```yaml
+      attention_formula:
+        score: "QK^T"
+        scaled_score: "QK^T / sqrt(d_k)"
+        normalized: "softmax(QK^T / sqrt(d_k))"
+        output: "softmax(QK^T / sqrt(d_k)) V"
+      ```
+      Once a beat has narrated/derived a given stage (e.g. "scaled_score" in B6/B7), every
+      LATER equation card referencing the same underlying computation must match that stage's
+      registered form, not regress to an earlier one (B8's `softmax(QK^T)_row` regressing past
+      the already-derived scaled form is exactly the bug this catches). Implement as a new
+      `verification/hard/` check: Python pattern-matching against the registered stage strings,
+      not model judgment -- this is exactly the class of bug a critic will not reliably catch
+      run after run (confirmed live: it slipped through this run's C1 pass untouched)
+- [ ] **Numeric state tracking** (item #9), sharpened by the confirmed bug above: a
+      `numeric_state` object distinguishing `raw_scores`/`scaled_scores`/`attention_weights` as
+      SEPARATE typed values (not one flat `values` dict reused ambiguously across stages), so
+      a scene can only claim "these are the scaled scores" if they match the registered
+      `scaled_scores`, not the registered `raw_scores`. Extend `RunningExample` (or add a
+      sibling model) accordingly; extend `narration/generator.py`'s prompt to require reusing
+      the correct stage's numbers, not just "prior numeric values" generically
 - [ ] Unit tests: `synthesizer.py` payload carries `running_example` and actual narration text;
       the new entity-overlap diagnostic (clean case, mismatch case, ambiguous case treated as
-      AMBER not a crash)
+      AMBER not a crash); the formula-stage check (regression from a later to an earlier stage
+      is caught; a consistent stage progression is not flagged); C1 payload carries screen prose
 - [ ] `.venv/bin/python3 -m pytest -q` green
 - [ ] **Live-verify**: re-render the same real source; confirm `score_s02`/`score_s03`-style
       diagrams now reuse the locked running example instead of inventing `dog/park/bone`;
-      confirm the new diagnostic actually fires on a deliberately-reintroduced mismatch (so we
-      know it isn't silently inert) before trusting it clean on a real run
+      confirm B8's equation now retains `/√d_k` instead of regressing; confirm the new
+      diagnostics actually fire on a deliberately-reintroduced mismatch (so we know they aren't
+      silently inert) before trusting them clean on a real run
 
 ---
 
-## Final verification (Phases 1-4 done; Phases 5-6 still open)
+## Phase 7 — Planning-time runtime budgets, preview-completeness control, mechanism scope
+
+**Fixes:** item #12 (runtime budgets at the planning stage, not measured only after narration)
+from `General Multi-Agent Video Script Pipeline Improvement Feedback.md`, plus two further
+real findings from the `gpt-5.6-sol` (tuned) review that don't fit Phase 6's artifact-
+consistency scope.
+
+**#1 -- Runtime budgets belong at planning time, not just as a post-hoc diagnostic.**
+Phase 2's `pacing.hook_tension` (and `retention.py`'s `payoff_gap`) MEASURE the plan's own
+already-decided word budgets after the fact -- they can flag a bloated hook, but nothing
+constrains `beat_word_budget.py`'s allocation or A2's own beat count from producing one in
+the first place. The `gpt-5.6-sol` (tuned) run's real total came in at 12:39 against a 900s
+(15:00) target -- actually under budget in aggregate -- but individual sections (masking
+1:25, heads 1:20) ran 30-50% over what their content needed, while the hook (1:04) ran over
+its own ~30s retention target despite the overall video having slack elsewhere. Aggregate
+word-budget-matches-target (the existing `check_word_budget_matches_target` hard check) does
+not catch this -- it only checks the sum, never the distribution.
+
+- [ ] `planning/beat_word_budget.py` — allow the plan's own archetype/hook to declare
+      `retention_deadlines` (central_problem/mechanism_preview/first_payoff seconds), and
+      weight the deterministic per-beat allocation to respect them, not just split
+      proportionally by `len(source_unit_ids)`. Keep the allocation itself deterministic
+      Python, matching this module's own existing ERR-010/ERR-023 rationale -- do not move
+      this back into an LLM call
+- [ ] `verification/hard/structure.py` or a new diagnostic — flag a beat whose ALLOCATED
+      budget is a large outlier relative to its own content density (e.g. `available_claims`
+      count), not just whether the grand total matches -- catches an individual bloated
+      section even when the overall video is within budget
+
+**#2 -- Preview can be too complete, not just present.** `B2` (Phase 1's `scene_function` would
+tag this `preview`) gives the viewer the exact Q, K, V roles, exact match scores, and exact
+softmax weights -- effectively the whole attention computation -- and then `B4`-`B7` spend four
+beats re-deriving the same facts as if new. This is a real, different failure mode from
+"repetition" (Phase 3's REPETITION check is about re-explaining something at the SAME level of
+completeness twice; this is about the PREVIEW itself being too complete for its own declared
+function). Reviewer's own resolution -- keep the full preview (better for retention), but the
+DERIVATION beats must narrate as "confirming/explaining what we already saw," not
+"discovering it":
+
+- [ ] `planning/scene_expander.py` — extend `scene_function=preview`'s own guidance: a preview
+      may show the mechanism's SHAPE (what stages exist) but should be explicit in
+      `must_not_repeat`/`new_concepts` about which EXACT values (if any) it reveals, so later
+      `derivation` scenes know whether they're deriving something genuinely new or explaining
+      the reasoning behind a number the viewer already saw
+- [ ] `narration/generator.py` — when a later scene's job is to derive something the viewer
+      already saw an exact value for (per the ledger), require narration to frame it as
+      confirming/explaining ("that's the 0.88 we already saw — here's why"), never as a fresh
+      reveal
+
+**#3 -- Mechanism scope (masking is conditional, not universal).** `B12`'s recap states *"scores
+get scaled and masked"* as if masking is inherent to all self-attention, even though the plan's
+own `B10` correctly established masking as specific to causal/autoregressive attention. This is
+the same class of "architecture-specific fact stated as universal" the OVERCLAIM check targets,
+but scoped to a STATEFUL claim (whether masking applies) that changes partway through the video
+-- a plain per-sentence overclaim check can't easily tell "masking" was scoped earlier without
+knowing the video's own current mode:
+
+- [ ] `planning/models.py` — add a lightweight `mechanism_scope` concept to `ViewerLedger` (or a
+      sibling), e.g. `{"causal_mask_required": bool}`, set once a beat like B10 establishes it
+- [ ] `narration/generator.py`/`review/story_critic.py` — a recap/summary scene must not state a
+      scoped mechanism as if unconditional; extend the OVERCLAIM check (or a new, narrow check)
+      to flag exactly this pattern using the ledger's own recorded scope, not just prose judgment
+- [ ] Unit tests for all three sub-items above
+- [ ] `.venv/bin/python3 -m pytest -q` green
+- [ ] **Live-verify**: re-run against the same real source; confirm per-section outlier
+      detection fires on a deliberately-bloated section; confirm a derivation scene following a
+      complete preview narrates as confirmation, not fresh discovery; confirm a recap after a
+      scoped mechanism (like masking) is introduced states the scope correctly
+
+---
+
+## Final verification (Phases 1-4 done; Phases 5-7 still open)
 
 - [x] `.venv/bin/python3 -m pytest -q` green throughout (checked after each phase; 744 passed
       as of the Phase 4 config fix, up from 689 before this work began)
