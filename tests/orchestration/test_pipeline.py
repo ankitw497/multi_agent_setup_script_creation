@@ -43,10 +43,20 @@ def make_plan(scene_words=70, n_scenes=24, source_units=None, archetype="build")
     b1_n = 1
     b2_n = min(4, max(1, n_scenes // 6))
     b3_n = max(0, n_scenes - b1_n - b2_n)
+    # First scene of B01/B03 carries a real new_concepts entry, matching
+    # those beats' own new_information=True claim below -- otherwise
+    # check_new_information_disagreement (STORY_IMPROVEMENT_PLAN.md Phase
+    # 8.4) correctly flags every beat here as a planner/narration
+    # disagreement, since a bare word_budget-only ScenePlan never
+    # introduces anything by this stricter, concept-based signal.
     scene_plan = (
-        [ScenePlan(scene_id=f"s{i}", beat_id="B01", word_budget=scene_words) for i in range(b1_n)]
+        [ScenePlan(scene_id=f"s{i}", beat_id="B01", word_budget=scene_words,
+                   new_concepts=["fixed-summary bottleneck"] if i == 0 else [])
+         for i in range(b1_n)]
         + [ScenePlan(scene_id=f"s{i}", beat_id="B02", word_budget=scene_words) for i in range(b1_n, b1_n + b2_n)]
-        + [ScenePlan(scene_id=f"s{i}", beat_id="B03", word_budget=scene_words) for i in range(b1_n + b2_n, n_scenes)]
+        + [ScenePlan(scene_id=f"s{i}", beat_id="B03", word_budget=scene_words,
+                     new_concepts=["assembled attention mechanism"] if i == b1_n + b2_n else [])
+           for i in range(b1_n + b2_n, n_scenes)]
     )
 
     return StoryPlan(
@@ -103,11 +113,14 @@ def make_structure(archetype="build") -> StoryStructure:
     )
 
 
-def _expansion(n_scenes, word_budget) -> BeatSceneExpansion:
-    return BeatSceneExpansion(scenes=[
+def _expansion(n_scenes, word_budget, first_new_concepts=None) -> BeatSceneExpansion:
+    scenes = [
         {"narrative_beat": "teaching", "visual_description": "x", "word_budget": word_budget}
         for _ in range(n_scenes)
-    ])
+    ]
+    if first_new_concepts and scenes:
+        scenes[0]["new_concepts"] = first_new_concepts
+    return BeatSceneExpansion(scenes=scenes)
 
 
 def make_good_expansions() -> list[BeatSceneExpansion]:
@@ -118,8 +131,16 @@ def make_good_expansions() -> list[BeatSceneExpansion]:
     inside ~30s") reads GREEN, not RED. Asymmetric otherwise (not an even
     8/8/8) so the CTA -- hosted on B02 in make_structure() -- lands at a
     real ~21% mark for the CTA-position diagnostic (plan §10.3's 20-40%
-    band), not ~67% the way an even split would put it."""
-    return [_expansion(1, 70), _expansion(4, 70), _expansion(19, 70)]
+    band), not ~67% the way an even split would put it. B01/B03's first
+    scene carries a real new_concepts entry, matching make_structure()'s
+    own new_information=True on those beats -- otherwise
+    check_new_information_disagreement (STORY_IMPROVEMENT_PLAN.md Phase
+    8.4) correctly flags both as a planner/narration disagreement."""
+    return [
+        _expansion(1, 70, first_new_concepts=["fixed-summary bottleneck"]),
+        _expansion(4, 70),
+        _expansion(19, 70, first_new_concepts=["assembled attention mechanism"]),
+    ]
 
 
 def make_bad_expansions() -> list[BeatSceneExpansion]:

@@ -3,8 +3,8 @@ from planning.models import (
     CTAContract, EndingContract, HookContract, ScenePlan, SourceBrief, StoryBeat, StoryPlan, TitleContract,
 )
 from verification.diagnostics.retention import (
-    PAYOFF_GAP_SECONDS, VALLEY_BEAT_COUNT, check_driver_coverage, check_novelty_coverage, check_payoff_gap,
-    check_retention, check_valleys,
+    PAYOFF_GAP_SECONDS, VALLEY_BEAT_COUNT, check_driver_coverage, check_new_information_disagreement,
+    check_novelty_coverage, check_payoff_gap, check_retention, check_valleys,
 )
 
 
@@ -104,11 +104,14 @@ def test_payoff_gap_far_beyond_target_is_red():
     assert result.value > PAYOFF_GAP_SECONDS
 
 
-def test_check_retention_returns_all_three_diagnostics():
+def test_check_retention_returns_all_four_diagnostics():
     plan = make_plan([beat("B01", forward_driver="x", payoff=True)])
     results = check_retention(plan)
     dimensions = {r.dimension for r in results}
-    assert dimensions == {"retention.driver_coverage", "retention.valley", "retention.payoff_gap"}
+    assert dimensions == {
+        "retention.driver_coverage", "retention.valley", "retention.payoff_gap",
+        "retention.new_information_disagreement",
+    }
 
 
 # ---- novelty coverage (plan §9, STORY_IMPROVEMENT_PLAN.md Phase 8.3) --------------------------
@@ -141,3 +144,81 @@ def test_no_beat_has_any_learning_objective_is_amber():
     plan = make_plan([beat("B01")])
     result = check_novelty_coverage(plan, make_source_brief(novelty_statement="a real novelty claim about retrieval"))
     assert result.band == "AMBER"
+
+
+# ---- BUG-3 fix: new_concepts (not the self-reported boolean) drives state-change ---------------
+
+def test_new_information_true_with_no_new_concepts_is_not_treated_as_a_state_change():
+    """The core BUG-3 fix: a beat that dutifully sets new_information=True
+    but whose scenes introduce nothing in new_concepts must NOT count as
+    real progress -- this is exactly the self-report the diagnostic used
+    to trust unconditionally."""
+    plan = make_plan(
+        [beat("B01", new_information=True), beat("B02", new_information=True), beat("B03", payoff=True)],
+        scene_plan=[
+            ScenePlan(scene_id="s1", beat_id="B01", word_budget=40, new_concepts=[]),
+            ScenePlan(scene_id="s2", beat_id="B02", word_budget=40, new_concepts=[]),
+        ],
+    )
+    result = check_valleys(plan)
+    assert result.band == "RED"  # B01+B02 form a 2-beat valley despite both claiming new_information=True
+
+
+def test_new_concepts_present_counts_as_a_state_change_even_if_the_boolean_is_false():
+    """The reverse direction: a scene with a real new_concepts entry counts
+    as progress even if A2 never set the beat's own new_information flag."""
+    plan = make_plan(
+        [beat("B01", new_information=False), beat("B02", payoff=True)],
+        scene_plan=[ScenePlan(scene_id="s1", beat_id="B01", word_budget=40, new_concepts=["scaling"])],
+    )
+    result = check_valleys(plan)
+    assert result.band == "GREEN"
+
+
+def test_a_beat_with_no_scenes_at_all_falls_back_to_the_self_reported_boolean():
+    """A malformed plan (no scenes for a beat) shouldn't silently zero out
+    -- fall back to the old signal rather than always reporting no state
+    change for a beat referential-integrity checks already flag elsewhere."""
+    plan = make_plan([beat("B01", new_information=True), beat("B02", payoff=True)], scene_plan=[])
+    result = check_valleys(plan)
+    assert result.band == "GREEN"  # B01 counted via fallback, no valley
+
+
+# ---- new_information disagreement (secondary signal) ----------------------------------------
+
+def test_no_disagreement_is_green():
+    plan = make_plan(
+        [beat("B01", new_information=True)],
+        scene_plan=[ScenePlan(scene_id="s1", beat_id="B01", word_budget=40, new_concepts=["x"])],
+    )
+    result = check_new_information_disagreement(plan)
+    assert result.band == "GREEN"
+
+
+def test_new_information_true_but_zero_new_concepts_is_flagged_as_a_disagreement():
+    plan = make_plan(
+        [beat("B01", new_information=True)],
+        scene_plan=[ScenePlan(scene_id="s1", beat_id="B01", word_budget=40, new_concepts=[])],
+    )
+    result = check_new_information_disagreement(plan)
+    assert result.band == "AMBER"
+    assert "B01" in result.evidence
+
+
+def test_a_beat_with_zero_scenes_is_never_a_disagreement():
+    """Consistent with _introduces_new_concept()'s own "trust the boolean"
+    fallback for a beat with no scenes at all -- nothing to disagree with."""
+    plan = make_plan([beat("B01", new_information=True)], scene_plan=[])
+    result = check_new_information_disagreement(plan)
+    assert result.band == "GREEN"
+
+
+def test_new_information_false_is_never_a_disagreement_regardless_of_new_concepts():
+    """Only new_information=True claims are checked -- a beat that never
+    claimed to introduce anything has nothing to disagree about."""
+    plan = make_plan(
+        [beat("B01", new_information=False)],
+        scene_plan=[ScenePlan(scene_id="s1", beat_id="B01", word_budget=40, new_concepts=[])],
+    )
+    result = check_new_information_disagreement(plan)
+    assert result.band == "GREEN"

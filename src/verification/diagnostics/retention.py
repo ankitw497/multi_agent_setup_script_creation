@@ -10,6 +10,20 @@ against real audience data -- consistent with the plan's own "bands
 tighten against the channel's own data" (V1D). They are real, meaningful
 thresholds regardless (the plan states them explicitly), just not yet
 fitted the way voice bands eventually will be.
+
+BUG-3 fix (STORY_IMPROVEMENT_PLAN.md Phase 8.4, 2026-09-11): `new_information`
+is a boolean A2 sets about its own plan, so a plan that dutifully fills it
+in passes by construction -- confirmed live: a real run returned GREEN on
+every diagnostic here while a human review scored retention as that run's
+weakest dimension. `_is_state_change()` now treats `ScenePlan.new_concepts`
+(Phase 1's concept ledger, populated per-SCENE during A2b) as the primary
+signal for "did this beat actually introduce something new" -- a concrete
+list of concept labels is harder to satisfy by rote than one checkbox.
+`payoff`/`visual_mode_change`/`question_progress` are kept as-is; nothing
+scene-level captures those dimensions yet. The boolean is not discarded --
+`check_new_information_disagreement()` turns a beat that claims
+`new_information=True` with zero `new_concepts` into its own diagnostic
+finding, per this phase's "keep it as a secondary signal" design.
 """
 from __future__ import annotations
 
@@ -34,8 +48,26 @@ def _beat_seconds(plan: StoryPlan) -> dict[str, float]:
     return seconds
 
 
-def _is_state_change(beat) -> bool:
-    return beat.new_information or beat.payoff or beat.visual_mode_change or beat.question_progress != "none"
+def _beat_scenes(plan: StoryPlan, beat_id: str) -> list:
+    return [s for s in plan.scene_plan if s.beat_id == beat_id]
+
+
+def _introduces_new_concept(plan: StoryPlan, beat) -> bool:
+    """Primary signal for "new information" (see module docstring, BUG-3
+    fix): did any of this beat's own scenes carry a real `new_concepts`
+    entry. Falls back to the self-reported `new_information` boolean only
+    when the beat has zero scenes in `plan.scene_plan` at all -- a
+    malformed plan, not the normal case -- so this never silently
+    degrades to "always False" for a plan referential-integrity already
+    flags elsewhere."""
+    scenes = _beat_scenes(plan, beat.beat_id)
+    if not scenes:
+        return beat.new_information
+    return any(s.new_concepts for s in scenes)
+
+
+def _is_state_change(plan: StoryPlan, beat) -> bool:
+    return _introduces_new_concept(plan, beat) or beat.payoff or beat.visual_mode_change or beat.question_progress != "none"
 
 
 def check_driver_coverage(plan: StoryPlan) -> DiagnosticResult:
@@ -60,7 +92,7 @@ def check_valleys(plan: StoryPlan) -> DiagnosticResult:
     worst_start: str | None = None
     cur_start: str | None = None
     for beat in plan.beats:
-        if _is_state_change(beat):
+        if _is_state_change(plan, beat):
             run = 0
             cur_start = None
             continue
@@ -75,7 +107,7 @@ def check_valleys(plan: StoryPlan) -> DiagnosticResult:
         return DiagnosticResult(
             dimension="retention.valley", band="RED", value=worst_run, target=f"<{VALLEY_BEAT_COUNT}",
             evidence=f"{worst_run} consecutive beats starting at {worst_start!r} advance nothing observable "
-                     f"(new_information/payoff/visual_mode_change/question_progress all empty)",
+                     f"(no scene introduces a new_concept, and payoff/visual_mode_change/question_progress all empty)",
         )
     return DiagnosticResult(
         dimension="retention.valley", band="GREEN", value=worst_run, target=f"<{VALLEY_BEAT_COUNT}",
@@ -92,7 +124,7 @@ def check_payoff_gap(plan: StoryPlan) -> DiagnosticResult:
     worst_start: str | None = None
     cur_start: str | None = None
     for beat in plan.beats:
-        if _is_state_change(beat):
+        if _is_state_change(plan, beat):
             run_seconds = 0.0
             cur_start = None
             continue
@@ -108,6 +140,37 @@ def check_payoff_gap(plan: StoryPlan) -> DiagnosticResult:
         dimension="retention.payoff_gap", band=band, value=round(worst, 1), target=f"<={PAYOFF_GAP_SECONDS:.0f}s",
         evidence=(f"longest stretch with no state change: {worst:.1f}s starting at beat {worst_start!r}"
                   if worst > 0 else "no gap -- every beat advances something observable"),
+    )
+
+
+def check_new_information_disagreement(plan: StoryPlan) -> DiagnosticResult:
+    """BUG-3 fix, secondary signal (STORY_IMPROVEMENT_PLAN.md Phase 8.4): a
+    beat that claims `new_information=True` but whose scenes introduce zero
+    `new_concepts` is not necessarily wrong -- but the disagreement between
+    the planner's own boolean and what A2b actually scoped for that beat is
+    itself a real, useful finding (e.g. A2 marked a beat as introducing
+    something new, then A2b's per-beat expansion decided every one of its
+    scenes was a derivation/recap of prior material). Banded AMBER, never a
+    hard failure -- this is a signal for a human/critic to look at, not
+    proof of a defect."""
+    # A beat with zero scenes at all has nothing to disagree WITH -- same
+    # "trust the boolean" fallback _introduces_new_concept() itself uses,
+    # not a disagreement (a malformed plan is reported by referential-
+    # integrity checks elsewhere, not by this one).
+    disagreeing = [
+        b.beat_id for b in plan.beats
+        if b.new_information and _beat_scenes(plan, b.beat_id)
+        and not any(s.new_concepts for s in _beat_scenes(plan, b.beat_id))
+    ]
+    if disagreeing:
+        return DiagnosticResult(
+            dimension="retention.new_information_disagreement", band="AMBER",
+            value=len(disagreeing),
+            evidence=f"beat(s) claim new_information=True but no scene lists a new_concepts entry: {disagreeing}",
+        )
+    return DiagnosticResult(
+        dimension="retention.new_information_disagreement", band="GREEN",
+        evidence="every beat claiming new_information=True has at least one scene with a real new_concepts entry",
     )
 
 
@@ -143,4 +206,7 @@ def check_novelty_coverage(plan: StoryPlan, source_brief: SourceBrief) -> Diagno
 
 def check_retention(plan: StoryPlan) -> list[DiagnosticResult]:
     """The full D* retention pass -- every diagnostic, one call."""
-    return [check_driver_coverage(plan), check_valleys(plan), check_payoff_gap(plan)]
+    return [
+        check_driver_coverage(plan), check_valleys(plan), check_payoff_gap(plan),
+        check_new_information_disagreement(plan),
+    ]
