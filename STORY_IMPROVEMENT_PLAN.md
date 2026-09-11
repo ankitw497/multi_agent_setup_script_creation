@@ -774,18 +774,29 @@ doesn't already know") is collected by A1, explicitly asked for in its prompt, a
 passed to A2b/H/candidate_finder but never validated as non-empty or meaningful. Shorts have
 `check_central_insight_present`; long-form has no equivalent.
 
-- [ ] `verification/hard/structure.py` — add `check_learning_gate(plan, source_brief)`:
-      `central_insight` non-empty; every beat carrying an `archetype_role` has a non-empty
-      `learning_objective`; `ending.viewer_can_now` has real word-overlap with at least one
-      beat's `learning_objective` (reuse `check_promise_chain`'s existing word-overlap
-      heuristic rather than writing a second one)
-- [ ] Thread `source_brief` into `check_structure()`'s signature so `novelty_statement` is
-      finally reachable by a check; flag a plan whose beats show no overlap with the stated
-      novelty as a diagnostic (AMBER), not a hard failure -- novelty is a judgment call and a
-      word-overlap heuristic shouldn't block a run on its own
-- [ ] Unit tests mirroring `tests/verification/hard/test_structure.py`'s existing style
+- [x] **Fixed 2026-09-11.** `verification/hard/structure.py` — added
+      `check_learning_gate(plan, source_brief)`: `central_insight` non-empty; every beat
+      carrying an `archetype_role` has a non-empty `learning_objective`; `ending.viewer_can_now`
+      has real word-overlap with at least one beat's `learning_objective` (reused
+      `check_promise_chain`'s existing word-overlap heuristic rather than writing a second one).
+      `check_structure()` gained an optional `source_brief` param (default `None` skips the
+      gate -- backward compatible); both real call sites in `orchestration/pipeline.py` pass it.
+- [x] `verification/diagnostics/retention.py::check_novelty_coverage(plan, source_brief)` --
+      the soft part: does any beat's `learning_objective` actually reflect the stated
+      `novelty_statement`, banded AMBER (never a hard failure), wired into
+      `_run_review_block`'s existing diagnostics list.
+- [x] Unit tests: `tests/verification/hard/test_structure.py` (9 new tests covering
+      `check_learning_gate` directly and `check_structure`'s opt-in/opt-out behavior);
+      `tests/verification/diagnostics/test_retention.py` (4 new tests for
+      `check_novelty_coverage`)
+- [x] Fixed a real fixture-realism gap this surfaced: `tests/orchestration/test_pipeline.py`'s
+      shared `make_plan()`/`make_structure()` had no beat `learning_objective` and a
+      non-overlapping `viewer_can_now` ("do x") -- the new gate correctly flagged every test
+      using them. Updated to realistic, overlapping values rather than weakening the check.
+- [x] `.venv/bin/python3 -m pytest -q` green (766 passed, up from 753)
 - [ ] **Live-verify**: confirm the gate fires on a real plan with a blank `learning_objective`,
-      and does NOT fire on a genuinely well-formed plan (so it isn't inert or over-strict)
+      and does NOT fire on a genuinely well-formed plan (so it isn't inert or over-strict) --
+      not yet run
 
 ### 8.4 — Retention diagnostics grade the planner's own homework
 
@@ -798,17 +809,29 @@ run C returned GREEN on all three retention diagnostics (`driver_coverage`, `val
 `payoff_gap`) while the human review scored retention/pacing as that run's *weakest*
 dimension. These currently measure schema compliance, not viewer experience.
 
-- [ ] **See BUG-3 above for the exact code, the signature change it forces, and the fix.**
-      `verification/diagnostics/retention.py` — derive state-change from the NARRATION against
-      the ledger (did this beat's scenes actually introduce anything in `new_concepts`, or was
-      it all `must_not_repeat` references?) instead of trusting the planner's booleans. The
-      Phase 1 ledger makes this possible for the first time -- it wasn't available when these
-      diagnostics were written
-- [ ] Keep the self-reported fields as a SECONDARY signal (a beat claiming
-      `new_information=True` whose scenes introduce zero `new_concepts` is itself a useful
-      finding -- a planner/narration disagreement), not as the primary measurement
-- [ ] Unit tests: a beat that declares `new_information=True` but whose scenes introduce no
-      new concepts is flagged; a genuinely informative beat is not
+- [x] **Fixed 2026-09-11 (see BUG-3 above for the original shape).**
+      `verification/diagnostics/retention.py::_introduces_new_concept(plan, beat)` is now the
+      primary state-change signal: did any of the beat's own scenes carry a real
+      `ScenePlan.new_concepts` entry (Phase 1's ledger, populated per-scene during A2b) --
+      instead of trusting `beat.new_information`. `payoff`/`visual_mode_change`/
+      `question_progress` are unchanged (nothing scene-level captures those yet). Falls back to
+      the old boolean only when a beat has zero scenes at all (a malformed plan).
+- [x] Kept the self-reported field as a SECONDARY signal:
+      `check_new_information_disagreement(plan)` turns a beat claiming `new_information=True`
+      with zero `new_concepts` into its own AMBER diagnostic finding, wired into
+      `check_retention()`'s aggregate.
+- [x] Unit tests: `tests/verification/diagnostics/test_retention.py` (7 new tests) -- a beat
+      declaring `new_information=True` with no `new_concepts` is not treated as a state change
+      (and is separately flagged as a disagreement); a beat with real `new_concepts` counts
+      even if the boolean is `False`; a beat with zero scenes falls back to the boolean and is
+      never flagged as a disagreement.
+- [x] Fixed a real fixture-realism gap this surfaced across TWO shared fixtures
+      (`tests/orchestration/test_pipeline.py`'s `make_plan()` and `make_good_expansions()`):
+      beats claiming `new_information=True` had zero scenes with any `new_concepts` in either
+      fixture. Updated to carry a real entry consistent with the claim, not weakening the check.
+- [x] `.venv/bin/python3 -m pytest -q` green (773 passed, up from 766)
+- [ ] **Live-verify**: confirm a real run's retention diagnostics now sometimes disagree with
+      the planner's own booleans on a source where that's genuinely true -- not yet run
 
 ### 8.5 — The revision loop does not converge, and can regress
 
@@ -867,10 +890,8 @@ half of the product is effectively outside the quality loop entirely.
       REPETITION check catching a real residual case, and a real gpt-5.6-sol config gap found
       and fixed.
 - [ ] `BUILD_PLAN.md` updated with a "V2 — Narrative continuity" section pointing back here
-      (not yet done -- do this once Phases 4 and 5 are resolved, so the summary covers the
-      whole fix)
+      (not yet done -- do this once Phases 5-8 are resolved, so the summary covers the whole
+      fix, not just the first half)
 - [x] `ERROR_LOG.md` updated with the concrete before/after (the specific repeated phrase
       found vs. gone, hook-pacing seconds measured, the residual within-beat gap found) —
       not just "improved quality"
-- [ ] Phase 4 (model-tier comparison) — still open, needs another live run + a real decision;
-      not started yet
