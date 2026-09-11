@@ -98,3 +98,32 @@ def test_explicit_reasoning_effort_overrides_the_agent_default():
               budget=budget, reasoning_effort="high")
 
     assert client.paid_calls[0]["reasoning_effort"] == "high"
+
+
+def test_images_are_forwarded_to_the_paid_backend_only():
+    """V1C: C3's visual critic needs to send screenshots to Gemini (paid_api
+    lane) -- images must reach call_structured_paid untouched."""
+    client = FakeClient()
+    agent = Agent(name="review_lead", lane="paid_api", client=client, model_alias="gemini_review_flash",
+                  model_resolved="gemini/gemini-3.6-flash", base_system_prompt="review")
+    budget = BudgetCounter(tier=DEFAULT_TIERS["longform"])
+
+    agent.run(pass_id="C3", mode="VISUAL_AUDITOR", task_prompt="x", payload={}, schema=Toy,
+              budget=budget, images=["data:image/png;base64,AAAA"])
+
+    assert client.paid_calls[0]["images"] == ["data:image/png;base64,AAAA"]
+
+
+def test_a_subscription_agent_rejects_images():
+    """The Claude CLI backend has no multimodal support -- a caller handing
+    images to a subscription-lane agent must fail loudly, not silently drop
+    them."""
+    import pytest
+
+    client = FakeClient()
+    agent = Agent(name="worker", lane="subscription", client=client, model_alias="haiku",
+                  model_resolved="claude-haiku-4-5-20251001", base_system_prompt="be terse")
+
+    with pytest.raises(ValueError, match="multimodal"):
+        agent.run(pass_id="S2b", mode="EXTRACT", task_prompt="x", payload={}, schema=Toy,
+                  images=["data:image/png;base64,AAAA"])

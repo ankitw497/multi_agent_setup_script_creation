@@ -15,6 +15,13 @@ dependencies = [
   "litellm>=1.55",
   "python-dotenv>=1.0",
   "pyyaml>=6.0",
+  # litellm's own num_retries (ERR-032) needs this at call time for at least
+  # the multimodal content-block message path (2026-09-11: a real live
+  # multimodal call failed with "tenacity import failed" -- a plain-string
+  # call with the same num_retries never needed it, so this gap was
+  # invisible until the first real multimodal call, exactly the V1C
+  # prerequisite check this was caught by).
+  "tenacity>=8.0",
 ]
 
 [project.scripts]

@@ -45,12 +45,19 @@ class Agent:
         reasoning_effort: str | None = None,
         timeout_s: int | None = None,
         max_tokens: int | None = None,
+        images: list[str] | None = None,
     ) -> T:
         reasoning_effort = reasoning_effort if reasoning_effort is not None else self.default_reasoning_effort
         system_prompt = f"{self.base_system_prompt}\n\n{task_prompt}\n\n{schema_prompt(schema)}"
         user_payload = json.dumps(payload, default=str)
 
         if self.lane == "subscription":
+            if images:
+                raise ValueError(
+                    f"{self.name}.{pass_id}: images given for a subscription-lane call -- "
+                    "the Claude CLI backend has no multimodal support (V1C's C3 visual "
+                    "critic is paid_api/Gemini-lane only)"
+                )
             result: StructuredCallResult = self.client.call_structured_subscription(
                 agent=self.name, pass_id=pass_id, mode=mode,
                 model_alias=self.model_alias, model_resolved=self.model_resolved,
@@ -66,6 +73,6 @@ class Agent:
                 system_prompt=system_prompt, user_payload=user_payload,
                 schema=schema, budget=budget, estimated_usd=estimated_usd,
                 revision_cycle=revision_cycle, reasoning_effort=reasoning_effort,
-                max_tokens=max_tokens,
+                max_tokens=max_tokens, images=images,
             )
         return result.value  # type: ignore[return-value]

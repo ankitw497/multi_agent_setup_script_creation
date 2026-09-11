@@ -213,6 +213,54 @@ def test_call_result_reports_reasoning_tokens_separately_from_output_tokens(monk
     assert result.content == ""  # the real, costly failure mode this documents
 
 
+def test_no_images_sends_a_plain_string_user_message(monkeypatch):
+    """V1C: every existing caller (nothing sends images yet) must get the
+    exact same request shape as before this feature existed -- a bare
+    string, not a content-block list."""
+    fake_response = FakeResponse("OK", "gpt-4o", 6, 1)
+    captured = {}
+
+    def fake_completion(**kwargs):
+        captured.update(kwargs)
+        return fake_response
+
+    monkeypatch.setattr("litellm.completion", fake_completion)
+    monkeypatch.setattr("litellm.completion_cost", lambda completion_response: 0.0)
+
+    backend = LiteLLMBackend()
+    backend.call("gpt-4o", "sys", "user")
+
+    assert captured["messages"][1]["content"] == "user"
+
+
+def test_images_become_an_openai_style_multimodal_content_block_list(monkeypatch):
+    """V1C: C3's screenshots must reach litellm as content blocks (text +
+    one image_url block per image) -- LiteLLM normalizes this shape for
+    Gemini itself, no provider-specific branching needed here."""
+    fake_response = FakeResponse("OK", "gemini-3.6-flash", 6, 1)
+    captured = {}
+
+    def fake_completion(**kwargs):
+        captured.update(kwargs)
+        return fake_response
+
+    monkeypatch.setattr("litellm.completion", fake_completion)
+    monkeypatch.setattr("litellm.completion_cost", lambda completion_response: 0.0)
+
+    backend = LiteLLMBackend()
+    backend.call(
+        "gemini/gemini-3.6-flash", "sys", "user",
+        images=["data:image/png;base64,AAAA", "data:image/png;base64,BBBB"],
+    )
+
+    content = captured["messages"][1]["content"]
+    assert content == [
+        {"type": "text", "text": "user"},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,BBBB"}},
+    ]
+
+
 @pytest.mark.integration
 def test_live_openai_smoke():
     """Real API call, minimal tokens. Costs a fraction of a cent. Run with: pytest -m integration"""
@@ -268,3 +316,49 @@ def test_live_gemini_strong_smoke():
     assert "OK" in result.content
     print(f"\n[live gemini strong] tokens in={result.input_tokens} out={result.output_tokens} "
           f"reasoning={result.reasoning_tokens} cost=${result.billed_microusd / 1_000_000:.6f}")
+
+
+# A real 100x100 solid-blue JPEG. A PNG was tried first (both a degenerate
+# 1x1 pixel and a real PIL-generated 64x64 solid color) and Gemini/Vertex
+# rejected both outright ("Unable to process input image") while this exact
+# JPEG succeeded -- a real, live-confirmed finding, not assumed: C3's real
+# screenshots must be captured/sent as JPEG (Playwright supports this
+# directly), never PNG, until the PNG rejection is understood further.
+_TINY_JPEG_DATA_URI = (
+    "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAMCAgMCAgMDAwMEAwMEBQgFBQQE"
+    "BQoHBwYIDAoMDAsKCwsNDhIQDQ4RDgsLEBYQERMUFRUVDA8XGBYUGBIUFRT/2wBDAQMEBAUEBQkFBQkUDQsN"
+    "FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBT/wAARCABkAGQDASIA"
+    "AhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQID"
+    "AAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpT"
+    "VFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXG"
+    "x8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcI"
+    "CQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYk"
+    "NOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOU"
+    "lZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oA"
+    "DAMBAAIRAxEAPwDwSiiiv6zP5kCiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooo"
+    "oAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAK"
+    "KKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKK"
+    "ACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKAP/2Q=="
+)
+
+
+@pytest.mark.integration
+def test_live_gemini_multimodal_smoke():
+    """V1C prerequisite: confirms Gemini flash actually accepts our exact
+    image_url content-block format before anything (C3, Playwright
+    screenshots) is built on top of it -- the smallest possible real
+    increment, one call, one tiny image."""
+    from dotenv import load_dotenv
+
+    load_dotenv(dotenv_path=".env")
+    assert os.environ.get("GEMINI_API_KEY"), "GEMINI_API_KEY not set"
+
+    backend = LiteLLMBackend(max_tokens=20)
+    result = backend.call(
+        "gemini/gemini-3.6-flash", "You are terse.",
+        "What color is this image? Reply with one word.",
+        reasoning_effort="none", images=[_TINY_JPEG_DATA_URI],
+    )
+    assert result.content.strip() != ""
+    print(f"\n[live gemini multimodal] content={result.content!r} "
+          f"cost=${result.billed_microusd / 1_000_000:.6f}")

@@ -110,6 +110,7 @@ class LLMClient:
         revision_cycle: int = 0,
         reasoning_effort: str | None = None,
         max_tokens: int | None = None,
+        images: list[str] | None = None,
     ) -> StructuredCallResult:
         """gpt | gemini — hard-gated by a local BudgetCounter (plan §3.2).
 
@@ -118,10 +119,14 @@ class LLMClient:
         max_tokens overrides the backend's default for passes with a
         structurally large output (A2's full StoryPlan) — see
         litellm_backend.py's default-bump comment for the real failure this fixes.
+        images (V1C, C3 visual critic) are base64 data URIs, forwarded as-is —
+        this client has no opinion on image content, only on wiring it through.
         """
         budget.preflight_check(estimated_usd)
 
-        result = self.paid_backend.call(model, system_prompt, user_payload, reasoning_effort, max_tokens=max_tokens)
+        result = self.paid_backend.call(
+            model, system_prompt, user_payload, reasoning_effort, max_tokens=max_tokens, images=images,
+        )
         budget.record_spend(result.billed_microusd)  # raises BudgetExceeded past hard_cap
 
         value = self._validate(result.content, schema)

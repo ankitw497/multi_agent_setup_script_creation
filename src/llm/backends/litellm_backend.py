@@ -64,17 +64,30 @@ class LiteLLMBackend:
         user_payload: str,
         reasoning_effort: str | None = None,
         max_tokens: int | None = None,
+        images: list[str] | None = None,
     ) -> CallResult:
         start = time.monotonic()
         extra_kwargs = {}
         if reasoning_effort is not None:
             extra_kwargs["reasoning_effort"] = reasoning_effort
 
+        # images (V1C, C3 visual critic): a list of data URIs. When absent,
+        # the user message is a plain string -- byte-for-byte the same
+        # request shape every existing caller has always sent. When present,
+        # it becomes an OpenAI-style multimodal content-block list, which
+        # LiteLLM normalizes for Gemini itself -- no provider-specific
+        # branching needed here.
+        user_content: str | list[dict] = user_payload
+        if images:
+            user_content = [{"type": "text", "text": user_payload}] + [
+                {"type": "image_url", "image_url": {"url": uri}} for uri in images
+            ]
+
         response = litellm.completion(
             model=model,
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_payload},
+                {"role": "user", "content": user_content},
             ],
             max_tokens=max_tokens if max_tokens is not None else self.max_tokens,
             num_retries=self.num_retries,

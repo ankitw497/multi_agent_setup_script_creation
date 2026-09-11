@@ -1025,6 +1025,35 @@ more evidence.
 
 ---
 
+## ERR-040 — Multimodal calls need `tenacity`; Gemini/Vertex rejected a PNG but accepted an identical-content JPEG
+**Date:** 2026-09-11 · **Severity:** major (would have silently blocked V1C's C3 visual critic) · **Status:** fixed · **Component:** `llm/backends/litellm_backend.py`, `pyproject.toml` · **Live cost:** yes (a few tiny multimodal test calls, <$0.01 total)
+
+Building V1C-1's multimodal prerequisite (threading `images` through
+`Agent.run()` → `call_structured_paid()` → `LiteLLMBackend.call()`), the very first live
+test call failed before ever reaching Gemini: `Exception: tenacity import failed`. Root
+cause: `litellm.completion(..., num_retries=3)` (ERR-032's retry fix) only routes through
+its tenacity-backed retry wrapper for the multimodal content-block message path — a
+plain-string call with the identical `num_retries=3` never needed it and had been working
+correctly in every real run so far, so this gap was completely invisible until the first
+real multimodal call. **Fixed** by adding `tenacity>=8.0` as an explicit dependency
+(litellm's own soft dependency for this feature, not bundled).
+
+Second, separate finding on the same live check: a degenerate 1x1 PNG, and then a real
+64x64 solid-color PNG generated via Pillow, were BOTH rejected by Gemini/Vertex with `400
+"Unable to process input image"` — while an equivalent solid-color JPEG succeeded
+immediately. Root cause not fully isolated (could be litellm's Vertex-path PNG handling,
+or Vertex's own image validation), but the practical, live-confirmed fix is clear:
+**C3's real screenshots must be captured/sent as JPEG, never PNG** (Playwright supports
+`page.screenshot(type="jpeg")` directly, so this costs nothing to adopt).
+**Tests:** `tests/llm/test_litellm_backend.py::test_live_gemini_multimodal_smoke` (now
+JPEG, passing — confirmed real content: asked "what color is this image", a solid blue
+JPEG, got back "Blue."), plus the two new non-integration unit tests
+(`test_no_images_sends_a_plain_string_user_message`,
+`test_images_become_an_openai_style_multimodal_content_block_list`) locking in the
+content-block shape without needing a real call.
+
+---
+
 ## Open items (not yet bugs, flagged for future attention)
 
 - **V1B's HV static checks are now the full plan §13 list** (updated 2026-09-11; the note
