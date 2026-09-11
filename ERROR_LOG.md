@@ -1127,6 +1127,28 @@ suite, is what caught this before it became a habit).
 
 ---
 
+## V1C full confirmation (2026-09-11, `runs/v16`, $0.7958) + ERR-043 (text3/bg3 design fix)
+
+A full live e2e run with ERR-041/ERR-042's fixes in place completed cleanly, no crash: 2
+repairs used, `degraded=[]` (Playwright ran fine), the ERR-041 false positives (clipping on
+`diagram-pre`, the `.callout-success` contrast) are confirmed gone. The remaining 11
+`render_issues` were all real: the reader-standalone word-band (a legitimate, already-known-
+strict gate) and `rendered_low_contrast` on `text3`/`bg3` (`#6e6e73` on `#e8e8ed`, 4.15:1) --
+correctly surviving both repair attempts, since a content regeneration can never fix a CSS
+color choice (exactly the design tension flagged when the H-repair loop was built).
+
+**ERR-043 (fixed):** `text3` was a real, systemic 4.15:1 contrast against `bg3` -- just under
+WCAG AA's 4.5:1 for normal text, and would have fired on every real run forever, not a per-run
+fluke. Darkened to `#64646a` (4.81:1 against `bg3`), a barely-perceptible change that can only
+improve contrast against this system's other, lighter backgrounds too.
+**Tests:** `tests/html_synth/test_component_library.py::test_text3_on_bg3_clears_wcag_aa_contrast`
+locks in the corrected token against the same contrast math the rendered check itself uses.
+
+V1C's Playwright/C3/H-repair-loop checklist item is now marked done in `BUILD_PLAN.md` --
+code-complete AND live-verified end to end, not just code-complete.
+
+---
+
 ## Open items (not yet bugs, flagged for future attention)
 
 - **V1B's HV static checks are now the full plan §13 list** (updated 2026-09-11; the note

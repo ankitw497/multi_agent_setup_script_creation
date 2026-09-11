@@ -14,6 +14,21 @@ def test_css_tokens_includes_every_color():
     assert "--accent:#0071e3" in css
 
 
+def test_text3_on_bg3_clears_wcag_aa_contrast():
+    """Real, systemic finding (2026-09-11): text3 on bg3 used to be a
+    4.15:1 contrast, just under WCAG AA's 4.5:1 -- it survived 2 real
+    H-repair attempts every single live run, because no content
+    regeneration can fix a CSS color choice. Locks in the corrected token
+    directly against the same contrast math the rendered check uses."""
+    from html_synth.component_library import _design_system
+    from verification.hard.render_rendered import _contrast_ratio
+
+    ds = _design_system()
+    text3 = tuple(int(ds["tokens"]["colors"]["text3"].lstrip("#")[i:i + 2], 16) for i in (0, 2, 4))
+    bg3 = tuple(int(ds["tokens"]["colors"]["bg3"].lstrip("#")[i:i + 2], 16) for i in (0, 2, 4))
+    assert _contrast_ratio(text3, bg3) >= 4.5
+
+
 def test_hero_renders_all_slots():
     out = render_component("hero", {"badge": "Series X", "title": "The Title", "subtitle": "Sub text"})
     assert "Series X" in out

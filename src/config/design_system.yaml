@@ -29,7 +29,16 @@ tokens:
     bg3: "#e8e8ed"
     text: "#1d1d1f"
     text2: "#424245"
-    text3: "#6e6e73"
+    # text3 was #6e6e73 -- a real, systemic 4.15:1 contrast against bg3
+    # (#e8e8ed), just under WCAG AA's 4.5:1 for normal text. Found live
+    # 2026-09-11: it survived 2 real H-repair attempts every single run,
+    # because a content regeneration can never fix a CSS color choice --
+    # exactly the "unrepairable via content" case verification/hard/
+    # render_rendered.py's contrast check was designed to catch. Darkened
+    # to #64646a (4.81:1 against bg3), a barely-perceptible change that can
+    # only improve contrast against any of this system's other, lighter
+    # backgrounds too.
+    text3: "#64646a"
     accent: "#0071e3"
     accent2: "#34c759"
     accent3: "#ff3b30"

@@ -396,7 +396,7 @@ gate cleanly; the reader-standalone band caught a genuine, real, marginal overag
 
 ## V1C — Visual loop (plan §13, §17)
 
-- [ ] Playwright runner, screenshots, `C3` visual audit, `H` REPAIR loop (≤2) — in progress, layer by layer (see below)
+- [x] Playwright runner, screenshots, `C3` visual audit, `H` REPAIR loop (≤2) — live-verified end to end (`runs/v16`), see below and ERROR_LOG
 - [x] TTS preview for shorts → measured-duration gate (replaces the estimate-based gate from V1A-S) — user chose `edge-tts` (free, keyless, `en-IN-PrabhatNeural` voice) over a paid provider, 2026-09-11. `voice/tts_preview.py` synthesizes real audio and measures duration from the engine's own `SentenceBoundary` timing (not by decoding the saved audio). `verification/hard/shorts.py`'s `check_measured_duration` (no error-margin slack, unlike the estimate's +2s) replaces `check_duration_estimate` whenever a measurement is available; a genuine TTS failure degrades visibly (caps at PASS_WARN, falls back to the estimate) rather than crashing the short. `emit_short_deliverables` writes `final/shorts/<k>/preview.mp3` when synthesis succeeded. Live-verified: real audio + a real measured duration, end to end.
 
 **Done when (plan):** *"render failures caught and repaired on the subscription lane."*
