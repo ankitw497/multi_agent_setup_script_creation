@@ -14,7 +14,9 @@ cross-cutting section):
     S1  planning.narrative_digest (only above the word threshold)
     A1  planning.source_understanding.understand_source
         orchestration.pipeline.run_story_and_narration_loop (A2/B1/review/A3)
-    H+HV orchestration.html_pipeline.synthesize_video_html
+    H+HV orchestration.html_pipeline.synthesize_and_repair_video_html (V1C:
+         static -> rendered (Playwright) -> C3 visual audit, each bounded
+         by its own repair budget)
         planning.candidate_finder.find_candidates (SC)
         planning.short_planner.plan_shorts (A2s)
         orchestration.shorts_pipeline.run_short
@@ -28,6 +30,14 @@ nothing here re-implements a stage's own logic. `orchestration.state`'s
 is not threaded through here yet -- this entry point runs a single attempt
 start to finish and is not itself resumable (a real gap, tracked in
 BUILD_PLAN.md, not silently glossed over).
+
+2026-09-11 fix: `html_result.render_issues` used to be computed and logged
+but never actually consulted for the promotion decision -- only
+`story_result.final_status` gated `promote_to_final()`, so a run with real,
+unresolved render issues promoted anyway. The combined status below is
+what actually gates promotion now; a degraded HTML pass (e.g. Playwright
+unavailable) caps it at PASS_WARN, never a silent PASS (plan §14's "a
+degraded run must look degraded").
 """
 from __future__ import annotations
 
@@ -52,8 +62,9 @@ from llm.budget import BudgetCounter, DEFAULT_TIERS
 from llm.client import make_llm_client
 from llm.usage import UsageLedger
 from orchestration import paths as P
-from orchestration.html_pipeline import HtmlSynthesisResult, synthesize_video_html
+from orchestration.html_pipeline import HtmlSynthesisResult, synthesize_and_repair_video_html
 from orchestration.pipeline import PipelineAgents, PipelineResult, run_story_and_narration_loop, save_result
+from orchestration.policy_gate import FinalStatus, apply_editorial_downgrade, compute_final_status
 from orchestration.shorts_pipeline import ShortRunResult, ShortsPipelineAgents, run_short
 from planning.candidate_finder import find_candidates
 from planning.models import SourceBrief
@@ -76,6 +87,21 @@ class PipelineRunOutput:
     short_results: list[ShortRunResult] = field(default_factory=list)
     promoted: bool = False
     total_cost_usd: float = 0.0
+    final_status: FinalStatus = "FAIL"  # the loop's own status combined with the HTML pass's
+
+
+def _combine_final_status(story_status: FinalStatus, html_result: HtmlSynthesisResult) -> FinalStatus:
+    """The loop's own status is necessary but no longer sufficient --
+    unresolved render_issues (repairs exhausted) or a degraded HTML pass
+    (e.g. Playwright unavailable) must be able to block promotion or cap
+    it at PASS_WARN, never silently waved through (plan §14)."""
+    html_status = compute_final_status(
+        hard_failures=html_result.render_issues, diagnostics=[], revision_budget_remaining=False,
+    )
+    combined = apply_editorial_downgrade(story_status, html_status)
+    if html_result.degraded_capabilities:
+        combined = apply_editorial_downgrade(combined, "PASS_WARN")
+    return combined
 
 
 def _build_claim_registry(
@@ -157,9 +183,16 @@ def run_full_pipeline(
     log(f"story+narration loop: archetype={story_result.plan.archetype}, final_status={story_result.final_status}, ${loop_budget.spent_usd:.4f}")
     save_result(story_result, run_dir)
 
-    # ---- H + HV: direct in-memory handoff, no disk reload ----
-    html_result = synthesize_video_html(story_result.plan, story_result.narration, claims, narration_lead)
-    log(f"H/HV: {len(html_result.beat_visuals)} beats, {len(html_result.render_issues)} render issues")
+    # ---- H + HV (V1C: static -> rendered -> C3, each bounded by its own repair budget) ----
+    # direct in-memory handoff from the loop's own plan/narration, no disk reload
+    html_budget = BudgetCounter(tier=DEFAULT_TIERS["longform"])
+    html_result = synthesize_and_repair_video_html(
+        story_result.plan, story_result.narration, claims, narration_lead, review_lead_flash, html_budget,
+    )
+    log(
+        f"H/HV: {len(html_result.beat_visuals)} beats, {len(html_result.render_issues)} render issues, "
+        f"{html_result.repairs_used} repair(s), degraded={html_result.degraded_capabilities}, ${html_budget.spent_usd:.4f}"
+    )
     emit_html_deliverables(html_result, run_dir / "html")
 
     # ---- shorts: SC -> A2s -> run_short -> vertical HTML, same in-memory plan/narration/claims ----
@@ -189,15 +222,16 @@ def run_full_pipeline(
 
                 short_results.append(short_result)
 
-    # ---- final emission + promotion, gated on the loop's own final_status ----
+    # ---- final emission + promotion, gated on the loop's status combined with H/HV's ----
+    final_status = _combine_final_status(story_result.final_status, html_result)
     promoted = False
-    if story_result.final_status in ("PASS", "PASS_WARN"):
+    if final_status in ("PASS", "PASS_WARN"):
         emit_final_deliverables(story_result, run_dir, run_id, usage_ledger)
         P.promote_to_final(run_dir, project_root, playlist, video_slug)
         promoted = True
         log(f"promoted to: {P.final_dir(project_root, playlist, video_slug)}")
     else:
-        log(f"final_status={story_result.final_status} -- not promoting")
+        log(f"final_status={final_status} (story={story_result.final_status}) -- not promoting")
 
     total_cost = usage_ledger.total_billed_microusd() / 1_000_000
     log(f"total cost: ${total_cost:.4f}")
@@ -205,6 +239,7 @@ def run_full_pipeline(
     return PipelineRunOutput(
         run_dir=run_dir, story_result=story_result, html_result=html_result,
         short_results=short_results, promoted=promoted, total_cost_usd=total_cost,
+        final_status=final_status,
     )
 
 
@@ -229,10 +264,10 @@ def main(argv: list[str] | None = None) -> int:
         source_html_path=args.source, target_duration_seconds=args.duration, audience=args.audience,
         run_shorts=not args.no_shorts, shorts_count=args.shorts_count, references_dir=args.references_dir,
     )
-    print(f"\nfinal_status: {output.story_result.final_status}")
+    print(f"\nfinal_status: {output.final_status}")
     print(f"promoted: {output.promoted}")
     print(f"total_cost_usd: {output.total_cost_usd:.4f}")
-    return 0 if output.story_result.final_status in ("PASS", "PASS_WARN") else 1
+    return 0 if output.final_status in ("PASS", "PASS_WARN") else 1
 
 
 if __name__ == "__main__":

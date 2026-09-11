@@ -28,8 +28,11 @@ def make_story_result(final_status="PASS"):
     return SimpleNamespace(plan=plan, narration=narration, final_status=final_status, review_bundle=SimpleNamespace())
 
 
-def make_html_result():
-    return SimpleNamespace(beat_visuals=[SimpleNamespace()], hero=SimpleNamespace(), render_issues=[])
+def make_html_result(render_issues=None, degraded_capabilities=None):
+    return SimpleNamespace(
+        beat_visuals=[SimpleNamespace()], hero=SimpleNamespace(),
+        render_issues=render_issues or [], degraded_capabilities=degraded_capabilities or [], repairs_used=0,
+    )
 
 
 @pytest.fixture
@@ -76,8 +79,8 @@ def patched(monkeypatch, tmp_path):
 
     monkeypatch.setattr(rp, "save_result", record("save_result"))
 
-    monkeypatch.setattr(rp, "synthesize_video_html", record("synthesize_video_html"))
-    rp.synthesize_video_html.return_value = html_result
+    monkeypatch.setattr(rp, "synthesize_and_repair_video_html", record("synthesize_and_repair_video_html"))
+    rp.synthesize_and_repair_video_html.return_value = html_result
     monkeypatch.setattr(rp, "emit_html_deliverables", record("emit_html_deliverables"))
 
     monkeypatch.setattr(rp, "find_candidates", record("find_candidates"))
@@ -144,7 +147,7 @@ def test_claim_registry_feeds_directly_into_a1_and_the_loop_in_memory(patched):
 
 def test_loop_result_feeds_html_synthesis_directly_in_memory_not_reloaded(patched):
     output = _run(patched)
-    html_args = patched.calls["synthesize_video_html"][0][0]
+    html_args = patched.calls["synthesize_and_repair_video_html"][0][0]
     assert html_args[0] is patched.story_result.plan
     assert html_args[1] is patched.story_result.narration
     assert output.html_result is patched.html_result
@@ -203,3 +206,42 @@ def test_narrative_digest_skipped_below_the_threshold(patched):
     assert "build_narrative_digest" not in patched.calls
     a1_kwargs = patched.calls["understand_source"][0][1]
     assert a1_kwargs["narrative_digest"] is None
+
+
+def test_a_clean_html_result_promotes_exactly_as_before(patched):
+    """V1C: html_result.render_issues/degraded_capabilities must now
+    actually be consulted -- confirms the happy path is unaffected."""
+    output = _run(patched)
+    assert output.promoted is True
+    assert output.final_status == "PASS"
+
+
+def test_unresolved_render_issues_block_promotion_even_when_the_story_passed(patched):
+    """Real gap this fix closes: html_result.render_issues used to be
+    computed and logged but never actually consulted -- a run with real,
+    unresolved render issues promoted anyway."""
+    from verification.hard.render import RenderIssue
+
+    rp.run_story_and_narration_loop.return_value = make_story_result("PASS")
+    rp.synthesize_and_repair_video_html.return_value = make_html_result(
+        render_issues=[RenderIssue("rendered_clipping", "still broken after repair budget exhausted")],
+    )
+
+    output = _run(patched)
+
+    assert output.promoted is False
+    assert output.final_status == "FAIL"
+
+
+def test_a_degraded_html_pass_caps_promotion_at_pass_warn_never_pass(patched):
+    """Playwright being unavailable (or any other recorded degradation)
+    must never let an otherwise-clean run silently reach PASS."""
+    rp.run_story_and_narration_loop.return_value = make_story_result("PASS")
+    rp.synthesize_and_repair_video_html.return_value = make_html_result(
+        degraded_capabilities=["playwright_rendered_checks: playwright not installed"],
+    )
+
+    output = _run(patched)
+
+    assert output.promoted is True  # PASS_WARN still promotes
+    assert output.final_status == "PASS_WARN"
