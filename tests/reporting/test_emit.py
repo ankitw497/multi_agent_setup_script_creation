@@ -44,6 +44,34 @@ def test_emit_writes_every_deliverable(tmp_path):
     assert (final_dir / "review_summary.md").exists()
     assert (final_dir / "quality_report.json").exists()
     assert (final_dir / "cost_report.json").exists()
+    assert (final_dir / "run_manifest.json").exists()
+
+
+def test_a_clean_run_still_gets_a_run_manifest_with_an_empty_list(tmp_path):
+    """V1C: absence would be ambiguous (never checked vs checked-and-clean)."""
+    result = PipelineResult(make_plan(), make_narration(), ReviewBundle(run_id="r1"), "PASS", log=[])
+    ledger = UsageLedger(tmp_path / "usage.jsonl")
+
+    final_dir = emit_final_deliverables(result, tmp_path / "run", "r1", ledger)
+
+    manifest = json.loads((final_dir / "run_manifest.json").read_text())
+    assert manifest["run_id"] == "r1"
+    assert manifest["degraded_capabilities"] == []
+
+
+def test_degraded_capabilities_reach_both_the_manifest_and_the_summary(tmp_path):
+    result = PipelineResult(make_plan(), make_narration(), ReviewBundle(run_id="r1"), "PASS_WARN", log=[])
+    ledger = UsageLedger(tmp_path / "usage.jsonl")
+
+    final_dir = emit_final_deliverables(
+        result, tmp_path / "run", "r1", ledger,
+        degraded_capabilities=["playwright_rendered_checks: playwright not installed"],
+    )
+
+    manifest = json.loads((final_dir / "run_manifest.json").read_text())
+    assert manifest["degraded_capabilities"] == ["playwright_rendered_checks: playwright not installed"]
+    summary = (final_dir / "review_summary.md").read_text()
+    assert "playwright_rendered_checks: playwright not installed" in summary
 
 
 def test_narration_json_round_trips_the_actual_content(tmp_path):

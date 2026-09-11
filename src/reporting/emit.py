@@ -25,23 +25,30 @@ from orchestration.pipeline import PipelineResult
 from .cost_report import build_cost_report
 from .quality_report import build_quality_report
 from .review_summary import render_review_summary
+from .run_manifest import build_run_manifest
 from .script_md import render_script_md
 
 
 def emit_final_deliverables(
     result: PipelineResult, run_dir: str | Path, run_id: str, usage_ledger: UsageLedger,
+    degraded_capabilities: list[str] | None = None,
 ) -> Path:
     final_dir = Path(run_dir) / "final"
     final_dir.mkdir(parents=True, exist_ok=True)
+    degraded_capabilities = degraded_capabilities or []
 
     cost_report = build_cost_report(run_id, usage_ledger)
     quality_report = build_quality_report(run_id, result)
+    run_manifest = build_run_manifest(run_id, degraded_capabilities)
 
     (final_dir / "plan.json").write_text(result.plan.model_dump_json(indent=2))
     (final_dir / "narration.json").write_text(json.dumps([n.model_dump() for n in result.narration], indent=2))
     (final_dir / "script.md").write_text(render_script_md(result.plan, result.narration))
-    (final_dir / "review_summary.md").write_text(render_review_summary(result, cost_report=cost_report))
+    (final_dir / "review_summary.md").write_text(
+        render_review_summary(result, cost_report=cost_report, degraded_capabilities=degraded_capabilities)
+    )
     (final_dir / "quality_report.json").write_text(quality_report.model_dump_json(indent=2))
     (final_dir / "cost_report.json").write_text(cost_report.model_dump_json(indent=2))
+    (final_dir / "run_manifest.json").write_text(run_manifest.model_dump_json(indent=2))
 
     return final_dir

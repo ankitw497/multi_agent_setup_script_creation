@@ -226,7 +226,10 @@ def run_full_pipeline(
     final_status = _combine_final_status(story_result.final_status, html_result)
     promoted = False
     if final_status in ("PASS", "PASS_WARN"):
-        emit_final_deliverables(story_result, run_dir, run_id, usage_ledger)
+        emit_final_deliverables(
+            story_result, run_dir, run_id, usage_ledger,
+            degraded_capabilities=html_result.degraded_capabilities,
+        )
         P.promote_to_final(run_dir, project_root, playlist, video_slug)
         promoted = True
         log(f"promoted to: {P.final_dir(project_root, playlist, video_slug)}")

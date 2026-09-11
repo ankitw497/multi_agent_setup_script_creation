@@ -13,7 +13,10 @@ if TYPE_CHECKING:
 _SEVERITY_HEADINGS = (("critical", "Critical"), ("major", "Major"), ("minor", "Minor"))
 
 
-def render_review_summary(result: PipelineResult, cost_report: "CostReport | None" = None) -> str:
+def render_review_summary(
+    result: PipelineResult, cost_report: "CostReport | None" = None,
+    degraded_capabilities: list[str] | None = None,
+) -> str:
     lines = [
         f"# Review Summary",
         "",
@@ -22,6 +25,11 @@ def render_review_summary(result: PipelineResult, cost_report: "CostReport | Non
         f"**Targeted revisions used:** {result.major_revisions_used}",
         "",
     ]
+
+    if degraded_capabilities:
+        lines.append("## Degraded capabilities")
+        lines += [f"- {d}" for d in degraded_capabilities]
+        lines.append("")
 
     if result.review_bundle.hard_failures:
         lines.append("## Hard failures")

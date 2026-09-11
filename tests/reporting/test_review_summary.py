@@ -23,6 +23,22 @@ def test_renders_status_and_no_failures_cleanly():
     assert "A2: ok" in md
 
 
+def test_no_degraded_capabilities_section_when_nothing_degraded():
+    result = PipelineResult(make_plan(), [], ReviewBundle(run_id="r1"), "PASS", log=[])
+    md = render_review_summary(result, degraded_capabilities=[])
+    assert "Degraded capabilities" not in md
+
+
+def test_degraded_capabilities_render_their_own_section():
+    """V1C: a run must *look* degraded, not silently report a clean PASS."""
+    result = PipelineResult(make_plan(), [], ReviewBundle(run_id="r1"), "PASS_WARN", log=[])
+    md = render_review_summary(
+        result, degraded_capabilities=["playwright_rendered_checks: playwright not installed"],
+    )
+    assert "## Degraded capabilities" in md
+    assert "playwright_rendered_checks: playwright not installed" in md
+
+
 def test_renders_hard_failures_and_grouped_issues():
     bundle = ReviewBundle(
         run_id="r1", hard_failures=["word_budget_mismatch: too short"],
