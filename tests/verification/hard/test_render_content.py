@@ -78,6 +78,14 @@ def test_scene_with_no_prose_is_flagged():
     assert any(i.code == "scene_missing_visible_prose" for i in issues)
 
 
+def test_scene_missing_prose_is_scene_scoped_for_the_h_repair_loop():
+    """V1C: RenderIssue.scene_id must be populated so the repair loop knows
+    which beat to regenerate."""
+    beats = [BeatVisual(beat_id="B01", heading="h", scenes=[SceneVisual(scene_id="s1", screen_prose="")])]
+    issues = check_every_scene_has_prose(beats)
+    assert issues[0].scene_id == "s1"
+
+
 def test_scene_with_only_a_couple_words_is_flagged():
     beats = [BeatVisual(beat_id="B01", heading="h", scenes=[SceneVisual(scene_id="s1", screen_prose="just two")])]
     issues = check_every_scene_has_prose(beats)
@@ -95,6 +103,13 @@ def test_hero_unrelated_to_the_hook_is_flagged():
     hero = HeroContent(title="A recipe for banana bread", subtitle="Mix the ingredients and bake.")
     issues = check_hero_states_problem(hero, make_plan())
     assert any(i.code == "hero_does_not_state_the_problem" for i in issues)
+
+
+def test_hero_issue_uses_the_hero_sentinel_scene_id():
+    """V1C: the H-repair loop routes scene_id="hero" to repair_hero, not a beat."""
+    hero = HeroContent(title="A recipe for banana bread", subtitle="Mix the ingredients and bake.")
+    issues = check_hero_states_problem(hero, make_plan())
+    assert issues[0].scene_id == "hero"
 
 
 # ---- payoff closes ------------------------------------------------------------
@@ -154,6 +169,13 @@ def test_demonstrative_with_no_visual_is_flagged():
     narration = [SceneNarration(scene_id="s1", sentences=[sentence("This creates a problem for softmax.")])]
     issues = check_deictic_resolution(plan, narration)
     assert any(i.code == "deictic_reference_unresolved" for i in issues)
+
+
+def test_deictic_issue_is_scene_scoped_for_the_h_repair_loop():
+    plan = make_plan_with_scene(visual_description="")
+    narration = [SceneNarration(scene_id="s1", sentences=[sentence("This creates a problem for softmax.")])]
+    issues = check_deictic_resolution(plan, narration)
+    assert issues[0].scene_id == "s1"
 
 
 def test_it_is_never_flagged_deliberately_excluded():

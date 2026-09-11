@@ -137,3 +137,16 @@ def test_real_chromium_catches_all_three_deliberately_broken_scenes():
     assert ("low-contrast-scene", "rendered_low_contrast") in codes_by_scene
     # the clean scene must never be flagged by any check, at either viewport
     assert not any(i.scene_id == "clean-scene" for i in issues)
+
+
+@pytest.mark.integration
+def test_capture_scene_screenshots_returns_real_jpeg_data_uris():
+    from verification.hard.render_rendered import capture_scene_screenshots
+
+    screenshots = capture_scene_screenshots(_BROKEN_FIXTURE_HTML, ["clean-scene", "does-not-exist"])
+
+    assert "does-not-exist" not in screenshots
+    assert screenshots["clean-scene"].startswith("data:image/jpeg;base64,")
+    import base64
+    raw = base64.b64decode(screenshots["clean-scene"].split(",", 1)[1])
+    assert raw[:2] == b"\xff\xd8"  # JPEG magic bytes

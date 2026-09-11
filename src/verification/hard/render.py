@@ -195,6 +195,7 @@ def check_every_scene_has_prose(beat_visuals: list[BeatVisual], min_words: int =
                 issues.append(RenderIssue(
                     "scene_missing_visible_prose",
                     f"{scene.scene_id} has no real screen prose (a component/diagram alone is not enough)",
+                    scene_id=scene.scene_id,
                 ))
     return issues
 
@@ -209,6 +210,7 @@ def check_hero_states_problem(hero: HeroContent, plan: StoryPlan, threshold: flo
         return [RenderIssue(
             "hero_does_not_state_the_problem",
             f"hero content ({hero_text!r}) shares little with the hook's viewer_problem/tension",
+            scene_id="hero",  # sentinel: the H-repair loop routes this to repair_hero, not a beat
         )]
     return []
 
@@ -266,6 +268,7 @@ def check_deictic_resolution(plan: StoryPlan, narration: list[SceneNarration]) -
                     "deictic_reference_unresolved",
                     f"{scene.scene_id} sentence {i} opens with a demonstrative ({sentence.text[:50]!r}) "
                     "but the scene has no visual_description to resolve it against",
+                    scene_id=scene.scene_id,
                 ))
     return issues
 

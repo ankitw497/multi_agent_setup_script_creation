@@ -16,6 +16,8 @@ mobile viewport).
 """
 from __future__ import annotations
 
+import base64
+
 from narration.models import SceneNarration
 
 from .render import RenderIssue
@@ -210,3 +212,31 @@ def run_rendered_checks(video_script_html: str, narration: list[SceneNarration])
             browser.close()
 
     return issues
+
+
+def capture_scene_screenshots(video_script_html: str, scene_ids: list[str]) -> dict[str, str]:
+    """Real screenshots of each named scene, as base64 JPEG data URIs, for
+    C3's visual critic. JPEG specifically -- ERR-040 found Gemini/Vertex
+    rejecting an equivalent PNG outright while a JPEG worked immediately.
+    Desktop viewport only: one representative screenshot per scene, not
+    one per required viewport (C3's job is "does this match the
+    narration," not another clipping pass -- that's what the rendered
+    hard checks already are)."""
+    from playwright.sync_api import sync_playwright
+
+    result: dict[str, str] = {}
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        try:
+            page = browser.new_page(viewport={"width": _DESKTOP_VIEWPORT[0], "height": _DESKTOP_VIEWPORT[1]})
+            page.emulate_media(reduced_motion="reduce")
+            page.set_content(video_script_html, wait_until="networkidle")
+            for scene_id in scene_ids:
+                el = _scene_element(page, scene_id)
+                if el is None:
+                    continue
+                screenshot_bytes = el.screenshot(type="jpeg", quality=80)
+                result[scene_id] = f"data:image/jpeg;base64,{base64.b64encode(screenshot_bytes).decode()}"
+        finally:
+            browser.close()
+    return result
