@@ -396,10 +396,27 @@ gate cleanly; the reader-standalone band caught a genuine, real, marginal overag
 
 ## V1C — Visual loop (plan §13, §17)
 
-- [ ] Playwright runner, screenshots, `C3` visual audit, `H` REPAIR loop (≤2)
-- [ ] TTS preview for shorts → measured-duration gate (replaces the estimate-based gate from V1A-S)
+- [ ] Playwright runner, screenshots, `C3` visual audit, `H` REPAIR loop (≤2) — in progress, layer by layer (see below)
+- [ ] TTS preview for shorts → measured-duration gate (replaces the estimate-based gate from V1A-S) — deliberately deferred (2026-09-11, user decision): needs a real TTS provider/credential choice not made yet
 
 **Done when (plan):** *"render failures caught and repaired on the subscription lane."*
+
+**2026-09-11 progress — Layers 0-2 built and live-verified, real setup steps taken:**
+`pip install -e ".[dev,render]"` + `python3 -m playwright install chromium` — both real,
+documented in `README.md`. Layer 0 (multimodal LLM plumbing: `Agent.run()` →
+`call_structured_paid()` → `LiteLLMBackend.call()` all gained an optional `images` param)
+live-verified against real Gemini flash (`tests/llm/test_litellm_backend.py::test_live_gemini_multimodal_smoke`)
+— see ERROR_LOG ERR-040 for two real gaps this surfaced (a missing `tenacity` dependency,
+and Gemini/Vertex rejecting PNG but accepting JPEG). Layer 1 (`review/visual_sample.py`'s
+deterministic flagged+sampled scene selection for C3's image budget) unit-tested, no
+browser/LLM needed. Layer 2 (`verification/hard/render_rendered.py`'s clipping/invisible-
+content/contrast checks) live-verified against real Chromium
+(`tests/verification/hard/test_render_rendered.py::test_real_chromium_catches_all_three_deliberately_broken_scenes`)
+— all three checks correctly fired on a deliberately-broken fixture and stayed silent on
+its one clean scene, at both required viewports. Still pending: C3 (Layer 3), the H REPAIR
+bounded loop (Layer 4), and wiring the result into `run_pipeline.py`'s promotion gate
+(Layer 5) — see the approved plan at the time (`orchestration/run_pipeline.py`'s
+`render_issues` currently has zero effect on promotion, a real gap Layer 5 fixes).
 
 ---
 

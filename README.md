@@ -19,6 +19,15 @@ The subscription lane (Sonnet/Haiku) needs no key — it shells out to the
 `claude` CLI you're already authenticated with, and explicitly unsets
 `ANTHROPIC_API_KEY` so it can never bill the API by accident.
 
+V1C's rendered HV checks (clipping/overflow/invisible-content/contrast)
+need a real browser — only required to run those checks or their
+`pytest -m integration` tests, not for the rest of the pipeline:
+
+```bash
+pip install -e ".[dev,render]"
+python3 -m playwright install chromium
+```
+
 ## Running tests
 
 ```bash

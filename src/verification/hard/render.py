@@ -1,7 +1,8 @@
 """HV -- render verification, STATIC checks only (plan §13). Deterministic, no LLM.
 
-The *rendered* checks (Playwright, clipping, contrast, C3 screenshot
-audit) are V1C scope -- nothing here opens a browser. `check_render_static`
+The *rendered* checks (Playwright, clipping, contrast) now live in
+`.render_rendered` (V1C) -- nothing in THIS module opens a browser.
+`check_render_static`
 covers plan §13's DOM-level "Hard (static)" list: HTML parses, unique ids,
 every scene present in order, the narration-data hash matches
 narration.json, every `data-numeric-claim-id` exists and traces to a real
@@ -40,6 +41,10 @@ _TAG_RE = re.compile(r"<[^>]+>")
 class RenderIssue:
     code: str
     detail: str
+    scene_id: str | None = None  # V1C: which scene this is about, when known --
+    # load-bearing for the H-repair loop (which beat to regenerate) and the C3
+    # sampler (which scenes are already flagged), not cosmetic. None for
+    # page-wide static issues that were never scene-scoped to begin with.
 
 
 def visible_text(html: str) -> str:
