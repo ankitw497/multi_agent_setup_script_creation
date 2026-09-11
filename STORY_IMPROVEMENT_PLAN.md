@@ -67,7 +67,7 @@ certain first:
 | 4 | Retention diagnostics read narration, not planner flags | 8.4 | Turns three always-GREEN diagnostics into real signal |
 | 5 | Reject regressing revision cycles + narrow B2's blast radius | 8.5 | Stops the loop making things worse; cheap guard |
 | 6 | ~~C3 also reviews H's screen prose~~ [x] code+tests done, live-verify pending | 6 | A whole artifact currently has zero critique coverage |
-| 7 | Typed formula/numeric state validators | 6 | Fixes the confirmed raw-vs-scaled and dropped-`√d_k` class of bug |
+| 7 | ~~Typed formula/numeric state validators~~ [x] code+tests done, live-verify pending | 6 | Fixes the confirmed raw-vs-scaled and dropped-`√d_k` class of bug |
 | 8 | A2b neighbor contract | 5 | Improves transitions; larger change than the above |
 | 9 | Airtime by narrative role, not source volume | 7 | Real fix for section bloat, but touches allocation for every run |
 | 10 | Build C4c mid-video cold viewer | 8.2 | New module; do after the cheap retention wins land |
@@ -598,18 +598,41 @@ built. This is a bigger, more concrete version of this phase's "cross-artifact" 
       `verification/hard/` check: Python pattern-matching against the registered stage strings,
       not model judgment -- this is exactly the class of bug a critic will not reliably catch
       run after run (confirmed live: it slipped through this run's C1 pass untouched)
-- [ ] **Numeric state tracking** (item #9), sharpened by the confirmed bug above: a
-      `numeric_state` object distinguishing `raw_scores`/`scaled_scores`/`attention_weights` as
-      SEPARATE typed values (not one flat `values` dict reused ambiguously across stages), so
-      a scene can only claim "these are the scaled scores" if they match the registered
-      `scaled_scores`, not the registered `raw_scores`. Extend `RunningExample` (or add a
-      sibling model) accordingly; extend `narration/generator.py`'s prompt to require reusing
-      the correct stage's numbers, not just "prior numeric values" generically
-- [ ] Unit tests: `synthesizer.py` payload carries `running_example` and actual narration text;
-      the new entity-overlap diagnostic (clean case, mismatch case, ambiguous case treated as
-      AMBER not a crash); the formula-stage check (regression from a later to an earlier stage
-      is caught; a consistent stage progression is not flagged); C1 payload carries screen prose
-- [ ] `.venv/bin/python3 -m pytest -q` green
+
+  **[x] Implemented.** `planning/models.py` gained `FormulaStage(stage_id, expression,
+  values: dict[str,str])`; `StoryStructure.formula_stages: list[FormulaStage]` (empty for
+  every source with no evolving expression -- registered once by A2, per its own new
+  `TASK_PROMPT` instructions). `ScenePlan.formula_stage_id: str` tags which registered stage
+  a scene's own equation/diagram represents, set by A2b via the existing `ViewerLedger`
+  threading (`ViewerLedger.formula_stages`, no new LLM call). New
+  `verification/hard/formula_consistency.py::check_formula_stage_consistency(plan,
+  beat_visuals)`: walks `scene_plan` in order, tracks the most-advanced stage reached, and
+  flags a `formula_stage_regression` `RenderIssue` (scene_id-carrying, so it drives the
+  existing H-repair route automatically) whenever a scene's actual rendered content
+  (`screen_prose` + every string in `component_data`, whitespace-normalized) doesn't contain
+  the expected stage's exact `expression`. Wired into `synthesize_and_repair_video_html`'s
+  static-check loop.
+
+- [x] **Numeric state tracking** (item #9), folded into the SAME `FormulaStage` object rather
+      than a separate sibling model -- each stage carries its own `values: dict[str, str]`
+      (its own worked numbers), so a stage can only "own" numbers it was actually registered
+      with. `check_formula_stage_consistency` also flags `formula_stage_values_missing` when a
+      scene's content lacks its own stage's registered numbers -- directly catches the
+      raw-vs-scaled confusion (a later stage claiming numbers that never actually changed).
+      `narration/generator.py`'s prompt was NOT separately extended -- the check operates on
+      H's rendered content (`beat_visuals`/screen prose + component_data), which is where both
+      confirmed bugs actually lived (B7/B8's on-screen cards), not spoken narration.
+- [x] Unit tests: `tests/verification/hard/test_formula_consistency.py` (no-op empty case,
+      clean progression not flagged, regression caught, whitespace-insensitive matching,
+      component_data matching, missing-values detection, unregistered stage_id ignored not a
+      crash); `tests/planning/test_scene_expander.py`/`test_story_planner.py` (payload
+      threading, prompt instructs registering stages, no-hardcoded-topic-vocabulary guard);
+      `tests/orchestration/test_html_repair_loop.py` (forces the check through the real
+      repair loop end to end, not just the isolated check function).
+      **Not done from the original scope**: the entity-overlap diagnostic and C1-screen-prose
+      payload items below (`viewer_can_now`/entity-overlap heuristic, `synthesizer.py`
+      threading running_example+narration text) remain open -- see the unchecked items below.
+- [x] `.venv/bin/python3 -m pytest -q` green (802 passed, 16 deselected)
 - [ ] **Live-verify**: re-render the same real source; confirm `score_s02`/`score_s03`-style
       diagrams now reuse the locked running example instead of inventing `dog/park/bone`;
       confirm B8's equation now retains `/√d_k` instead of regressing; confirm the new
