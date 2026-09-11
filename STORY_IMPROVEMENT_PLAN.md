@@ -709,10 +709,14 @@ issues that never clear across revision rounds, and a plausible one for the conf
       `test_prompt_has_no_hardcoded_topic_vocabulary` (overfitting guard, matching Phase 3's
       precedent)
 - [x] `.venv/bin/python3 -m pytest -q` green (748 passed, up from 744)
-- [ ] **Live-verify**: a real run where A3 routes to `TARGETED_REWRITE` for a scene tagged
-      `scene_function=derivation`; confirm the rewritten scene still doesn't re-derive its
-      `must_not_repeat` concepts, and that a scene touching the locked `running_example`
-      still reuses its exact values after rewrite -- not yet run
+- [x] **Live-verify** (`video-01-attention-bug1-verify/runs/v01`, 2026-09-11): this run hit
+      `TARGETED_REWRITE` twice, and its final cycle rewrote all 7 of the plan's beats (36
+      scenes) -- so every scene in the final narration passed through the fixed B2. Checked
+      15 `scene_function=derivation` scenes with real `must_not_repeat` lists; every one
+      correctly compresses the reference into a bridging clause instead of re-deriving it,
+      e.g. `build_step_1_s02`: *"Since we already know 'it' could mean either word..."*;
+      `build_step_1_s05`: *"Since queries and keys are already doing the matching..."*. Direct
+      confirmation the fix works outside mocked tests. See ERROR_LOG.md.
 
 ### 8.2 — No cold-viewer critique exists for long-form at all
 

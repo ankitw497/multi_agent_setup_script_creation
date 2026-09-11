@@ -1472,6 +1472,46 @@ Not yet fixed -- logged here because the findings are real and code-confirmed.
 
 ---
 
+## BUG-1 fixed and live-verified; cold-hook critic wired into long-form (Phase 8.1/8.2, 2026-09-11)
+
+**BUG-1 fix**: `editing/targeted_rewrite.py` (B2) now carries `scene_function`, `new_concepts`,
+`must_not_repeat`, and `running_example` into every targeted rewrite -- payload- and
+prompt-only, no signature change (`scene` and `plan` were both already in scope). 4 new
+tests, full suite green.
+
+**Live-verified**, not just mocked: ran `video-01-attention-bug1-verify/runs/v01` against the
+real source. This run hit `TARGETED_REWRITE` twice; its final cycle rewrote all 7 of the
+plan's beats (36 scenes), so every scene in the accepted narration passed through the fixed
+B2. Checked 15 `scene_function=derivation` scenes carrying a real `must_not_repeat` list --
+every one correctly compresses the reference into a bridging clause instead of re-deriving
+it:
+
+- `build_step_1_s02` (mnr=`pronoun_resolution_example`): *"Since we already know 'it' could
+  mean either word, the model needs a way to check every candidate."*
+- `build_step_1_s05` (mnr=`pronoun_resolution_example, unrestricted_attention, query_key_value`):
+  *"Since queries and keys are already doing the matching, the connection between 'it' and
+  'cat' strengthens..."*
+- `build_step_2_s03` (mnr=`pronoun_resolution_example, query_key_value`): *"Transformers kept
+  that retrieval idea but rewired it... the same retrieve-what-you-need logic we just saw."*
+
+This is direct confirmation the fix works outside mocked tests -- the ledger survives a real
+B2 rewrite cycle, not just a FakeAgent-based one.
+
+**Also noted from this same run** (not yet acted on): critique issue count stayed flat at 3
+across all three review cycles (3 -> 3 -> 3) despite a full replan and two targeted rewrites --
+the exact non-convergence pattern already tracked as Phase 8.5.
+
+**Cold-hook critic wired into long-form (Phase 8.2)**: `PipelineAgents` gained a `worker`
+field; `_hook_context()` extracts the first beat's narration/visual for the critique;
+`critique_cold_hook()` gained optional `haiku_pass_id`/`gemini_pass_id` params so long-form
+logs as `C4a`/`C4b` (cost-report label only). 3 new pipeline-level tests plus 1 in
+`test_cold_hook_critic.py`. Not yet live-verified -- the run above predates this commit;
+needs its own live run to confirm a real `C4a`/`C4b` entry appears in `usage.jsonl`.
+
+Full suite: 752 passed, 16 deselected.
+
+---
+
 ## Open items (not yet bugs, flagged for future attention)
 
 - **A2b's per-beat expansion doesn't always self-track its own new concepts within one
