@@ -23,6 +23,20 @@ def make_plan(**overrides) -> ShortPlan:
     return ShortPlan(**base)
 
 
+def test_prompt_requires_a_spoken_bridge_line_when_mode_is_spoken():
+    """Real gap found 2026-09-11 (user-reported): a real short with
+    `bridge.mode="SPOKEN"` produced a clean payoff with no follow-up/
+    subscribe line at all -- the prompt's blanket "no reserved subscribe
+    slot" framing evidently outweighed the later conditional instruction.
+    Tightened to make the SPOKEN case explicitly REQUIRED and to scope the
+    "don't invent one" rule to only the other three modes."""
+    from narration.short_generator import TASK_PROMPT
+
+    assert "REQUIRED" in TASK_PROMPT
+    assert "SPOKEN" in TASK_PROMPT
+    assert "NONE" in TASK_PROMPT
+
+
 def test_returns_one_scene_per_segment():
     narration_lead = FakeNarrationLead(GeneratedShortNarration(segments=[
         {"segment": "hook", "sentences": [{"text": "x", "sentence_type": "transition"}]},

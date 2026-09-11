@@ -72,15 +72,17 @@ section{padding:64px 40px;max-width:1100px;margin:0 auto;}
 .metric-table th{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;color:var(--text3);padding:8px 12px;text-align:left;border-bottom:1px solid var(--border);}
 .metric-table td{padding:10px 12px;border-bottom:1px solid var(--border);color:var(--text3);}
 
-.reveal{opacity:0;transform:translateY(16px);transition:opacity 0.6s ease,transform 0.6s ease;}
-.reveal.visible{opacity:1;transform:none;}
-"""
-
-REVEAL_SCRIPT = """\
-const revealObs=new IntersectionObserver(entries=>{
-  entries.forEach(e=>{if(e.isIntersecting){e.target.classList.add('visible');}});
-},{threshold:0.15});
-document.querySelectorAll('.reveal').forEach(el=>revealObs.observe(el));
+/* 2026-09-11 fix (user-reported "lot of empty space"): `.reveal` elements
+   used to start at opacity:0 and only become visible once an
+   IntersectionObserver saw them scroll into view -- every screen past the
+   first was genuinely blank at rest in any viewer that doesn't run/scroll
+   the page (a static preview, a thumbnail, a non-JS viewer). A pure-CSS
+   fade-in plays automatically on load with no JS/scroll dependency at
+   all, and the base `opacity:1` means content is visible even if
+   animations are unsupported or reduced-motion disables the animation. */
+.reveal{opacity:1;animation:revealIn 0.5s ease;}
+@keyframes revealIn{from{opacity:0;transform:translateY(16px);}to{opacity:1;transform:none;}}
+@media (prefers-reduced-motion: reduce){.reveal{animation:none;}}
 """
 
 

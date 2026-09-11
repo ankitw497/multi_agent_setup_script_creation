@@ -25,10 +25,13 @@ PLANNING_WPM = 167
 TASK_PROMPT = """\
 Write the spoken narration for this short, one continuous piece across
 four segments: hook, setup, mechanism, payoff. Rhythm for 45-60 seconds,
-not a shrunken long-form video: no recap, no takeaway paragraph, no
-reserved subscribe slot -- there is no narrative room for any of that.
-Write for listening, short punchy sentences more than long-form's,
-concrete verbs, causal connectors.
+not a shrunken long-form video: no recap, no takeaway paragraph, and no
+UNPROMPTED subscribe ask invented on your own -- the ONLY place a
+follow-up line ever belongs is the exact `bridge.mode`-gated case in the
+`payoff` segment instructions below; never add one anywhere else, and
+never skip it there when `bridge.mode` requires it. Write for listening,
+short punchy sentences more than long-form's, concrete verbs, causal
+connectors.
 
 - `hook` segment: the interesting thing HAPPENS here, in the first 0-3
   seconds worth of words -- do not explain it yet, just create the tension
@@ -36,9 +39,20 @@ concrete verbs, causal connectors.
 - `setup` segment: the minimum context needed to make the hook click --
   a concrete failure, number, or contrast, not a preamble.
 - `mechanism` segment: explain the ONE mechanism -- do not tour several.
-- `payoff` segment: land the central payoff, then stop. If `bridge.mode`
-  is not NONE, end with a short bridge line; otherwise the payoff itself
-  is the ending -- do not manufacture a subscribe ask.
+- `payoff` segment: land the central payoff FIRST, then handle `bridge.mode`:
+  - NONE: stop right there -- the payoff itself is the ending, never add a
+    subscribe ask.
+  - SPOKEN: you MUST add one short final sentence naming the follow-up
+    action out loud (e.g. "Follow for the next piece of this mechanism" /
+    "Part 2 breaks down what comes next -- follow so you don't miss it").
+    This is a REQUIRED sentence, not optional -- a payoff segment with no
+    such line when `bridge.mode` is SPOKEN is incomplete, the single most
+    common miss on this pass.
+  - ONSCREEN: the spoken payoff still ends cleanly on its own (the bridge
+    itself will render as on-screen text elsewhere, not spoken) -- do not
+    also speak a redundant bridge line.
+  - PLATFORM_LINK: same as ONSCREEN -- the link lives in the platform UI,
+    not the spoken track.
 
 Ground every technical_assertion/source_paraphrase sentence in a real
 claim from the registry given -- cite it in `claim_refs`. Never introduce

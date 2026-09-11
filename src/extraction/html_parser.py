@@ -18,7 +18,7 @@ from facts.models import SourceUnit
 
 from .js_literal_extractor import LiteralExtractionResult, extract_literals_from_scripts
 from .profiles import ALL_PROFILES, FALLBACK_PROFILE
-from .profiles.base import extract_pipeline_steps, visible_text
+from .profiles.base import extract_pipeline_steps, sweep_numbers, visible_text
 
 # Chrome that carries no story content — stripped before any profile sees the
 # document, so nav text/link labels never leak into a SourceUnit's prose.
@@ -99,6 +99,38 @@ def _extract_production_notes(soup: BeautifulSoup) -> SourceUnit | None:
     )
 
 
+def _extract_hero_hook(soup: BeautifulSoup) -> SourceUnit | None:
+    """`<header class="hero">` sits BEFORE any `<section class="section">` in
+    the document, so every profile's `section.select("section.section")` walk
+    is structurally blind to it -- the same gap `_extract_production_notes`
+    already fixed for `.page-footer`, mirrored here for the header. Real bug
+    found 2026-09-11 (user-reported: the generated hook was generic/abstract
+    while the source's own hook used a concrete minimal-pair example -- "the
+    cat couldn't climb the stairs because it was too tired" vs "...too
+    steep"). That example was never missing from the SOURCE, only from
+    every SourceUnit ever built from it -- A1/A2 had no way to ground a
+    concrete hook in content they were never given.
+    """
+    hero = soup.select_one("header.hero")
+    if hero is None:
+        return None
+    heading_el = hero.find(["h1", "h2"])
+    heading = visible_text(heading_el) if heading_el else ""
+    body_el = hero.select_one(".hero-sub")
+    text = visible_text(body_el) if body_el else visible_text(hero)
+    if not text:
+        return None
+    return SourceUnit(
+        id=hero.get("id") or "hook",
+        heading=heading,
+        level=1,
+        text=text,
+        numbers=sweep_numbers(text),
+        dom_path="header.hero",
+        structure_confidence=1.0,
+    )
+
+
 def parse_html(path: str | Path) -> ExtractionResult:
     html = Path(path).read_text(encoding="utf-8")
     return parse_html_string(html)
@@ -115,6 +147,7 @@ def parse_html_string(html: str) -> ExtractionResult:
     # Pass 2: a fresh soup, chrome and scripts removed, for profile matching + extraction.
     # Production notes must be pulled BEFORE chrome-stripping removes .page-footer.
     soup = BeautifulSoup(html, "lxml")
+    hero_hook = _extract_hero_hook(soup)
     production_notes = _extract_production_notes(soup)
     _strip_chrome(soup)
 
@@ -130,6 +163,8 @@ def parse_html_string(html: str) -> ExtractionResult:
         chosen_confidence = best_confidence
 
     units = chosen_profile.extract(soup)
+    if hero_hook is not None:
+        units.insert(0, hero_hook)
     if production_notes is not None:
         units.append(production_notes)
 

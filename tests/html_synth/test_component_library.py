@@ -127,6 +127,20 @@ def test_headline_components_use_the_sans_apple_system_stack_not_serif():
     assert "-apple-system" in ds_sans
 
 
+def test_reveal_is_visible_at_rest_with_no_js_or_scroll_dependency():
+    """Real gap found 2026-09-11 (user-reported "lot of empty space"):
+    `.reveal` used to start at opacity:0, only becoming visible once an
+    IntersectionObserver saw an element scroll into view -- every screen
+    past the first was genuinely blank in any viewer that doesn't run/
+    scroll the page (a static preview, a thumbnail, JS blocked). Fixed
+    with a pure-CSS fade-in that plays on load; base opacity must be 1 so
+    content stays visible even if the animation itself never runs."""
+    from html_synth.component_library import BASE_STYLESHEET
+
+    assert "opacity:1" in BASE_STYLESHEET.split(".reveal{")[1].split("}")[0]
+    assert "prefers-reduced-motion" in BASE_STYLESHEET
+
+
 def test_unknown_component_id_raises():
     with pytest.raises(ValueError, match="unknown component_id"):
         render_component("not_a_real_component", {})

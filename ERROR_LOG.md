@@ -858,6 +858,89 @@ review loop is specifically designed to catch, not a bug in this fix set).
 
 ---
 
+## ERR-036 — `<header class="hero">` was structurally invisible to extraction; the hook's own concrete example never reached A1/A2
+**Date:** 2026-09-11 · **Severity:** major (the single most carefully-written hook material in the source was never available to ground on) · **Status:** fixed · **Component:** `extraction/html_parser.py`
+
+User-reported, comparing the generated hook against the source directly: the source's hook
+uses a concrete minimal-pair example ("the cat couldn't climb the stairs because it was too
+**tired**" vs "...too **steep**" — same pronoun, opposite referent), while the generated hook
+stayed abstract ("Understanding the seemingly complex mechanism of how Transformers retrieve
+context"). Root cause: `<header class="hero" id="hook">` sits BEFORE any `<section
+class="section">` in the document, so every profile's `section.select("section.section")`
+walk (the shape all real profiles share) is structurally blind to it — the exact same gap
+`_extract_production_notes` already fixed once for `.page-footer` (ERR-013), just never
+mirrored for the header. The example was never missing from the source, only from every
+`SourceUnit` ever built from it.
+
+**Fix:** `_extract_hero_hook()` mirrors `_extract_production_notes()` — pulls `<header
+class="hero">`'s `h1` + `.hero-sub` into its own leading `SourceUnit` (id from the header's
+own `id` attribute, "hook" on the real source), profile-agnostic like its footer
+counterpart. Live-verified deterministically (S0 has no LLM in it): the real source now
+yields 13 units (was 12), with unit `hook` containing both "too tired" and "too steep".
+**Tests:** `tests/extraction/test_html_parser.py::test_hero_header_is_extracted_as_its_own_unit`,
+`::test_plain_source_with_no_hero_header_produces_no_hook_unit`,
+`::test_real_source_hero_header_carries_the_concrete_hook_example`.
+**Related, not fixed here:** the source's own recap-section callout already names three
+specific next-video techniques (Sparse attention, linear-attention, FlashAttention) and
+already reaches A2's payload (confirmed: it's a real section callout, not header/footer-
+excluded) — yet a real generated ending still bridged generically. That's an LLM
+specificity gap, not a data-availability one; not chased this round (single observed
+run, ERR-010/ERR-031 precedent).
+
+---
+
+## ERR-037 — `.reveal` elements were invisible at rest, dependent on JS + scroll to ever appear
+**Date:** 2026-09-11 · **Severity:** critical (every page this pipeline has ever produced was affected) · **Status:** fixed · **Component:** `html_synth/component_library.py`, `html_synth/assembler.py`, `html_synth/vertical_assembler.py`
+
+User-reported "lot of empty space" on a real `short.html`. Investigating found `.reveal{
+opacity:0; ...}` with visibility added only by an `IntersectionObserver` once an element
+scrolled into view — meaning every long-form scene/section and every shorts screen (`hook`,
+`setup`, `mechanism`, `payoff` all carry class `reveal`) rendered **completely blank** in
+any viewer that doesn't execute JS, or doesn't scroll every element into view first (a
+static preview, a thumbnail capture, an IDE's sandboxed HTML viewer). This affected BOTH
+`assembler.py` (long-form) and `vertical_assembler.py` (shorts) identically — a
+previously-undetected, pipeline-wide bug, because every earlier live check in this session
+inspected the emitted HTML via text/grep, never an actual browser render.
+
+**Fix:** replaced the JS/IntersectionObserver-gated reveal with a pure-CSS `@keyframes`
+fade-in that plays automatically on load, no JS or scroll dependency at all: `.reveal{
+opacity:1; animation: revealIn 0.5s ease;}` — base `opacity:1` means content is visible
+even if the animation itself never runs (unsupported browser, `prefers-reduced-motion:
+reduce`, anything). `REVEAL_SCRIPT` and its `<script>` tag are removed entirely from both
+assemblers as dead code, not left as an unused stub.
+**Tests:** `tests/html_synth/test_component_library.py::test_reveal_is_visible_at_rest_with_no_js_or_scroll_dependency`.
+
+---
+
+## ERR-038 — Shorts' own visual redesign overshot into "not Apple style"; a required spoken bridge line was silently skipped
+**Date:** 2026-09-11 · **Severity:** major · **Status:** fixed · **Component:** `html_synth/vertical_assembler.py`, `narration/short_generator.py`
+
+Two more real findings from the same shorts investigation, both user-reported directly
+against a rendered `short.html`:
+
+1. **"weird big font", "not apple style"** — my own first pass at filling the empty space
+   (ERR-037's real cause, not yet found at the time) overcorrected: 52px bold prose, four
+   different rainbow accent colors (one per segment), and a giant 640px low-opacity
+   background numeral. Real Apple pages use size contrast between an actual headline and
+   body copy, not uniform 52px-bold paragraphs, and one consistent accent color throughout
+   (the source's own `--blue:#0071e3` used everywhere), never a different hue per section.
+   **Fix:** dialed back to 36px/weight 600 prose, one consistent `var(--accent)` label
+   color, watermark removed entirely.
+2. **"no mention of subscribe channel in the end"** — a real generated short had
+   `bridge.mode="SPOKEN"` (A2s correctly decided a follow-up line belonged here) but the
+   actual payoff narration had no such line at all. Root cause: `narration/short_generator.py`'s
+   own opening framing ("no reserved subscribe slot -- there is no narrative room for any
+   of that") is a blanket rule stated BEFORE the later conditional instruction, and
+   evidently dominated the model's behavior even when `bridge.mode` explicitly called for
+   one. **Fix:** rewrote the payoff-segment instructions to break out all four `bridge.mode`
+   values explicitly, marking the SPOKEN case's follow-up sentence as REQUIRED with a
+   concrete example, and rescoped the opening "don't invent one" framing to the other three
+   modes only.
+**Tests:** `tests/html_synth/test_vertical_assembler.py` (existing diagram/font tests still
+green against the dialed-back CSS), `tests/narration/test_short_generator.py::test_prompt_requires_a_spoken_bridge_line_when_mode_is_spoken`.
+
+---
+
 ## Open items (not yet bugs, flagged for future attention)
 
 - **V1B's HV static checks are now the full plan §13 list** (updated 2026-09-11; the note

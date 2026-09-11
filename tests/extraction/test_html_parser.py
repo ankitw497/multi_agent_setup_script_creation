@@ -64,10 +64,43 @@ def test_production_notes_survive_page_footer_chrome_stripping():
     assert "0:00" in unit.text
 
 
+def test_plain_source_with_no_hero_header_produces_no_hook_unit():
+    result = parse_html(FIXTURES / "guide_sample.html")
+    assert "hook" not in {u.id for u in result.units}
+
+
+def test_hero_header_is_extracted_as_its_own_unit():
+    """Real gap found 2026-09-11 (user-reported: the generated hook was
+    generic while the source's own hook used a concrete minimal-pair
+    example). `<header class="hero">` sits BEFORE any `<section
+    class="section">`, so every profile's `section.select("section.section")`
+    walk was structurally blind to it -- the same shape of gap already fixed
+    once for `.page-footer` (test_production_notes_survive_page_footer_
+    chrome_stripping). It must now survive as its own leading unit."""
+    result = parse_html(FIXTURES / "guide_sample_with_hero_hook.html")
+    assert result.units[0].id == "hook"
+    assert result.units[0].heading == 'How does "it" know to look back at "cat"?'
+    assert "too tired" in result.units[0].text
+    # the section content that follows the header must still be present too
+    assert any(u.id == "intro" for u in result.units)
+
+
 REAL_SOURCE = (
     Path(__file__).parent.parent.parent
     / "project" / "attention_series" / "input" / "video-01-attention-coherent-story.html"
 )
+
+
+def test_real_source_hero_header_carries_the_concrete_hook_example():
+    """The real regression this fix exists for: the source's own hook is a
+    concrete minimal-pair example ("tired" vs "steep" changes what "it"
+    refers to) that a generic paraphrase can never recover once it's
+    silently missing from every downstream A1/A2 payload."""
+    result = parse_html(REAL_SOURCE)
+    hooks = [u for u in result.units if u.id == "hook"]
+    assert len(hooks) == 1
+    assert "too tired" in hooks[0].text
+    assert "too steep" in hooks[0].text
 
 
 def test_real_source_production_notes_carry_the_build_archetype_signal():
@@ -83,8 +116,10 @@ def test_real_source_production_notes_carry_the_build_archetype_signal():
     assert "Problem" in text
     assert "Score creates a new problem" in text
     assert "Payoff and Part 2 bridge" in text
-    # the 11 numbered sections must still be present alongside the new unit
-    assert len(result.units) == 12
+    # the 11 numbered sections plus the hero-hook unit must still be present
+    # alongside this one (2026-09-11: 12 -> 13 once the hero header stopped
+    # being silently skipped too -- see test_hero_header_is_extracted_as_its_own_unit)
+    assert len(result.units) == 13
 
 
 def test_js_literals_are_extracted_and_attached_to_the_result():

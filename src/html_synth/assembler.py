@@ -15,7 +15,7 @@ import json
 from narration.models import SceneNarration
 from planning.models import StoryPlan
 
-from .component_library import BASE_STYLESHEET, REVEAL_SCRIPT, css_tokens, escape_script_json, render_component
+from .component_library import BASE_STYLESHEET, css_tokens, escape_script_json, render_component
 from .synthesizer import BeatVisual, HeroContent, SceneVisual
 
 _SECTION_WRAP_CLASSES = ("sec-wrap", "sec-alt")
@@ -89,7 +89,6 @@ def _render_page(
         f"<style>{css_tokens()}\n{BASE_STYLESHEET}</style>\n"
         "</head>\n<body>\n"
         f"{hero_html}\n{beats_html}\n{narration_block}\n"
-        f"<script>{REVEAL_SCRIPT}</script>\n"
         "</body>\n</html>\n"
     )
 

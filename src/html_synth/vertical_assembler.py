@@ -39,13 +39,14 @@ body{{background:#111;}}
 .short-page{{max-width:{VERTICAL_WIDTH}px;margin:0 auto;}}
 .short-screen{{width:{VERTICAL_WIDTH}px;height:{VERTICAL_HEIGHT}px;margin-bottom:24px;position:relative;
   background:var(--bg2);overflow:hidden;display:flex;flex-direction:column;justify-content:center;}}
-.short-safe-content{{padding:{SAFE_TOP}px 64px {SAFE_BOTTOM}px;box-sizing:border-box;height:100%;
-  display:flex;align-items:center;}}
-.short-label{{position:absolute;top:24px;left:32px;font-size:15px;color:var(--text3);
-  text-transform:uppercase;letter-spacing:0.08em;}}
-.short-prose{{font-size:38px;line-height:1.4;color:var(--text);font-family:var(--sans);font-weight:600;letter-spacing:-0.5px;}}
+.short-safe-content{{position:relative;padding:{SAFE_TOP}px 64px {SAFE_BOTTOM}px;box-sizing:border-box;
+  height:100%;display:flex;align-items:center;}}
+.short-label{{display:inline-block;font-size:11px;font-weight:600;text-transform:uppercase;
+  letter-spacing:0.1em;color:var(--accent);background:var(--bg3);
+  padding:6px 14px;border-radius:20px;position:absolute;top:32px;left:32px;}}
+.short-prose{{font-size:36px;line-height:1.5;color:var(--text);font-family:var(--sans);font-weight:600;letter-spacing:-0.3px;}}
 .short-visual{{font-family:'JetBrains Mono','SF Mono',monospace;font-size:20px;line-height:1.8;color:var(--text2);
-  text-align:center;white-space:pre-wrap;margin-bottom:28px;padding:16px 12px;background:var(--bg3);border-radius:var(--r-sm);}}
+  text-align:center;white-space:pre-wrap;margin-bottom:28px;padding:18px 16px;background:var(--bg3);border-radius:var(--r-sm);}}
 """
 
 
@@ -79,7 +80,7 @@ def _render_screen(segment: str, prose: str, include_metadata: bool, diagram: st
 
 
 def synthesize_short_html(plan: ShortPlan, narration: list[SceneNarration]) -> str:
-    from .component_library import BASE_STYLESHEET, REVEAL_SCRIPT, css_tokens, escape_script_json
+    from .component_library import BASE_STYLESHEET, css_tokens, escape_script_json
 
     narration_by_id = {n.scene_id: n for n in narration}
     diagram = _dominant_object_flow(plan)
@@ -106,6 +107,5 @@ def synthesize_short_html(plan: ShortPlan, narration: list[SceneNarration]) -> s
         f"<style>{css_tokens()}\n{BASE_STYLESHEET}\n{VERTICAL_STYLESHEET}</style>\n"
         "</head>\n<body>\n"
         f'<div class="short-page">{screens_html}</div>\n{narration_block}\n'
-        f"<script>{REVEAL_SCRIPT}</script>\n"
         "</body>\n</html>\n"
     )
