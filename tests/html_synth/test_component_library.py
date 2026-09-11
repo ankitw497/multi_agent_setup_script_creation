@@ -1,8 +1,10 @@
 """Tests for html_synth/component_library.py -- the channel component library (plan §7)."""
 import pytest
 
+import json
+
 from html_synth.component_library import (
-    all_component_ids, components_for_story_role, css_tokens, render_component,
+    all_component_ids, components_for_story_role, css_tokens, escape_script_json, render_component,
 )
 
 
@@ -115,3 +117,18 @@ def test_all_component_ids_covers_every_role_in_the_plan_table():
     ds = _design_system()
     referenced = {cid for role_components in ds["story_roles"].values() for cid in role_components}
     assert referenced.issubset(set(all_component_ids()))
+
+
+def test_escape_script_json_neutralizes_script_close_tag():
+    raw = json.dumps({"text": "the </script> tag"})
+    escaped = escape_script_json(raw)
+    assert "</script" not in escaped
+    assert json.loads(escaped.replace("<\\/", "</")) == json.loads(raw)
+
+
+def test_escape_script_json_round_trips_via_real_json_slash_escape():
+    """The mitigation relies on JSON permitting an optional \\/ escape for
+    '/' -- confirm json.loads() actually accepts and decodes it back."""
+    raw = json.dumps({"text": "a/b</script>c"})
+    escaped = escape_script_json(raw)
+    assert json.loads(escaped) == {"text": "a/b</script>c"}

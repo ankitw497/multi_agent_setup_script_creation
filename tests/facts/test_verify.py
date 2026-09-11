@@ -3,6 +3,7 @@ from facts.models import Claim, NumericClaim
 from facts.verify import (
     ClaimVerdict, ClaimVerdicts, verify_claims, verify_claims_with_llm, verify_numeric_linked_claims,
 )
+from facts.web_evidence import WebSearchResult
 
 
 def make_claim(claim_id, text="x", numbers=None, claim_type="numeric") -> Claim:
@@ -112,6 +113,74 @@ def test_batches_claims_by_batch_size():
                                       __import__("pathlib").Path("/nonexistent"), batch_size=2)
     assert len(review_lead.calls) == 3
     assert len(result) == 5
+
+
+# ---- web_backend fallback (plan §17, V1B) ----------------------------------------
+
+class FakeWebBackend:
+    def __init__(self, results: list[WebSearchResult]):
+        self._results = results
+        self.queries = []
+
+    def search(self, query: str, limit: int = 3) -> list[WebSearchResult]:
+        self.queries.append(query)
+        return self._results
+
+
+def test_web_backend_is_never_tried_when_local_evidence_already_fulfilled(tmp_path):
+    """Local references always go first -- the web is a fallback, never a
+    replacement (plan §17's own ordering)."""
+    (tmp_path / "spec.md").write_text("The A100 has 2039 GB/s of memory bandwidth.")
+    claims = [make_claim("C001", "The A100 has 2039 GB/s of memory bandwidth.", claim_type="implementation")]
+    review_lead = FakeReviewLead([
+        ClaimVerdicts(verdicts=[ClaimVerdict(
+            claim_id="C001", verification_status="UNVERIFIED", reasoning="can't confirm",
+            needs_evidence="A100 memory bandwidth spec 2039 GB/s",
+        )]),
+        ClaimVerdicts(verdicts=[ClaimVerdict(claim_id="C001", verification_status="VERIFIED", reasoning="confirmed")]),
+    ])
+    web_backend = FakeWebBackend([WebSearchResult(title="x", snippet="x", url="https://en.wikipedia.org/wiki/x")])
+    from llm.budget import BudgetCounter, DEFAULT_TIERS
+
+    verify_claims_with_llm(claims, review_lead, BudgetCounter(tier=DEFAULT_TIERS["longform"]), tmp_path, web_backend=web_backend)
+    assert web_backend.queries == []  # local evidence already fulfilled it -- web never queried
+
+
+def test_web_backend_is_tried_for_requests_local_evidence_could_not_fulfil(tmp_path):
+    claims = [make_claim("C001", "Attention scales scores by sqrt of dimension.", claim_type="mechanism")]
+    review_lead = FakeReviewLead([
+        ClaimVerdicts(verdicts=[ClaimVerdict(
+            claim_id="C001", verification_status="UNVERIFIED", reasoning="can't confirm",
+            needs_evidence="attention scaling by sqrt of dimension",
+        )]),
+        ClaimVerdicts(verdicts=[ClaimVerdict(claim_id="C001", verification_status="VERIFIED", reasoning="confirmed by web reference")]),
+    ])
+    web_backend = FakeWebBackend([
+        WebSearchResult(title="Attention scaling", snippet="attention scaling by sqrt of dimension", url="https://en.wikipedia.org/wiki/x"),
+    ])
+    from llm.budget import BudgetCounter, DEFAULT_TIERS
+
+    result = verify_claims_with_llm(
+        claims, review_lead, BudgetCounter(tier=DEFAULT_TIERS["longform"]), tmp_path, web_backend=web_backend,
+    )
+    assert web_backend.queries == ["attention scaling by sqrt of dimension"]
+    assert result[0].verification_status == "VERIFIED"
+    assert result[0].evidence[0].kind == "EXTERNAL_REFERENCE"
+
+
+def test_no_web_backend_given_keeps_v1a_exact_local_only_behavior(tmp_path):
+    claims = [make_claim("C001", claim_type="implementation")]
+    review_lead = FakeReviewLead([
+        ClaimVerdicts(verdicts=[ClaimVerdict(
+            claim_id="C001", verification_status="UNVERIFIED", reasoning="can't confirm",
+            needs_evidence="something with no local reference",
+        )]),
+    ])
+    from llm.budget import BudgetCounter, DEFAULT_TIERS
+
+    result = verify_claims_with_llm(claims, review_lead, BudgetCounter(tier=DEFAULT_TIERS["longform"]), tmp_path)
+    assert len(review_lead.calls) == 1  # no web_backend given -- exact V1A behavior, no 2nd call
+    assert result[0].verification_status == "UNVERIFIED"
 
 
 def test_a_claim_the_model_never_returned_a_verdict_for_is_not_silently_dropped():

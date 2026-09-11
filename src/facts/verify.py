@@ -23,6 +23,7 @@ from llm.budget import BudgetCounter
 from .evidence import fulfil_evidence_requests
 from .models import Claim, EvidenceRequest, NumericClaim, VerificationEvidence
 from .normalize import normalize_number
+from .web_evidence import WebSearchBackend, fulfil_evidence_requests_via_web
 
 DEFAULT_BATCH_SIZE = 40  # claims per LLM call; V1A sources fit in one batch
 
@@ -135,12 +136,18 @@ def _apply_verdict(claim: Claim, verdict: ClaimVerdict, evidence: list[Verificat
 def verify_claims_with_llm(
     claims: list[Claim], review_lead: Agent, budget: BudgetCounter,
     references_dir: Path, batch_size: int = DEFAULT_BATCH_SIZE,
+    web_backend: WebSearchBackend | None = None,
 ) -> list[Claim]:
     """The LLM path for claims arithmetic can't settle. Runs the two-pass
     evidence loop: verdicts -> evidence requests -> broker -> re-verdict on
     whatever was actually found. If nothing was found, nothing is re-asked
     (no wasted call) and those claims stay UNVERIFIED with their request
-    visible for the report (plan §6.5)."""
+    visible for the report (plan §6.5).
+
+    `web_backend` (plan §17, V1B) is tried only for requests local
+    `references_dir` couldn't fulfil -- local evidence is free and instant,
+    so it always goes first; the web is a fallback, not a replacement.
+    Omit it (the default) to keep V1A's exact local-only behavior."""
     resolved: dict[str, Claim] = {}
     pending_requests: list[EvidenceRequest] = []
     claims_by_id = {c.claim_id: c for c in claims}
@@ -162,6 +169,10 @@ def verify_claims_with_llm(
 
     if pending_requests:
         fulfilled = fulfil_evidence_requests(pending_requests, references_dir)
+        if web_backend is not None:
+            still_pending = [r for r in pending_requests if r.claim_id not in fulfilled]
+            if still_pending:
+                fulfilled = {**fulfilled, **fulfil_evidence_requests_via_web(still_pending, web_backend)}
         if fulfilled:
             re_verify_batch = [claims_by_id[cid] for cid in fulfilled if cid in claims_by_id]
             payload = {
@@ -185,10 +196,13 @@ def verify_claims_with_llm(
 
 def verify_claims(
     claims: list[Claim], numeric_claims: list[NumericClaim], review_lead: Agent,
-    budget: BudgetCounter, references_dir: Path,
+    budget: BudgetCounter, references_dir: Path, web_backend: WebSearchBackend | None = None,
 ) -> list[Claim]:
     """The full C2a entry point: arithmetic first, LLM for the rest."""
     arithmetic_resolved, remaining = verify_numeric_linked_claims(claims, numeric_claims)
-    llm_resolved = verify_claims_with_llm(remaining, review_lead, budget, references_dir) if remaining else []
+    llm_resolved = (
+        verify_claims_with_llm(remaining, review_lead, budget, references_dir, web_backend=web_backend)
+        if remaining else []
+    )
     by_id = {c.claim_id: c for c in arithmetic_resolved + llm_resolved}
     return [by_id.get(c.claim_id, c) for c in claims]

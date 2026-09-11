@@ -620,18 +620,79 @@ subscription lane).
 
 ---
 
+## ERR-030 — Embedded narration JSON could break out of its `<script>` block
+**Date:** 2026-09-11 · **Severity:** major (real security gap, never actually triggered by live content) · **Status:** fixed · **Component:** `html_synth/assembler.py`, `html_synth/vertical_assembler.py`
+
+Found while writing a security-conscious test for the new vertical shorts template, not
+live: `<script id="narration-data" type="application/json">{narration_json}</script>` embeds
+the canonical narration text verbatim. `<script>` content is normally never HTML-parsed
+(unlike every other tag, which is why component slots are HTML-escaped and this text
+deliberately isn't) -- EXCEPT that the raw byte sequence `</script` always closes the tag
+regardless of what a JS/JSON string literal contains. Real narration text can legitimately
+contain that exact substring (a sentence discussing HTML tags, "the `</script>` tag", etc.),
+which would otherwise terminate the block early and let the remainder of the JSON -- or an
+attacker-supplied sentence riding along with it -- render as live page markup.
+
+**Fix:** `html_synth/component_library.py::escape_script_json()` replaces `"</"` with
+`"<\\/"` before embedding -- the standard mitigation: valid JSON permits escaping `/`
+optionally, so `JSON.parse()` still decodes it back to `</` correctly, while the HTML parser
+no longer recognizes a closing tag. Applied at the embed site only, never to the value
+`narration_hash()` computes (which must stay byte-identical to the real `narration.json`
+file written to disk).
+**Tests:** a real DOM-parse-based regression test in both `test_assembler.py` and
+`test_vertical_assembler.py` (confirms no `<img>` ELEMENT is ever parsed, not just a
+substring search, since the raw exploit text legitimately still appears as inert data
+inside the now-correctly-closed script block) plus two direct unit tests for
+`escape_script_json` itself.
+
+---
+
+## ERR-031 — `check_payoff_closes` too unreliable for a mechanical word-match, downgraded
+**Date:** 2026-09-11 · **Severity:** open finding, not a code bug in the content itself · **Status:** fixed (by removing it from the hard gate, not by chasing a threshold) · **Component:** `verification/hard/render.py`
+
+Live validation of the new content-level HV checks against the real, C2a-verified
+attention-series output surfaced this twice, on two separate live H regenerations of the
+*same* source:
+
+1. First run: the final scene correctly bridged to "Part 2" via `ending.next_video_bridge`
+   ("explore alternative attention mechanisms...") rather than restating
+   `capstone_payoff`/`compressed_mental_model` -- both are valid endings per
+   `EndingContract`'s own shape (the bridge field exists specifically for a series that
+   continues). Fixed by including `next_video_bridge` in the comparison text.
+2. Second run, same source, freshly regenerated (H is non-deterministic): a differently
+   -worded but equally valid bridge sentence ("teams are testing different bets on how much
+   ... can be approximated or skipped...") STILL scored below threshold against the one-
+   sentence `next_video_bridge` summary, because the two texts are topically related but
+   share almost no literal vocabulary -- an LLM is free to reword a bridge however it
+   likes each time, and a mechanical word-overlap check can't reliably follow that the way
+   it can for a title/hook/central-topic restatement (which naturally repeats the same key
+   terms).
+
+**Not fixed by relaxing the threshold** -- that would be chasing one observed run, the exact
+anti-pattern this project already ruled out for ERR-010's word-budget problem. Instead,
+`check_payoff_closes` is kept as a real, tested, available function but removed from
+`check_render_content`'s hard-gate aggregate: "does the payoff genuinely close the story" is
+a genuine semantic judgment call, better suited to a cheap LLM check (C1-style) than a
+mechanical proxy, when this gets built out further.
+**Tests:** `tests/verification/hard/test_render_content.py::test_ending_on_a_next_video_bridge_is_clean_not_a_false_positive`
+locks in the first fix; the function itself remains fully unit-tested for future reuse.
+
+---
+
 ## Open items (not yet bugs, flagged for future attention)
 
-- **V1B's HV static checks are a deterministic subset, not the full plan §13 list.**
-  `verification/hard/render.py` covers what's clean-cut and checkable without a
-  calibration decision: parsing, unique ids, scene presence/order, narration-hash match,
-  numeric-claim-id traceability, and text-level page parity. NOT yet built: the
-  reader-standalone word-count-band gate and `renderer_compat`'s claim-backed-word
-  threshold (both need a real calibration decision -- the plan's ~2,000-3,200 band is
-  tuned to that channel's own samples, and the real v09 output happened to land at 3,218
-  words, suggestively close but not yet a basis for picking a threshold) and deictic
-  reference resolution (needs real NLP, not pattern matching). All rendered checks
-  (Playwright, clipping, contrast, C3) are V1C by design, not a V1B gap.
+- **V1B's HV static checks are now the full plan §13 list** (updated 2026-09-11; the note
+  below is superseded). `verification/hard/render.py` covers parsing, unique ids, scene
+  presence/order, narration-hash match, numeric-claim-id traceability, text-level page
+  parity, `renderer_compat` (Gate 1: >=3 sections, >=1,500 words), the reader-standalone
+  word-count band (2,000-3,200, the plan's own stated figure, used as written), every scene
+  carrying real prose, hero-states-the-problem, and a narrow deictic-reference check. All
+  rendered checks (Playwright, clipping, contrast, C3) remain V1C by design, not a V1B gap.
+  One check (`check_payoff_closes`) was built, live-tested, and then deliberately excluded
+  from the hard gate -- see ERROR_LOG ERR-031. The reader-standalone band is a real,
+  legitimately strict gate in practice: two live runs on the same source landed at 3,212 and
+  3,240 words, both right at or just over the 3,200 cap -- correctly flagged both times, not
+  a check bug; V1D may still recalibrate the band once more channels' real output exists.
 - **`review_lead` and `cm_agent` share one `agent` name in cost reporting.**
   `make_review_lead()` always sets `Agent.name="review_lead"` regardless of tier, so
   `cost_report.json`'s `by_agent` breakdown blends strong-tier C1/C2b spend together

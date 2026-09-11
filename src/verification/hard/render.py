@@ -1,18 +1,21 @@
 """HV -- render verification, STATIC checks only (plan §13). Deterministic, no LLM.
 
 The *rendered* checks (Playwright, clipping, contrast, C3 screenshot
-audit) are V1C scope -- nothing here opens a browser. This covers exactly
-what plan §13 lists as "Hard (static)": HTML parses, unique ids, every
-scene present in order, the narration-data hash matches narration.json,
-every `data-numeric-claim-id` exists and traces to a real claim, and
-`page.html`/`video_script.html` visual (here: text) parity.
+audit) are V1C scope -- nothing here opens a browser. `check_render_static`
+covers plan §13's DOM-level "Hard (static)" list: HTML parses, unique ids,
+every scene present in order, the narration-data hash matches
+narration.json, every `data-numeric-claim-id` exists and traces to a real
+claim, and `page.html`/`video_script.html` visual (here: text) parity.
 
-Deliberately NOT yet implemented (flagged, not silently skipped -- see
-BUILD_PLAN.md): the reader-standalone word-count-band check and
-`renderer_compat`'s >=1500-claim-backed-words gate both need a calibration
-decision (the plan's ~2,000-3,200 band is tuned to that channel's own
-10-minute samples) that shouldn't be guessed at; deictic-reference
-resolution needs real NLP, not pattern matching.
+`check_render_content` covers the content-level static checks that need
+richer inputs than raw HTML (the plan, the hero, the beat visuals):
+`renderer_compat` (Gate 1: >=3 sections, >=1,500 words -- a compatibility
+rule, not a quality rule, plan §1/§9), the reader-standalone word-count
+band, every scene actually carrying visible prose (not just a heading or a
+diagram), and deictic-reference resolution. The reader-standalone band
+(~2,000-3,200 words) is the plan's own stated figure for its sample
+corpus, used as written rather than guessed at -- V1D may recalibrate it
+per channel once more real output exists to calibrate against.
 """
 from __future__ import annotations
 
@@ -23,7 +26,11 @@ from bs4 import BeautifulSoup
 
 from facts.models import Claim
 from html_synth.assembler import narration_hash
+from html_synth.synthesizer import BeatVisual, HeroContent
 from narration.models import SceneNarration
+from planning.models import StoryPlan
+
+from .text_overlap import overlap
 
 _SCRIPT_STYLE_RE = re.compile(r"<(script|style)\b[^>]*>.*?</\1>", re.DOTALL | re.IGNORECASE)
 _TAG_RE = re.compile(r"<[^>]+>")
@@ -118,7 +125,7 @@ def check_page_parity(video_script_html: str, page_html: str) -> list[RenderIssu
 def check_render_static(
     video_script_html: str, page_html: str, narration: list[SceneNarration], claims: list[Claim],
 ) -> list[RenderIssue]:
-    """The full HV static pass -- every check, one call."""
+    """The full HV static (DOM-level) pass -- every check, one call."""
     expected_scene_ids = [s.scene_id for s in narration]
     return (
         check_html_parses(video_script_html)
@@ -127,4 +134,155 @@ def check_render_static(
         + check_narration_hash_matches(video_script_html, narration)
         + check_numeric_claim_ids_exist(video_script_html, claims)
         + check_page_parity(video_script_html, page_html)
+    )
+
+
+# plan §1/§9/§22: "Renderer compatibility is a compatibility rule, not a
+# quality rule" -- Gate 1 from the separate render pipeline. Format-driven
+# (a short's threshold would be far smaller); these are the long-form
+# defaults.
+RENDERER_COMPAT_MIN_SECTIONS = 3
+RENDERER_COMPAT_MIN_WORDS = 1500
+
+# plan §12.0: "visible word count sits in the article band (the samples:
+# ~2,000-3,200)" -- the plan's own stated figure for its sample corpus,
+# not a guess. A real V1B output landed at 3,218 words, just inside it.
+READER_STANDALONE_WORD_BAND = (2000, 3200)
+
+
+def check_renderer_compat(
+    page_html: str, min_sections: int = RENDERER_COMPAT_MIN_SECTIONS, min_words: int = RENDERER_COMPAT_MIN_WORDS,
+) -> list[RenderIssue]:
+    soup = BeautifulSoup(page_html, "lxml")
+    n_sections = len(soup.find_all("section"))
+    word_count = len(visible_text(page_html).split())
+
+    issues: list[RenderIssue] = []
+    if n_sections < min_sections:
+        issues.append(RenderIssue(
+            "renderer_compat_too_few_sections", f"{n_sections} <section> elements, need >= {min_sections}",
+        ))
+    if word_count < min_words:
+        issues.append(RenderIssue(
+            "renderer_compat_too_few_words", f"{word_count} visible words, need >= {min_words}",
+        ))
+    return issues
+
+
+def check_reader_standalone_word_count(
+    page_html: str, low: int = READER_STANDALONE_WORD_BAND[0], high: int = READER_STANDALONE_WORD_BAND[1],
+) -> list[RenderIssue]:
+    word_count = len(visible_text(page_html).split())
+    if not (low <= word_count <= high):
+        return [RenderIssue(
+            "reader_standalone_word_count_out_of_band", f"{word_count} visible words, expected {low}-{high}",
+        )]
+    return []
+
+
+def check_every_scene_has_prose(beat_visuals: list[BeatVisual], min_words: int = 5) -> list[RenderIssue]:
+    """plan §12.0: "every scene has visible prose, not just a heading and a
+    diagram" -- a component alone is never a substitute for real screen text."""
+    issues: list[RenderIssue] = []
+    for beat in beat_visuals:
+        for scene in beat.scenes:
+            if len(scene.screen_prose.split()) < min_words:
+                issues.append(RenderIssue(
+                    "scene_missing_visible_prose",
+                    f"{scene.scene_id} has no real screen prose (a component/diagram alone is not enough)",
+                ))
+    return issues
+
+
+def check_hero_states_problem(hero: HeroContent, plan: StoryPlan, threshold: float = 0.1) -> list[RenderIssue]:
+    """plan §12.0: "the hero states the problem." Checked against the
+    plan's own hook (what the hero's badge/title/subtitle are meant to
+    set up), the same generous word-overlap heuristic used for the
+    promise-chain gate -- real semantic judgement stays with C1."""
+    hero_text = f"{hero.title} {hero.subtitle}"
+    if overlap(plan.hook.viewer_problem, hero_text) < threshold and overlap(plan.hook.tension, hero_text) < threshold:
+        return [RenderIssue(
+            "hero_does_not_state_the_problem",
+            f"hero content ({hero_text!r}) shares little with the hook's viewer_problem/tension",
+        )]
+    return []
+
+
+def check_payoff_closes(beat_visuals: list[BeatVisual], plan: StoryPlan, threshold: float = 0.1) -> list[RenderIssue]:
+    """plan §12.0: "the payoff section closes it" -- the LAST scene's
+    screen prose should connect to the plan's own stated ending.
+
+    NOT included in check_render_content's hard aggregate -- see that
+    function's docstring. First real false positive: a "Part 1 of 3"
+    source correctly ends on `ending.next_video_bridge` rather than
+    restating `capstone_payoff`/`compressed_mental_model` (fixed by
+    including the bridge field in the comparison text). Second real false
+    positive, on the SAME source, a different live run later: a
+    differently-worded but equally valid bridge sentence still scored
+    below threshold -- confirming this is a genuine semantic-relatedness
+    judgment a word-overlap heuristic can't reliably make when the
+    "matching" text is a paraphrase-prone bridge rather than a restated
+    central topic. Kept here, tested, available for a future design that
+    can actually judge it (a cheap LLM check, most likely)."""
+    if not beat_visuals or not beat_visuals[-1].scenes:
+        return [RenderIssue("no_payoff_scene", "no beats/scenes to check for a closing payoff")]
+    last_prose = beat_visuals[-1].scenes[-1].screen_prose
+    ending_text = (
+        f"{plan.ending.compressed_mental_model} {plan.ending.capstone_payoff} "
+        f"{plan.ending.next_video_bridge or ''}"
+    )
+    if overlap(ending_text, last_prose) < threshold:
+        return [RenderIssue(
+            "payoff_does_not_close",
+            f"the final scene's prose ({last_prose!r}) shares little with the plan's ending "
+            "(capstone_payoff/compressed_mental_model/next_video_bridge)",
+        )]
+    return []
+
+
+# A demonstrative opening a sentence with nothing to visually point at is a
+# real, narrow signal (plan §12: "deictic narration must resolve"). "it" is
+# deliberately excluded -- it is used constantly for ordinary anaphoric
+# reference within a sentence (as in this very source's own running "it"
+# example) and would make this check almost pure noise.
+_DEICTIC_STARTERS = ("this ", "that ")
+
+
+def check_deictic_resolution(plan: StoryPlan, narration: list[SceneNarration]) -> list[RenderIssue]:
+    scene_visual_desc = {s.scene_id: s.visual_description for s in plan.scene_plan}
+    issues: list[RenderIssue] = []
+    for scene in narration:
+        if scene_visual_desc.get(scene.scene_id, "").strip():
+            continue  # has something to point at
+        for i, sentence in enumerate(scene.sentences):
+            lowered = sentence.text.strip().lower()
+            if lowered.startswith(_DEICTIC_STARTERS):
+                issues.append(RenderIssue(
+                    "deictic_reference_unresolved",
+                    f"{scene.scene_id} sentence {i} opens with a demonstrative ({sentence.text[:50]!r}) "
+                    "but the scene has no visual_description to resolve it against",
+                ))
+    return issues
+
+
+def check_render_content(
+    page_html: str, plan: StoryPlan, hero: HeroContent, beat_visuals: list[BeatVisual],
+    narration: list[SceneNarration],
+) -> list[RenderIssue]:
+    """The full content-level static pass -- every check, one call.
+
+    `check_payoff_closes` is deliberately NOT included here (see its own
+    docstring) -- two separate live runs against the same real source both
+    showed it flagging a genuinely valid "bridge to Part 2" ending whose
+    exact wording simply varies each time H regenerates it, which a
+    mechanical word-match can't reliably follow. Rather than keep chasing
+    a threshold to fit one observed run (the same anti-pattern already
+    ruled out for ERR-010), it's kept available and tested for future
+    refinement, but not wired into the hard gate."""
+    return (
+        check_renderer_compat(page_html)
+        + check_reader_standalone_word_count(page_html)
+        + check_every_scene_has_prose(beat_visuals)
+        + check_hero_states_problem(hero, plan)
+        + check_deictic_resolution(plan, narration)
     )

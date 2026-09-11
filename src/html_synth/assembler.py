@@ -15,7 +15,7 @@ import json
 from narration.models import SceneNarration
 from planning.models import StoryPlan
 
-from .component_library import BASE_STYLESHEET, REVEAL_SCRIPT, css_tokens, render_component
+from .component_library import BASE_STYLESHEET, REVEAL_SCRIPT, css_tokens, escape_script_json, render_component
 from .synthesizer import BeatVisual, HeroContent, SceneVisual
 
 _SECTION_WRAP_CLASSES = ("sec-wrap", "sec-alt")
@@ -75,7 +75,7 @@ def _render_page(
 
     narration_block = ""
     if include_metadata:
-        narration_json = json.dumps([n.model_dump() for n in narration])
+        narration_json = escape_script_json(json.dumps([n.model_dump() for n in narration]))
         narration_block = (
             f'<script id="narration-data" type="application/json" '
             f'data-narration-hash="{narration_hash(narration)}">{narration_json}</script>'

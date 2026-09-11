@@ -99,6 +99,26 @@ def test_html_special_characters_in_prose_are_escaped():
     assert "x < y & y > z" not in vs
 
 
+def test_narration_containing_script_close_tag_cannot_break_out_of_the_script_block():
+    """Real gap found while writing the vertical-shorts equivalent of this
+    test: narration text containing the literal substring "</script>"
+    (e.g. a sentence discussing HTML tags) would otherwise close the
+    embedded narration-data <script> block early and let the rest of the
+    JSON render as a real, parsed <img> ELEMENT rather than inert script
+    text. Checked via a real DOM parse, not a substring search -- the raw
+    text "<img...>" legitimately still appears as inert data INSIDE the
+    (correctly, still-closed) script block; what matters is that it never
+    becomes an actual element."""
+    from bs4 import BeautifulSoup
+
+    narration = [SceneNarration(scene_id="s1", sentences=[
+        SentenceNarration(text="the </script><img src=x onerror=alert(1)> tag", sentence_type="transition"),
+    ])]
+    vs, _ = synthesize_page(make_plan(), HeroContent(), make_beat_visuals(), narration)
+    assert "<\\/script" in vs
+    assert BeautifulSoup(vs, "lxml").find("img") is None
+
+
 def test_title_appears_in_the_page_title_tag():
     vs, _ = synthesize_page(make_plan(title="My Video Title"), HeroContent(), make_beat_visuals(), make_narration())
     assert "<title>My Video Title</title>" in vs

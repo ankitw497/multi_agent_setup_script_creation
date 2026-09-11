@@ -13,11 +13,13 @@ before the payoff -- no separate check exists for that reason.
 """
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 
 from narration.models import SceneNarration
 from planning.shorts_models import ShortPlan
+
+from .text_overlap import DEFAULT_OVERLAP_THRESHOLD
+from .text_overlap import overlap as _overlap
 
 MAX_SHORT_SECONDS = 62.0  # plan §20.4: 60s hard cap; +2s slack since V1A-S measures an
                            # ESTIMATE, not the measured duration V1C will eventually gate on
@@ -26,25 +28,7 @@ MAX_SHORT_SECONDS = 62.0  # plan §20.4: 60s hard cap; +2s slack since V1A-S mea
 # verification/hard/structure.py's promise-chain gate -- title~hook~payoff
 # alignment is genuinely a semantic judgement; this is a mechanical proxy
 # for "these are clearly unrelated", not real understanding.
-TITLE_ALIGNMENT_THRESHOLD = 0.15
-
-_STOPWORDS = {
-    "a", "an", "the", "to", "of", "and", "or", "in", "on", "for", "with", "this", "that",
-    "you", "your", "is", "are", "it", "its", "be", "can", "will", "how", "what", "why",
-    "not", "but", "so", "as", "at", "by", "from", "into", "than", "then", "their",
-}
-
-
-def _content_words(text: str) -> set[str]:
-    words = re.findall(r"[a-z0-9']+", text.lower())
-    return {w for w in words if w not in _STOPWORDS and len(w) > 2}
-
-
-def _overlap(a: str, b: str) -> float:
-    wa, wb = _content_words(a), _content_words(b)
-    if not wa or not wb:
-        return 0.0
-    return len(wa & wb) / min(len(wa), len(wb))
+TITLE_ALIGNMENT_THRESHOLD = DEFAULT_OVERLAP_THRESHOLD
 
 
 @dataclass

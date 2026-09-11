@@ -14,7 +14,7 @@ from html_synth.assembler import synthesize_page
 from html_synth.synthesizer import BeatVisual, HeroContent, synthesize_beat_visual, synthesize_hero
 from narration.models import SceneNarration
 from planning.models import StoryPlan
-from verification.hard.render import RenderIssue, check_render_static
+from verification.hard.render import RenderIssue, check_render_content, check_render_static
 
 
 @dataclass
@@ -32,7 +32,10 @@ def synthesize_video_html(
     hero = synthesize_hero(plan, narration_lead)
     beat_visuals = [synthesize_beat_visual(beat, plan, claims, narration_lead) for beat in plan.beats]
     video_script_html, page_html = synthesize_page(plan, hero, beat_visuals, narration)
-    render_issues = check_render_static(video_script_html, page_html, narration, claims)
+    render_issues = (
+        check_render_static(video_script_html, page_html, narration, claims)
+        + check_render_content(page_html, plan, hero, beat_visuals, narration)
+    )
     return HtmlSynthesisResult(
         video_script_html=video_script_html, page_html=page_html,
         hero=hero, beat_visuals=beat_visuals, render_issues=render_issues,

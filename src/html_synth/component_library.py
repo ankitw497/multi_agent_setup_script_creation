@@ -125,6 +125,21 @@ def _esc(value: object) -> str:
     return html.escape(str(value), quote=False)
 
 
+def escape_script_json(json_text: str) -> str:
+    """Make a JSON string safe to embed inside a `<script>` tag's text
+    content. `<script>` content is normally never HTML-parsed (unlike
+    every other tag, which is why component slots use `_esc` above,
+    not this) -- EXCEPT that the raw byte sequence "</script" always
+    closes the tag regardless of what's inside a JS/JSON string literal.
+    Real narration text can legitimately contain that exact substring
+    (e.g. a sentence discussing HTML tags), which would otherwise break
+    out of the block. "</" -> "<\\/" is the standard mitigation: valid
+    JSON permits escaping "/" optionally, so `JSON.parse` still decodes
+    it back to "</" correctly, while the HTML parser no longer sees a
+    closing tag."""
+    return json_text.replace("</", "<\\/")
+
+
 def _render_grid_item(item: object) -> str:
     if isinstance(item, dict):
         return render_component("card", item)

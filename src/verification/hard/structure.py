@@ -10,11 +10,13 @@ plan totalling 460 words against a 1,670-word target).
 """
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 
 from planning.archetypes import get_archetype_spec
 from planning.models import StoryPlan
+
+from .text_overlap import DEFAULT_OVERLAP_THRESHOLD
+from .text_overlap import overlap as _promise_overlap
 
 PLANNING_WPM = 167
 WORD_BUDGET_TOLERANCE = 0.30  # generous -- LLMs are unreliable at exact aggregate sums; see module docstring
@@ -26,28 +28,7 @@ WORD_BUDGET_TOLERANCE = 0.30  # generous -- LLMs are unreliable at exact aggrega
 # not to penalize a hook/ending that pays off the same promise in different
 # words. False negatives here are fine (C1 can still judge this); false
 # positives on legitimate paraphrase would be worse than not having the gate.
-PROMISE_OVERLAP_THRESHOLD = 0.15
-
-_STOPWORDS = {
-    "a", "an", "the", "to", "of", "and", "or", "in", "on", "for", "with", "this", "that",
-    "you", "your", "is", "are", "it", "its", "be", "can", "will", "how", "what", "why",
-    "not", "but", "so", "as", "at", "by", "from", "into", "than", "then", "their",
-}
-
-
-def _content_words(text: str) -> set[str]:
-    words = re.findall(r"[a-z0-9']+", text.lower())
-    return {w for w in words if w not in _STOPWORDS and len(w) > 2}
-
-
-def _promise_overlap(a: str, b: str) -> float:
-    """Containment-style overlap (intersection / shorter phrase's word
-    count) -- matches the model's own docstring language ("title.promise
-    must be CONTAINED IN hook.promise"), not symmetric similarity."""
-    wa, wb = _content_words(a), _content_words(b)
-    if not wa or not wb:
-        return 0.0
-    return len(wa & wb) / min(len(wa), len(wb))
+PROMISE_OVERLAP_THRESHOLD = DEFAULT_OVERLAP_THRESHOLD
 
 
 @dataclass
