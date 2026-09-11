@@ -18,6 +18,8 @@ import subprocess
 import time
 from dataclasses import dataclass
 
+import tenacity
+
 from ..usage import usd_to_microusd
 
 _FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.MULTILINE)
@@ -55,7 +57,10 @@ class ClaudeCliBackend:
 
     lane = "subscription"
 
-    def __init__(self, cwd: str | None = None, timeout_s: int = 300):
+    def __init__(
+        self, cwd: str | None = None, timeout_s: int = 300,
+        max_attempts: int = 3, retry_wait_min_s: float = 1.0, retry_wait_max_s: float = 10.0,
+    ):
         # 300s default: a real 11-unit/~3300-word batched extraction call was
         # observed to exceed the previous 120s default (2026-09-10) -- larger
         # batched payloads over a complex schema legitimately take longer.
@@ -63,6 +68,14 @@ class ClaudeCliBackend:
         # default costs wall-clock, not money.
         self.cwd = cwd
         self.timeout_s = timeout_s
+        # max_attempts/retry_wait_* (2026-09-11): a real full pipeline run
+        # crashed on a transient `claude -p` exit-1 with empty stderr -- an
+        # immediate manual retry of the exact same call succeeded. Exposed
+        # as constructor params (not just hardcoded in call()) so tests can
+        # shrink the backoff to keep the default fast suite fast.
+        self.max_attempts = max_attempts
+        self.retry_wait_min_s = retry_wait_min_s
+        self.retry_wait_max_s = retry_wait_max_s
 
     def _build_env(self) -> dict[str, str]:
         env = dict(os.environ)
@@ -84,6 +97,25 @@ class ClaudeCliBackend:
 
     def call(
         self, model_id: str, system_prompt: str, user_payload: str, timeout_s: int | None = None,
+    ) -> CliCallResult:
+        """Retries a transient `claude -p` subprocess failure (a real, live
+        finding, 2026-09-11: a full pipeline run crashed on `exit 1` with
+        empty stderr -- an immediate manual retry of the exact same call
+        succeeded, confirming it was transient, not a real bug). Only
+        `ClaudeCliInvocationError` (non-zero exit, non-JSON stdout) is
+        retried -- `ModelMismatch` is a real, deterministic bug (the CLI
+        resolved a different model than requested) that retrying can never
+        fix, so it is never caught here."""
+        retrying = tenacity.Retrying(
+            stop=tenacity.stop_after_attempt(self.max_attempts),
+            retry=tenacity.retry_if_exception_type(ClaudeCliInvocationError),
+            wait=tenacity.wait_exponential(multiplier=1, min=self.retry_wait_min_s, max=self.retry_wait_max_s),
+            reraise=True,
+        )
+        return retrying(self._call_once, model_id, system_prompt, user_payload, timeout_s)
+
+    def _call_once(
+        self, model_id: str, system_prompt: str, user_payload: str, timeout_s: int | None,
     ) -> CliCallResult:
         env = self._build_env()
         assert "ANTHROPIC_API_KEY" not in env, "ANTHROPIC_API_KEY leaked into the subscription lane"

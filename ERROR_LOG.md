@@ -1099,6 +1099,34 @@ still fire exactly as before.
 
 ---
 
+## ERR-042 — The subscription lane (Claude CLI) had zero retry logic; the same class of gap as ERR-032, other side
+**Date:** 2026-09-11 · **Severity:** major (crashed a full real pipeline run) · **Status:** fixed · **Component:** `llm/backends/claude_cli.py` · **Live cost:** subscription quota only, no billed cost
+
+A second live full-pipeline run (validating ERR-041's fixes) crashed with `claude -p failed
+(exit 1):` and empty stderr, inside the Haiku repair path (`llm/repair.py`) that itself was
+trying to fix a malformed Gemini JSON response during CM's claim-mapping pass. Manually
+re-running the EXACT same `ClaudeCliBackend.call()` invocation immediately afterward
+succeeded, confirming the failure was transient (a one-off CLI hiccup), not a real bug —
+but `ClaudeCliBackend.call()` had no retry logic at all, so a single transient failure
+crashed the entire run. This is the same shape of gap ERR-032 already fixed for the paid
+API lane (`litellm`'s `num_retries`); the subscription lane was never given the equivalent.
+
+**Fix:** wrapped `ClaudeCliBackend.call()` in a `tenacity.Retrying` loop (3 attempts,
+exponential backoff, reusing the `tenacity` dependency already added for ERR-040) that
+retries only `ClaudeCliInvocationError` (non-zero exit, non-JSON stdout — the transient-
+shaped failures) and never `ModelMismatch` (a real, deterministic bug — the CLI resolved a
+different model than requested — that retrying can never fix, so it must surface on the
+first attempt, not be masked by identical failures first). `max_attempts`/
+`retry_wait_min_s`/`retry_wait_max_s` are constructor params (not hardcoded) specifically
+so tests can shrink the backoff instead of incurring real multi-second sleeps in the
+default fast suite — the two existing always-fails fixtures were updated to
+`max_attempts=1` for exactly this reason (their real slowdown, ~4s -> ~10s for the whole
+suite, is what caught this before it became a habit).
+**Tests:** `tests/llm/test_claude_cli_backend.py::test_a_transient_failure_is_retried_and_can_still_succeed`,
+`::test_a_deterministic_model_mismatch_is_never_retried`.
+
+---
+
 ## Open items (not yet bugs, flagged for future attention)
 
 - **V1B's HV static checks are now the full plan §13 list** (updated 2026-09-11; the note

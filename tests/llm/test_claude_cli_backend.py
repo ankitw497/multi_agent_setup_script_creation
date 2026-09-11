@@ -153,20 +153,69 @@ def test_resolved_model_mismatch_raises(monkeypatch):
 
 
 def test_nonzero_exit_raises_invocation_error(monkeypatch):
+    """max_attempts=1: this always-fails fixture would otherwise be retried
+    3x by default, which is correct in production but pointless (and slow)
+    for a test whose only point is confirming the failure surfaces."""
     monkeypatch.setattr(
         "subprocess.run",
         lambda *a, **kw: FakeCompletedProcess(returncode=1, stderr="boom"),
     )
-    backend = ClaudeCliBackend()
+    backend = ClaudeCliBackend(max_attempts=1)
     with pytest.raises(ClaudeCliInvocationError, match="boom"):
         backend.call("haiku", "system", "payload")
 
 
 def test_non_json_stdout_raises_invocation_error(monkeypatch):
     monkeypatch.setattr("subprocess.run", lambda *a, **kw: FakeCompletedProcess(stdout="not json"))
-    backend = ClaudeCliBackend()
+    backend = ClaudeCliBackend(max_attempts=1)
     with pytest.raises(ClaudeCliInvocationError, match="non-JSON"):
         backend.call("haiku", "system", "payload")
+
+
+def test_a_transient_failure_is_retried_and_can_still_succeed(monkeypatch):
+    """Real gap found live 2026-09-11: a full pipeline run crashed on one
+    `claude -p` exit-1 with empty stderr; an immediate manual retry of the
+    identical call succeeded, confirming it was transient. This backend
+    had no retry logic at all. wait_min/max are shrunk to keep this test
+    fast -- the retry COUNT and eventual success is what's being proven,
+    not real backoff timing."""
+    calls = {"n": 0}
+
+    envelope = make_envelope(model="claude-haiku-4-5-20251001", result="OK")
+
+    def flaky_run(*a, **kw):
+        calls["n"] += 1
+        if calls["n"] < 2:
+            return FakeCompletedProcess(returncode=1, stderr="transient hiccup")
+        return FakeCompletedProcess(stdout=json.dumps(envelope))
+
+    monkeypatch.setattr("subprocess.run", flaky_run)
+    backend = ClaudeCliBackend(max_attempts=3, retry_wait_min_s=0.01, retry_wait_max_s=0.01)
+
+    result = backend.call("claude-haiku-4-5-20251001", "system", "payload")
+
+    assert result.content == "OK"
+    assert calls["n"] == 2
+
+
+def test_a_deterministic_model_mismatch_is_never_retried(monkeypatch):
+    """ModelMismatch is a real, deterministic bug (the CLI resolved a
+    different model than requested) -- retrying can never fix it, so it
+    must surface on the very first attempt, not be masked by 3 identical
+    failures first."""
+    calls = {"n": 0}
+    envelope = make_envelope(model="claude-haiku-4-5-20251001")  # not the literal "haiku" alias
+
+    def always_wrong_model(*a, **kw):
+        calls["n"] += 1
+        return FakeCompletedProcess(stdout=json.dumps(envelope))
+
+    monkeypatch.setattr("subprocess.run", always_wrong_model)
+    backend = ClaudeCliBackend(max_attempts=3, retry_wait_min_s=0.01, retry_wait_max_s=0.01)
+
+    with pytest.raises(ModelMismatch):
+        backend.call("haiku", "system", "payload")
+    assert calls["n"] == 1
 
 
 @pytest.mark.integration
