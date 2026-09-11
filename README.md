@@ -28,6 +28,15 @@ pip install -e ".[dev,render]"
 python3 -m playwright install chromium
 ```
 
+Shorts' measured-duration gate uses `edge-tts` (Microsoft Edge's free,
+keyless TTS service, `en-IN-PrabhatNeural` voice) — only required for
+that gate; it degrades visibly (falls back to the WPM estimate) rather
+than crashing a run if unavailable:
+
+```bash
+pip install -e ".[dev,tts]"
+```
+
 ## Running tests
 
 ```bash

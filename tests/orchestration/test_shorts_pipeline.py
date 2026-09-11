@@ -4,6 +4,8 @@ Single-pass by design (no A3/B2 revision loop for shorts in V1A-S -- see
 module docstring). Uses a schema-dispatching FakeAgent, same pattern as
 the long-form pipeline tests.
 """
+import pytest
+
 from narration.short_generator import GeneratedShortNarration
 from orchestration.shorts_pipeline import ShortsPipelineAgents, run_short
 from planning.shorts_models import HookEvent, ShortParent, ShortPlan
@@ -72,21 +74,21 @@ def make_budget():
 
 def test_a_clean_short_passes():
     agents = make_agents()
-    result = run_short(make_plan(), [], agents, make_budget())
+    result = run_short(make_plan(), [], agents, make_budget(), enable_tts_preview=False)
     assert result.final_status == "PASS"
     assert result.hard_failures == []
 
 
 def test_missing_parent_reference_fails():
     agents = make_agents()
-    result = run_short(make_plan(parent=None), [], agents, make_budget(), require_parent=True)
+    result = run_short(make_plan(parent=None), [], agents, make_budget(), require_parent=True, enable_tts_preview=False)
     assert result.final_status == "FAIL"
     assert any("missing_parent_reference" in f for f in result.hard_failures)
 
 
 def test_missing_parent_is_fine_for_a_standalone_short():
     agents = make_agents()
-    result = run_short(make_plan(parent=None), [], agents, make_budget(), require_parent=False)
+    result = run_short(make_plan(parent=None), [], agents, make_budget(), require_parent=False, enable_tts_preview=False)
     assert result.final_status == "PASS"
 
 
@@ -97,7 +99,7 @@ def test_critical_micro_arc_issue_becomes_a_hard_failure():
         "repair_owner": "story_lead",
     }
     agents = make_agents(review_responses={"c1s": [ShortCritique(issues=[critical_issue])]})
-    result = run_short(make_plan(), [], agents, make_budget())
+    result = run_short(make_plan(), [], agents, make_budget(), enable_tts_preview=False)
     assert result.final_status == "FAIL"
     assert any("micro_arc" in f for f in result.hard_failures)
 
@@ -113,14 +115,14 @@ def test_major_cold_hook_issue_does_not_force_a_hard_failure():
             "repair_owner": "story_lead",
         }])]},
     )
-    result = run_short(make_plan(), [], agents, make_budget())
+    result = run_short(make_plan(), [], agents, make_budget(), enable_tts_preview=False)
     assert result.final_status == "PASS"
     assert len(result.issues) == 1
 
 
 def test_clean_cold_hook_never_escalates():
     agents = make_agents(cold_hook_haiku=ColdHookVerdict(flagged=False, confidence="high"))
-    run_short(make_plan(), [], agents, make_budget())
+    run_short(make_plan(), [], agents, make_budget(), enable_tts_preview=False)
     # ColdHookCritique schema registered but never popped -- confirms no escalation call happened
     assert agents.review_agent._queues[ColdHookCritique] == [ColdHookCritique(issues=[])]
 
@@ -129,7 +131,7 @@ def test_grounding_scope_violation_is_a_hard_failure():
     agents = make_agents(review_responses={"cm": [ClaimMapperOutput(sentences=[
         {"scene_id": "payoff", "sentence_index": 0, "grounding_required": True, "grounding_refs": ["C999"]},
     ])]})
-    result = run_short(make_plan(), [], agents, make_budget())
+    result = run_short(make_plan(), [], agents, make_budget(), enable_tts_preview=False)
     assert result.final_status == "FAIL"
     assert any("claim_outside_allowed_fact_set" in f for f in result.hard_failures)
 
@@ -147,8 +149,68 @@ def test_cm_and_c2b_never_see_a_claim_outside_the_allowed_scope():
         Claim(claim_id="C001", source_unit="u1", claim="in scope", type="mechanism"),
         Claim(claim_id="C999", source_unit="u9", claim="out of scope", type="mechanism"),
     ]
-    run_short(make_plan(), claims, agents, make_budget())  # parent.allowed_fact_ids == ["C001"]
+    run_short(make_plan(), claims, agents, make_budget(), enable_tts_preview=False)  # parent.allowed_fact_ids == ["C001"]
 
     cm_call = agents.review_agent.calls[0]  # CM is always the first review_agent call
     offered_ids = {c["claim_id"] for c in cm_call["payload"]["claim_registry"]}
     assert offered_ids == {"C001"}
+
+
+def test_enable_tts_preview_false_is_an_explicit_opt_out_not_a_degradation():
+    agents = make_agents()
+    result = run_short(make_plan(), [], agents, make_budget(), enable_tts_preview=False)
+    assert result.degraded_capabilities == []
+    assert result.measured_duration_seconds is None
+    assert result.preview_audio is None
+
+
+def test_a_successful_tts_synthesis_is_used_for_the_duration_gate_not_the_estimate(monkeypatch):
+    from voice.tts_preview import TtsPreviewResult
+
+    def fake_synthesize(text, voice=None):
+        return TtsPreviewResult(audio_bytes=b"fake-mp3-bytes", measured_duration_seconds=42.0)
+
+    import voice.tts_preview as tts_preview_module
+    monkeypatch.setattr(tts_preview_module, "synthesize_narration_preview", fake_synthesize)
+
+    agents = make_agents()
+    result = run_short(make_plan(), [], agents, make_budget())
+
+    assert result.measured_duration_seconds == 42.0
+    assert result.preview_audio == b"fake-mp3-bytes"
+    assert result.degraded_capabilities == []
+
+
+def test_a_tts_synthesis_failure_degrades_visibly_and_falls_back_to_the_estimate(monkeypatch):
+    """A real network/service failure must never crash the run -- it
+    degrades visibly (recorded, caps status at PASS_WARN) and falls back
+    to the WPM estimate for the duration gate."""
+    import voice.tts_preview as tts_preview_module
+
+    def failing_synthesize(text, voice=None):
+        raise RuntimeError("simulated: edge-tts service unreachable")
+
+    monkeypatch.setattr(tts_preview_module, "synthesize_narration_preview", failing_synthesize)
+
+    agents = make_agents()
+    result = run_short(make_plan(), [], agents, make_budget())
+
+    assert result.measured_duration_seconds is None
+    assert result.preview_audio is None
+    assert any("synthesis failed" in d for d in result.degraded_capabilities)
+    assert result.final_status != "PASS"  # degraded caps at PASS_WARN at best
+
+
+@pytest.mark.integration
+def test_live_tts_preview_produces_real_audio_and_a_measured_duration():
+    """The one real end-to-end check: a real short run with the real
+    edge-tts call enabled, confirming actual audio and a plausible
+    measured duration come back (not just that the wiring calls a mock)."""
+    agents = make_agents()
+    result = run_short(make_plan(), [], agents, make_budget(), enable_tts_preview=True)
+
+    assert result.degraded_capabilities == []
+    assert result.preview_audio is not None
+    assert len(result.preview_audio) > 1000
+    assert result.measured_duration_seconds is not None
+    assert result.measured_duration_seconds > 0

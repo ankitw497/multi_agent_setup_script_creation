@@ -59,12 +59,31 @@ def check_title_hook_payoff_alignment(plan: ShortPlan) -> list[ShortHardIssue]:
 
 
 def check_duration_estimate(narration: list[SceneNarration]) -> list[ShortHardIssue]:
+    """The WPM-based fallback, used only when a real TTS measurement isn't
+    available (degraded -- see check_measured_duration, the V1C gate this
+    was always meant to be superseded by)."""
     total_seconds = sum(s.est_seconds for s in narration)
     if total_seconds > MAX_SHORT_SECONDS:
         return [ShortHardIssue(
             "duration_estimate_exceeds_max",
             f"estimated {total_seconds:.1f}s exceeds the {MAX_SHORT_SECONDS:.0f}s cap "
-            "(plan §20.4; V1A-S measures an estimate, not yet a measured duration)",
+            "(plan §20.4; an ESTIMATE -- TTS measurement was unavailable for this run)",
+        )]
+    return []
+
+
+# No +2s slack here, unlike the estimate cap -- this is the real measured
+# duration (edge-tts's own SentenceBoundary timing, plan §17/§20.4/V1C),
+# not an approximation with its own error margin to buffer against.
+MAX_MEASURED_SHORT_SECONDS = 60.0
+
+
+def check_measured_duration(measured_seconds: float) -> list[ShortHardIssue]:
+    if measured_seconds > MAX_MEASURED_SHORT_SECONDS:
+        return [ShortHardIssue(
+            "measured_duration_exceeds_max",
+            f"measured {measured_seconds:.1f}s (real TTS audio) exceeds the "
+            f"{MAX_MEASURED_SHORT_SECONDS:.0f}s cap (plan §20.4)",
         )]
     return []
 
@@ -98,12 +117,26 @@ def check_grounding_scope(narration: list[SceneNarration], plan: ShortPlan) -> l
 
 def check_short_structure(
     plan: ShortPlan, narration: list[SceneNarration], require_parent: bool = True,
+    measured_duration_seconds: float | None = None,
 ) -> list[ShortHardIssue]:
-    """The full short-profile hard-check pass -- every check, one call."""
+    """The full short-profile hard-check pass -- every check, one call.
+
+    `measured_duration_seconds` (V1C) is the real TTS-measured duration,
+    when available -- it REPLACES the WPM estimate rather than adding to
+    it (a short only ever gets one duration gate, never scored against
+    both). `None` means TTS was unavailable for this run (a recorded
+    degradation upstream, not silently ignored) -- the estimate is the
+    honest fallback, not a first choice.
+    """
+    duration_issues = (
+        check_measured_duration(measured_duration_seconds)
+        if measured_duration_seconds is not None
+        else check_duration_estimate(narration)
+    )
     return (
         check_central_insight_present(plan)
         + check_title_hook_payoff_alignment(plan)
-        + check_duration_estimate(narration)
+        + duration_issues
         + check_parent_reference(plan, require_parent)
         + check_grounding_scope(narration, plan)
     )

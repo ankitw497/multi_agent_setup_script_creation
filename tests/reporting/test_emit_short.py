@@ -31,3 +31,19 @@ def test_short_plan_json_round_trips(tmp_path):
     data = json.loads((short_dir / "short_plan.json").read_text())
     assert data["title"] == "t"
     assert data["micro_arc"] == "problem_fix"
+
+
+def test_no_preview_mp3_when_tts_never_ran(tmp_path):
+    """result.preview_audio is None (degraded or opted out) -- absence of
+    the file is accurate, not a bug to paper over."""
+    short_dir = emit_short_deliverables(make_result(), tmp_path / "shorts" / "1")
+    assert not (short_dir / "preview.mp3").exists()
+
+
+def test_preview_mp3_is_written_when_tts_succeeded(tmp_path):
+    result = make_result()
+    result.preview_audio = b"fake-mp3-bytes"
+
+    short_dir = emit_short_deliverables(result, tmp_path / "shorts" / "1")
+
+    assert (short_dir / "preview.mp3").read_bytes() == b"fake-mp3-bytes"

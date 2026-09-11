@@ -36,7 +36,7 @@ from review.short_critic import critique_short
 from verification.diagnostics.shorts import check_short_diagnostics
 from verification.hard.shorts import check_short_structure
 
-from .policy_gate import FinalStatus, compute_final_status
+from .policy_gate import FinalStatus, apply_editorial_downgrade, compute_final_status
 
 
 @dataclass
@@ -55,11 +55,25 @@ class ShortRunResult:
     diagnostics: list[DiagnosticResult]
     final_status: FinalStatus
     log: list[str] = field(default_factory=list)
+    preview_audio: bytes | None = None  # V1C: real TTS audio, when synthesis succeeded
+    measured_duration_seconds: float | None = None
+    degraded_capabilities: list[str] = field(default_factory=list)
+
+
+_SEGMENT_ORDER = ("hook", "setup", "mechanism", "payoff")
+
+
+def _narration_script_text(narration: list[SceneNarration]) -> str:
+    by_id = {n.scene_id: n for n in narration}
+    return " ".join(
+        " ".join(s.text for s in by_id[seg].sentences)
+        for seg in _SEGMENT_ORDER if seg in by_id
+    )
 
 
 def run_short(
     plan: ShortPlan, claims: list[Claim], agents: ShortsPipelineAgents, budget: BudgetCounter,
-    require_parent: bool = True,
+    require_parent: bool = True, enable_tts_preview: bool = True,
 ) -> ShortRunResult:
     log: list[str] = []
 
@@ -86,7 +100,29 @@ def run_short(
         plan.title, hook_text, plan.hook.visual or "", agents.worker, agents.review_agent, budget,
     )
 
-    hard = check_short_structure(plan, narration, require_parent=require_parent)
+    # V1C: a real TTS measurement replaces the WPM estimate for the duration
+    # gate. Never crashes the run if unavailable -- a genuinely missing
+    # capability degrades visibly (plan §14) and falls back to the estimate,
+    # it does not fail the whole short.
+    preview_audio: bytes | None = None
+    measured_duration_seconds: float | None = None
+    degraded_capabilities: list[str] = []
+    if enable_tts_preview:
+        try:
+            from voice.tts_preview import synthesize_narration_preview
+
+            preview = synthesize_narration_preview(_narration_script_text(narration))
+            preview_audio = preview.audio_bytes
+            measured_duration_seconds = preview.measured_duration_seconds
+            log.append(f"TTS preview: measured {measured_duration_seconds:.1f}s")
+        except ImportError:
+            degraded_capabilities.append("tts_preview: edge-tts not installed")
+        except Exception as e:  # noqa: BLE001 -- a real network/service failure must degrade, never crash the run
+            degraded_capabilities.append(f"tts_preview: synthesis failed ({e})")
+
+    hard = check_short_structure(
+        plan, narration, require_parent=require_parent, measured_duration_seconds=measured_duration_seconds,
+    )
     diagnostics = check_short_diagnostics(plan, narration)
 
     hard_failures = [f"{i.code}: {i.detail}" for i in hard]
@@ -98,9 +134,13 @@ def run_short(
     log.append(f"review: {len(hard_failures)} hard failures, {len(critique_issues)} issues")
 
     status = compute_final_status(hard_failures=hard_failures, diagnostics=diagnostics, revision_budget_remaining=False)
+    if degraded_capabilities:
+        status = apply_editorial_downgrade(status, "PASS_WARN")
     log.append(f"final status: {status}")
 
     return ShortRunResult(
         plan=plan, narration=narration, hard_failures=hard_failures,
         issues=critique_issues, diagnostics=diagnostics, final_status=status, log=log,
+        preview_audio=preview_audio, measured_duration_seconds=measured_duration_seconds,
+        degraded_capabilities=degraded_capabilities,
     )

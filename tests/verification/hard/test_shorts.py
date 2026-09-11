@@ -2,9 +2,9 @@
 from narration.models import SceneNarration, SentenceNarration
 from planning.shorts_models import HookEvent, ShortParent, ShortPlan
 from verification.hard.shorts import (
-    MAX_SHORT_SECONDS, check_central_insight_present, check_duration_estimate,
-    check_grounding_scope, check_parent_reference, check_short_structure,
-    check_title_hook_payoff_alignment,
+    MAX_MEASURED_SHORT_SECONDS, MAX_SHORT_SECONDS, check_central_insight_present,
+    check_duration_estimate, check_grounding_scope, check_measured_duration,
+    check_parent_reference, check_short_structure, check_title_hook_payoff_alignment,
 )
 
 
@@ -75,6 +75,51 @@ def test_duration_over_the_cap_is_flagged():
 def test_duration_right_at_the_cap_is_clean():
     narration = [scene("payoff", [], est_seconds=MAX_SHORT_SECONDS)]
     assert check_duration_estimate(narration) == []
+
+
+# ---- measured duration (V1C: real TTS, replaces the estimate) --------------
+
+def test_measured_duration_within_cap_is_clean():
+    assert check_measured_duration(45.0) == []
+
+
+def test_measured_duration_over_the_cap_is_flagged():
+    issues = check_measured_duration(65.0)
+    assert len(issues) == 1
+    assert issues[0].code == "measured_duration_exceeds_max"
+
+
+def test_measured_duration_right_at_the_cap_is_clean():
+    assert check_measured_duration(MAX_MEASURED_SHORT_SECONDS) == []
+
+
+def test_measured_duration_has_no_slack_unlike_the_estimate_cap():
+    """The estimate cap (MAX_SHORT_SECONDS) has +2s slack for its own
+    margin of error; a real measurement doesn't need that buffer."""
+    assert MAX_MEASURED_SHORT_SECONDS < MAX_SHORT_SECONDS
+
+
+def test_short_structure_uses_the_measured_duration_when_given_not_the_estimate():
+    """A short whose ESTIMATE would fail but whose REAL measured duration
+    passes must come back clean -- the measurement replaces the estimate,
+    it doesn't get checked in addition to it."""
+    plan = make_plan()
+    narration = [scene("hook", [], est_seconds=30.0), scene("payoff", [], est_seconds=40.0)]  # estimate: 70s, over cap
+
+    issues = check_short_structure(plan, narration, measured_duration_seconds=45.0)
+
+    assert not any(i.code in ("duration_estimate_exceeds_max", "measured_duration_exceeds_max") for i in issues)
+
+
+def test_short_structure_falls_back_to_the_estimate_when_no_measurement_given():
+    """measured_duration_seconds=None (TTS unavailable, a recorded
+    degradation upstream) -- the honest fallback, not silently clean."""
+    plan = make_plan()
+    narration = [scene("hook", [], est_seconds=30.0), scene("payoff", [], est_seconds=40.0)]
+
+    issues = check_short_structure(plan, narration, measured_duration_seconds=None)
+
+    assert any(i.code == "duration_estimate_exceeds_max" for i in issues)
 
 
 # ---- parent reference ---------------------------------------------------------
