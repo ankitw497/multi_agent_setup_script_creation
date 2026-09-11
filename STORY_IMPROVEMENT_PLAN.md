@@ -696,14 +696,23 @@ B2 (both comparison runs ran it twice). This is the most likely mechanism behind
 issues that never clear across revision rounds, and a plausible one for the confirmed
 `dog/park/bone` running-example drift.
 
-- [ ] **See BUG-1 above for the exact payload shape and fix.** `editing/targeted_rewrite.py` —
-      add `scene_function`, `new_concepts`, `must_not_repeat`
-      per scene and the shared `running_example` to B2's payload, matching what
-      `narration/generator.py` already sends; extend B2's `TASK_PROMPT` with the same
-      compress-don't-re-derive and reuse-the-locked-example rules B1 already carries
-- [ ] Unit test: B2's payload carries the ledger fields (FakeAgent-based, mirroring
-      `tests/narration/test_generator.py::test_passes_scene_function_new_concepts_and_must_not_repeat_per_scene`)
-- [ ] Regression test: a scene rewritten by B2 does not lose its `scene_function`/`must_not_repeat`
+- [x] **Fixed 2026-09-11 (see BUG-1 above for the original shape).** `editing/targeted_rewrite.py` —
+      added `scene_function`, `new_concepts`, `must_not_repeat` per scene and the shared
+      `running_example` to B2's payload, matching what `narration/generator.py` already sends;
+      extended B2's `TASK_PROMPT` with the same compress-don't-re-derive and
+      reuse-the-locked-example rules B1 already carries. No signature change needed (`scene`
+      and `plan` were both already in scope) -- payload- and prompt-only.
+- [x] Unit tests: `tests/editing/test_targeted_rewrite.py` --
+      `test_scene_function_new_concepts_and_must_not_repeat_reach_a_rewrite`,
+      `test_running_example_reaches_a_rewrite`,
+      `test_prompt_instructs_the_same_scene_function_and_running_example_rules_as_b1`,
+      `test_prompt_has_no_hardcoded_topic_vocabulary` (overfitting guard, matching Phase 3's
+      precedent)
+- [x] `.venv/bin/python3 -m pytest -q` green (748 passed, up from 744)
+- [ ] **Live-verify**: a real run where A3 routes to `TARGETED_REWRITE` for a scene tagged
+      `scene_function=derivation`; confirm the rewritten scene still doesn't re-derive its
+      `must_not_repeat` concepts, and that a scene touching the locked `running_example`
+      still reuses its exact values after rewrite -- not yet run
 
 ### 8.2 — No cold-viewer critique exists for long-form at all
 

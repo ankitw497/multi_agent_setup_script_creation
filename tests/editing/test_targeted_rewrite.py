@@ -11,12 +11,13 @@ from editing.targeted_rewrite import apply_targeted_rewrite
 from narration.generator import GeneratedNarration
 from narration.models import SceneNarration, SentenceNarration
 from planning.models import (
-    CTAContract, EndingContract, HookContract, ScenePlan, StoryBeat, StoryPlan, TitleContract,
+    CTAContract, EndingContract, HookContract, RunningExample, ScenePlan, StoryBeat, StoryPlan,
+    TitleContract,
 )
 
 
-def make_plan() -> StoryPlan:
-    return StoryPlan(
+def make_plan(**overrides) -> StoryPlan:
+    base = dict(
         archetype="build", selection_reason="x", story_promise="x", central_question="x",
         title=TitleContract(chosen="t", promise="p"),
         hook=HookContract(viewer_problem="x", tension="y", promise="z"),
@@ -30,6 +31,8 @@ def make_plan() -> StoryPlan:
             ScenePlan(scene_id="s3", beat_id="B02", word_budget=40),
         ],
     )
+    base.update(overrides)
+    return StoryPlan(**base)
 
 
 def make_narration() -> list[SceneNarration]:
@@ -145,3 +148,62 @@ def test_uses_pass_id_b2_and_targeted_rewrite_mode():
     call = narration_lead.calls[0]
     assert call["pass_id"] == "B2"
     assert call["mode"] == "TARGETED_REWRITE"
+
+
+def test_scene_function_new_concepts_and_must_not_repeat_reach_a_rewrite():
+    """BUG-1 fix (STORY_IMPROVEMENT_PLAN.md Phase 8.1): a rewritten scene
+    must still carry the Viewer Knowledge Ledger fields B1 already gets --
+    otherwise a targeted rewrite can silently reintroduce a repetition the
+    original draft correctly avoided."""
+    plan = make_plan(scene_plan=[
+        ScenePlan(
+            scene_id="s1", beat_id="B01", word_budget=40,
+            scene_function="derivation", new_concepts=["scaling"], must_not_repeat=["Q/K/V roles"],
+        ),
+        ScenePlan(scene_id="s2", beat_id="B01", word_budget=40),
+        ScenePlan(scene_id="s3", beat_id="B02", word_budget=40),
+    ])
+    narration_lead = FakeNarrationLead(GeneratedNarration(scenes=[
+        {"scene_id": "s1", "sentences": [{"text": "rewritten", "sentence_type": "transition"}]},
+    ]))
+    revision_plan = RevisionPlan(run_id="r", rewrite_beats=[RewriteBeat(beat_id="B01", reason="x", intent="tighten")])
+
+    apply_targeted_rewrite(plan, make_narration(), [], revision_plan, narration_lead)
+
+    payload_scene = next(s for s in narration_lead.calls[0]["payload"]["scenes"] if s["scene_id"] == "s1")
+    assert payload_scene["scene_function"] == "derivation"
+    assert payload_scene["new_concepts"] == ["scaling"]
+    assert payload_scene["must_not_repeat"] == ["Q/K/V roles"]
+
+
+def test_running_example_reaches_a_rewrite():
+    plan = make_plan(running_example=RunningExample(label="trophy/suitcase", values={"trophy": "9.6"}))
+    narration_lead = FakeNarrationLead(GeneratedNarration(scenes=[
+        {"scene_id": "s1", "sentences": [{"text": "x", "sentence_type": "transition"}]},
+    ]))
+    revision_plan = RevisionPlan(run_id="r", rewrite_beats=[RewriteBeat(beat_id="B01", reason="x", intent="y")])
+
+    apply_targeted_rewrite(plan, make_narration(), [], revision_plan, narration_lead)
+
+    payload = narration_lead.calls[0]["payload"]
+    assert payload["running_example"]["label"] == "trophy/suitcase"
+    assert payload["running_example"]["values"] == {"trophy": "9.6"}
+
+
+def test_prompt_instructs_the_same_scene_function_and_running_example_rules_as_b1():
+    from editing.targeted_rewrite import TASK_PROMPT
+
+    assert "scene_function" in TASK_PROMPT
+    assert "must_not_repeat" in TASK_PROMPT
+    assert "running_example" in TASK_PROMPT
+
+
+def test_prompt_has_no_hardcoded_topic_vocabulary():
+    """Overfitting guard (STORY_IMPROVEMENT_PLAN.md's own Phase 3 precedent):
+    this prompt runs on every future video's revision cycles regardless of
+    topic -- must not bake in attention/Q-K-V-specific example language."""
+    from editing.targeted_rewrite import TASK_PROMPT
+
+    lowered = TASK_PROMPT.lower()
+    for term in ("q/k/v", "softmax", "multi-head", "q asks", "k matches", "v carries"):
+        assert term not in lowered, f"found topic-specific term {term!r} in a generic per-video prompt"
