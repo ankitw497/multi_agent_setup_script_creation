@@ -68,7 +68,7 @@ certain first:
 | 5 | ~~Reject regressing revision cycles + narrow B2's blast radius~~ [x] done, live-verified | 8.5 | Stops the loop making things worse; cheap guard |
 | 6 | ~~C3 also reviews H's screen prose~~ [x] code+tests done, live-verify pending | 6 | A whole artifact currently has zero critique coverage |
 | 7 | ~~Typed formula/numeric state validators~~ [x] code+tests done, live-verify pending | 6 | Fixes the confirmed raw-vs-scaled and dropped-`√d_k` class of bug |
-| 8 | A2b neighbor contract | 5 | Improves transitions; larger change than the above |
+| 8 | ~~A2b neighbor contract~~ [x] code+tests done, live-verify pending | 5 | Improves transitions; larger change than the above |
 | 9 | Airtime by narrative role, not source volume | 7 | Real fix for section bloat, but touches allocation for every run |
 | 10 | Build C4c mid-video cold viewer | 8.2 | New module; do after the cheap retention wins land |
 
@@ -470,21 +470,23 @@ mechanism), and `ScenePlan.word_budget` (existing budget field). Building a para
 callback-ID bookkeeping system risks drifting out of sync with these existing fields instead
 of using them. The leaner fix: thread the EXISTING fields through, don't invent new ones.
 
-- [ ] `planning/story_planner.py` — pass beat N-1 and N+1 (when they exist) into each
+- [x] `planning/story_planner.py` — pass beat N-1 and N+1 (when they exist) into each
       `expand_beat_scenes()` call in the existing per-beat loop
-- [ ] `planning/scene_expander.py` — accept `previous_beat`/`next_beat` (or `None`), add a
+- [x] `planning/scene_expander.py` — accept `previous_beat`/`next_beat` (or `None`), add a
       compact `neighbor_contract` to the payload built from their EXISTING fields (`purpose`,
-      `forward_driver`, `viewer_question_before`, `next_question`) -- no new schema. Also add
+      `forward_driver`, `viewer_question_before`, `next_question`) -- no new schema. Also added
       `central_question` (already on `StoryStructure`, just never passed here)
-- [ ] `planning/scene_expander.py` — extend `TASK_PROMPT`: this beat must leave the next
+- [x] `planning/scene_expander.py` — extended `TASK_PROMPT`: this beat must leave the next
       beat's own open question genuinely open -- do not resolve what a later beat is
       responsible for, even if it would be easy to add a sentence that does
-- [ ] `review/story_critic.py` — switch/extend the payload to include `plan.scene_plan`
-      (`scene_function`, `must_not_repeat`, `new_concepts`, `running_example`), not just
-      `plan.beats`
-- [ ] `review/story_critic.py` — extend the REPETITION check: when a scene's own
+- [x] `review/story_critic.py` — payload now includes `plan.scene_plan`
+      (`scene_function`, `must_not_repeat`, `new_concepts`) and `plan.running_example`,
+      alongside the existing `plan.beats`
+- [x] `review/story_critic.py` — extended the REPETITION check: when a scene's own
       `scene_function=derivation` lists a `must_not_repeat` concept and narration re-explains
-      it anyway, that is a confirmed plan-violation, not just a suspected repetition
+      it anyway, the prompt now instructs the critic to call it CONFIRMED (major+ severity),
+      not just a suspected repetition; added a sibling running-example-fidelity check (new
+      entities for the same locked illustration -> `category: repetition`)
 - [x] **Confirmed real, not hypothetical** (2026-09-11, visual audit of `runs/video-01-attention-model-a-gpt4o/v01`):
       rendered the real HTML with Playwright and read the screenshots directly. `hook_s01`,
       `origin_s01`, `matrix_s01`, `heads_s01`, `recap_s01` all correctly use the locked example
@@ -494,14 +496,17 @@ of using them. The leaner fix: thread the EXISTING fields through, don't invent 
       for this (only the known word-count band issue) -- confirms nothing today catches
       semantic example drift, only structural defects. See ERROR_LOG.md and Phase 6 below for
       the root cause this pointed to.
-- [ ] New check for running-example fidelity, now that the failure mode is confirmed real: best
-      done as a C1 judgment check (semantic equivalence isn't something a deterministic Python
-      check can fully verify), given `running_example` explicitly and asked to flag any scene
-      that introduces different named entities for the same underlying illustration
-- [ ] Unit tests: neighbor contract threading in `scene_expander.py`/`story_planner.py`
-      (first/last beat have `None` neighbors, correctly handled); `story_critic.py` payload
-      carries `scene_plan` fields
-- [ ] `.venv/bin/python3 -m pytest -q` green
+- [x] New check for running-example fidelity, now that the failure mode is confirmed real:
+      built as a C1 judgment check (semantic equivalence isn't something a deterministic
+      Python check can fully verify) -- see above, `running_example` is now given explicitly
+      and the prompt asks the critic to flag any scene that introduces different named
+      entities for the same underlying illustration
+- [x] Unit tests: neighbor contract threading in `tests/planning/test_scene_expander.py`
+      (isolated call) and `test_story_planner.py` (the real multi-beat loop via
+      `SequencedStoryLead` -- first/last beat correctly get `None` neighbors);
+      `tests/review/test_story_critic.py` (payload carries `scene_plan`/`running_example`;
+      prompt-content tests for both new checks plus the no-hardcoded-topic-vocabulary guard)
+- [x] `.venv/bin/python3 -m pytest -q` green (809 passed, up from 802)
 - [ ] **Live-verify**: a real run's A2b calls carry real neighbor context (inspect
       `usage.jsonl`/a captured payload); C1's `review_bundle.json` issues (if any) reference
       plan-intent violations specifically, not just independent text observations; running-
