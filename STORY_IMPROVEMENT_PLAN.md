@@ -203,17 +203,34 @@ description abstract).
       `gpt-5.6-sol` to `reasoning_effort: "medium"` + `max_tokens: 10000` explicitly. Also
       fixed a separate real gap found in the process: `reasoning_tokens` was extracted from
       the provider response but silently dropped before being logged to `usage.jsonl`.
-- [ ] Re-run the comparison with the fixed config (`video-01-attention-model-c-gpt56sol-tuned`,
-      in progress) -- this is the first comparison that actually tests story quality rather
-      than just rediscovering the config gap
-- [ ] Compare specifically for less structural redundancy / a tighter causal chain, **using
-      the Phase 1 ledger machinery** (all three runs have it available)
-- [ ] Decision: promote `gpt-5.6-sol` to the new `openai_story_strong` default **only if** the
-      live comparison shows a real difference — record the comparison result in `ERROR_LOG.md`
-      either way
-- [ ] Confirm no change to `narration_lead` (Sonnet, subscription lane — free, already strong;
+- [x] Re-ran the comparison with the fixed config (`video-01-attention-model-c-gpt56sol-tuned`)
+      -- the config fix worked: A2 produced a real plan (12 beats, 42 scenes) using only 820 of
+      its 10000-token ceiling on reasoning (confirmed via the newly-persisted
+      `reasoning_tokens` field), no truncation on any of the 12 A2b calls either
+- [x] **Quality comparison, using the Phase 1 ledger machinery on both**: `gpt-5.6-sol` (tuned)
+      ended FAIL with 3 hard failures, two of them a genuine story-architecture coherence
+      break `gpt-4o` didn't have -- `title_promise_unrelated_to_hook` (title and hook share
+      almost no content) and `hook_promise_unpaid_by_ending` (the hook's own promise is never
+      resolved by the ending) -- plus `cta.position` RED (CTA at 100% through the story) and
+      `pacing.hook_tension` RED (143s vs. the 30s target). `gpt-4o` ended FAIL with 1 hard
+      failure (a source-coverage gap, not a coherence break) after narrowing down from 2 across
+      2 revision rounds -- `gpt-5.6-sol` went from 2 hard failures up to 3 across its 2 rounds,
+      not down. C1's REPETITION check (Phase 3) did correctly fire on `gpt-5.6-sol`'s output too
+      (the same raw-score-to-weight arithmetic re-explained 3 times) -- the Phase 1-3
+      machinery works identically regardless of which model is under `story_lead`.
+- [x] **Cost**: `gpt-5.6-sol` (tuned) cost $1.0974 for the full run vs. `gpt-4o`'s $0.6645 --
+      65% more expensive.
+- [x] **Decision: do NOT promote `gpt-5.6-sol` to the default `openai_story_strong`.** The
+      config fix was worth keeping (it now works instead of catastrophically failing), but on
+      this real comparison it produced a structurally less coherent plan for 65% more cost --
+      the opposite of what the feedback doc predicted. Matches the plan's own explicit
+      criterion: promote only if the comparison shows a real improvement; it showed the
+      opposite. See ERROR_LOG.md for full detail. Re-evaluate later only if a specific,
+      different `reasoning_effort` (e.g. `"high"`) or prompt change is tried and separately
+      justified -- not on the strength of the model's name alone.
+- [x] Confirmed no change to `narration_lead` (Sonnet, subscription lane — free, already strong;
       Phase 1's richer input is the actual lever, not a model swap)
-- [ ] Confirm no change to claim extraction / fact verification / HTML generation tiers
+- [x] Confirmed no change to claim extraction / fact verification / HTML generation tiers
 
 ---
 
@@ -343,7 +360,7 @@ diagram entities... a render should fail validation if these diverge materially.
 
 ---
 
-## Final verification (Phases 1-3 done; Phases 4-6 still open)
+## Final verification (Phases 1-4 done; Phases 5-6 still open)
 
 - [x] `.venv/bin/python3 -m pytest -q` green throughout (checked after each phase; 744 passed
       as of the Phase 4 config fix, up from 689 before this work began)

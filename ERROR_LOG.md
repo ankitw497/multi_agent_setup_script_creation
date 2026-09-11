@@ -1317,6 +1317,48 @@ finding is real and reproducible, not because the defect is resolved yet.
 
 ---
 
+## Phase 4 conclusion: gpt-5.6-sol config fixed, but NOT adopted (2026-09-11)
+
+Three live runs total for this comparison, same real source
+(`video-01-attention-coherent-story.html`), `story_lead` on each model:
+
+1. `video-01-attention-model-b-gpt56sol` (unfixed config): catastrophic failure, `beats=0`,
+   ~$0.28 wasted -- see the earlier Phase 4 entry above.
+2. `video-01-attention-model-a-gpt4o` (baseline): worked properly -- 10 beats, 49 scenes,
+   narrowed from 2 hard failures down to 1 (a source-coverage gap, not a coherence defect)
+   across 2 revision rounds. Cost **$0.6645** for the full run.
+3. `video-01-attention-model-c-gpt56sol-tuned` (`reasoning_effort="medium"`,
+   `max_tokens=10000`): **the config fix worked** -- A2 produced a real 12-beat, 42-scene plan
+   using only 820 of its 10000-token ceiling on reasoning (confirmed via the newly-persisted
+   `reasoning_tokens` field: no truncation this time, on A2 or any of the 12 A2b calls).
+
+**But the quality comparison came out against adopting it.** Run 3 ended FAIL with 3 hard
+failures, two of them a genuine story-architecture coherence break `gpt-4o`'s run never had:
+
+- `title_promise_unrelated_to_hook` -- the title and hook share almost no content
+- `hook_promise_unpaid_by_ending` -- the hook's own promise is never resolved by the ending
+
+Plus `cta.position` RED (CTA landed at 100% through the story, not 20-40%) and
+`pacing.hook_tension` RED (143s vs. the 30s target -- worse than not measured at all, since
+this is exactly the defect the whole V2 fix exists to catch). Across its 2 revision rounds,
+hard failures went from 2 up to 3, not down -- `gpt-4o`'s run went from 2 down to 1 over the
+same 2 rounds. Phase 3's C1 REPETITION check did fire correctly on this run too (the same
+raw-score-to-weight arithmetic re-explained 3 times), confirming the V2 machinery works
+identically regardless of which model sits under `story_lead` -- the difference is real
+model-quality, not V2 wiring.
+
+**Cost**: Run 3 cost **$1.0974** for the full run -- 65% more than `gpt-4o`'s $0.6645.
+
+**Decision: `gpt-5.6-sol` is NOT promoted to the default `openai_story_strong`.** The exact
+opposite of the external feedback's prediction happened on this real test: worse story
+coherence, for significantly more money. The config fix (per-alias `max_tokens`,
+`reasoning_effort="medium"` pinned explicitly, `reasoning_tokens` visibility) is kept because
+it's independently correct and reusable, but the alias itself stays a documented, tested,
+available option -- not the default -- per `STORY_IMPROVEMENT_PLAN.md` Phase 4's own
+explicit "only if it demonstrably helps" criterion.
+
+---
+
 ## Open items (not yet bugs, flagged for future attention)
 
 - **A2b's per-beat expansion doesn't always self-track its own new concepts within one
