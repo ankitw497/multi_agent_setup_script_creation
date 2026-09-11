@@ -187,11 +187,27 @@ description abstract).
 
 **Fixes:** the feedback's model-allocation recommendation, grounded in this project's real config.
 
-- [ ] Run one live A2/A2b comparison on the same real source: `story_lead` on `gpt-4o`
-      (`openai_story_strong`, current default) vs. `gpt-5.6-sol` (`openai_story_strong_gpt56`,
-      already configured in `config/models.yaml`)
+- [x] Ran a live A2/A2b comparison on the same real source: `story_lead` on `gpt-4o`
+      (`openai_story_strong`, current default, `video-01-attention-model-a-gpt4o`) vs.
+      `gpt-5.6-sol` (`openai_story_strong_gpt56`, `video-01-attention-model-b-gpt56sol`)
+- [x] **Real finding**: `gpt-5.6-sol` with `reasoning_effort` unset and `max_tokens=4000`
+      (inherited from gpt-4o's own hardcoded A2 override) burned its ENTIRE ceiling on hidden
+      reasoning and returned an empty `StoryStructure` (`beats=0`) -- confirmed via
+      `litellm.model_cost["gpt-5.6-sol"]` that `max_tokens` is a combined reasoning+output
+      budget, not a separate reasoning allowance, and that `"medium"` is this model's own
+      provider default. Cost ~$0.28 wasted on two empty A2 calls, run ended FAIL. The
+      `gpt-4o` baseline worked properly (10 beats, 49 scenes, narrowed to 1 real hard failure
+      after 2 revision rounds) but did not reach a clean PASS either. See ERROR_LOG.md.
+- [x] Fixed the underlying config gap (not the same as adopting the alias): added per-alias
+      `max_tokens` support to `config/models.yaml`/`config/loader.py`/`agents/*.py`, pinned
+      `gpt-5.6-sol` to `reasoning_effort: "medium"` + `max_tokens: 10000` explicitly. Also
+      fixed a separate real gap found in the process: `reasoning_tokens` was extracted from
+      the provider response but silently dropped before being logged to `usage.jsonl`.
+- [ ] Re-run the comparison with the fixed config (`video-01-attention-model-c-gpt56sol-tuned`,
+      in progress) -- this is the first comparison that actually tests story quality rather
+      than just rediscovering the config gap
 - [ ] Compare specifically for less structural redundancy / a tighter causal chain, **using
-      the Phase 1 ledger machinery** (both runs should have it available)
+      the Phase 1 ledger machinery** (all three runs have it available)
 - [ ] Decision: promote `gpt-5.6-sol` to the new `openai_story_strong` default **only if** the
       live comparison shows a real difference — record the comparison result in `ERROR_LOG.md`
       either way
@@ -201,16 +217,75 @@ description abstract).
 
 ---
 
-## Final verification (Phases 1-3 done; Phase 4 still open)
+## Phase 5 — Forward-looking coordination context (A2b neighbor contract, C1 plan-intent exposure)
 
-- [x] `.venv/bin/python3 -m pytest -q` green throughout (checked after each phase; 731 passed
-      as of the overfitting fix, up from 689 before this work began)
-- [x] Two full live runs via `run_pipeline.py` against `video-01-attention-coherent-story`
-      (`runs/v17`, `runs/v18`) -- see the detailed ERROR_LOG.md entry for what each confirmed:
-      cross-beat repetition prevented, hedge-language bug gone, `pacing.hook_tension` wired
-      and firing correctly, C1's new REPETITION check catching a real residual case.
+**Fixes:** a gap surfaced by external review of Phases 1-3 (2026-09-11): the Viewer Knowledge
+Ledger is backward-looking only (*"what has the viewer already learned"*) and has no
+forward-looking coordination (*"what must this scene leave unresolved for the next scene,"
+"is another scene already responsible for this concept"*). Confirmed as real via direct code
+inspection, not just plausible in theory:
+
+- `planning/scene_expander.py`'s A2b payload carries the current beat's own fields plus the
+  backward `viewer_knows`/`running_example` ledger -- **zero** next-beat or previous-beat
+  information reaches it, even though `story_planner.py`'s loop has the full ordered
+  `structure.beats` list in scope when it calls `expand_beat_scenes()`.
+- `review/story_critic.py`'s C1 payload passes `plan.beats`, **never `plan.scene_plan`** -- C1
+  can independently notice a repetition by re-reading narration text (proven live in
+  `runs/v18`), but cannot cross-check narration against the planner's own explicit
+  `scene_function`/`must_not_repeat`/`running_example` intent, because it never receives them.
+
+Deliberately **not** adopting the reviewed feedback's proposed `global_story_state` /
+`neighbor_contract` / `callback_ids_to_plant`/`callback_ids_to_payoff` schema wholesale --
+most of that already exists in this codebase and just isn't threaded through yet:
+`StoryStructure.central_question`, `StoryBeat.next_question`/`viewer_question_before`/
+`answer_or_payoff`, `StoryPlan.mini_payoffs` (with an `opens` field -- an existing callback
+mechanism), and `ScenePlan.word_budget` (existing budget field). Building a parallel
+callback-ID bookkeeping system risks drifting out of sync with these existing fields instead
+of using them. The leaner fix: thread the EXISTING fields through, don't invent new ones.
+
+- [ ] `planning/story_planner.py` — pass beat N-1 and N+1 (when they exist) into each
+      `expand_beat_scenes()` call in the existing per-beat loop
+- [ ] `planning/scene_expander.py` — accept `previous_beat`/`next_beat` (or `None`), add a
+      compact `neighbor_contract` to the payload built from their EXISTING fields (`purpose`,
+      `forward_driver`, `viewer_question_before`, `next_question`) -- no new schema. Also add
+      `central_question` (already on `StoryStructure`, just never passed here)
+- [ ] `planning/scene_expander.py` — extend `TASK_PROMPT`: this beat must leave the next
+      beat's own open question genuinely open -- do not resolve what a later beat is
+      responsible for, even if it would be easy to add a sentence that does
+- [ ] `review/story_critic.py` — switch/extend the payload to include `plan.scene_plan`
+      (`scene_function`, `must_not_repeat`, `new_concepts`, `running_example`), not just
+      `plan.beats`
+- [ ] `review/story_critic.py` — extend the REPETITION check: when a scene's own
+      `scene_function=derivation` lists a `must_not_repeat` concept and narration re-explains
+      it anyway, that is a confirmed plan-violation, not just a suspected repetition
+- [ ] New check for running-example fidelity: confirm (or refute) whether the "cat/stairs vs.
+      dog/park/bone"-style drift the external review described actually still occurs
+      post-Phase-1 -- not yet verified either way. Best done as a C1 judgment check (semantic
+      equivalence isn't something a deterministic Python check can verify), not a new hard gate
+- [ ] Unit tests: neighbor contract threading in `scene_expander.py`/`story_planner.py`
+      (first/last beat have `None` neighbors, correctly handled); `story_critic.py` payload
+      carries `scene_plan` fields
+- [ ] `.venv/bin/python3 -m pytest -q` green
+- [ ] **Live-verify**: a real run's A2b calls carry real neighbor context (inspect
+      `usage.jsonl`/a captured payload); C1's `review_bundle.json` issues (if any) reference
+      plan-intent violations specifically, not just independent text observations; running-
+      example fidelity confirmed across every scene in the narration
+
+---
+
+## Final verification (Phases 1-3 done; Phases 4-5 still open)
+
+- [x] `.venv/bin/python3 -m pytest -q` green throughout (checked after each phase; 744 passed
+      as of the Phase 4 config fix, up from 689 before this work began)
+- [x] Several full live runs via `run_pipeline.py` against `video-01-attention-coherent-story`
+      (`runs/v17`, `runs/v18`, and the model-a/b/c comparison runs) -- see the detailed
+      ERROR_LOG.md entries for what each confirmed: cross-beat repetition prevented,
+      hedge-language bug gone, `pacing.hook_tension` wired and firing correctly, C1's new
+      REPETITION check catching a real residual case, and a real gpt-5.6-sol config gap found
+      and fixed.
 - [ ] `BUILD_PLAN.md` updated with a "V2 — Narrative continuity" section pointing back here
-      (not yet done -- do this once Phase 4 is resolved, so the summary covers the whole fix)
+      (not yet done -- do this once Phases 4 and 5 are resolved, so the summary covers the
+      whole fix)
 - [x] `ERROR_LOG.md` updated with the concrete before/after (the specific repeated phrase
       found vs. gone, hook-pacing seconds measured, the residual within-beat gap found) —
       not just "improved quality"
