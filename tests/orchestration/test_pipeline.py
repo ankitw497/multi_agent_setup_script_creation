@@ -13,6 +13,7 @@ from planning.models import (
 from planning.scene_expander import BeatSceneExpansion
 from review.claim_mapper import ClaimMapperOutput
 from review.cold_hook_critic import ColdHookCritique, ColdHookVerdict
+from review.cold_viewer_critic import ColdViewerCritique, ColdViewerVerdict
 from review.grounding_verifier import GroundingReview
 from review.story_critic import StoryCritique
 
@@ -151,7 +152,8 @@ def make_bad_expansions() -> list[BeatSceneExpansion]:
     return [_expansion(2, 30), _expansion(2, 30), _expansion(2, 30)]
 
 
-def make_agents(story_lead_responses=None, narration_responses=None, review_responses=None, worker_responses=None) -> PipelineAgents:
+def make_agents(story_lead_responses=None, narration_responses=None, review_responses=None,
+                 worker_responses=None, cold_viewer_responses=None) -> PipelineAgents:
     story_lead = FakeAgent({
         StoryPlan: (story_lead_responses or {}).get(StoryPlan, []),
         StoryStructure: (story_lead_responses or {}).get(StoryStructure, []),
@@ -163,15 +165,20 @@ def make_agents(story_lead_responses=None, narration_responses=None, review_resp
         StoryCritique: (review_responses or {}).get("c1", []),
         GroundingReview: (review_responses or {}).get("c2b", []),
         ColdHookCritique: (review_responses or {}).get("cold_hook", []),
+        ColdViewerCritique: (review_responses or {}).get("cold_viewer", []),
     })
     cm_agent = FakeAgent({ClaimMapperOutput: (review_responses or {}).get("cm", [])})
-    # A clean, non-flagged verdict every time -- the cold-hook cascade
-    # (Phase 8.2) then never escalates to review_lead, so existing tests
-    # don't need to know about it unless they're testing it directly.
-    # Queued generously (20) since it's called once per review cycle and
-    # the loop's own bound (MAX_STORY_REPLANS + MAX_MAJOR_REVISIONS) is
-    # small but this avoids ever running out across any test's cycles.
-    worker = FakeAgent({ColdHookVerdict: worker_responses or [ColdHookVerdict() for _ in range(20)]})
+    # A clean, non-flagged verdict every time -- the cold-hook/cold-viewer
+    # cascades (Phase 8.2) then never escalate to review_lead, so existing
+    # tests don't need to know about them unless testing directly. Queued
+    # generously since C4c alone can fire up to 3x per review cycle (one
+    # per sampled mid-video checkpoint) and the loop's own bound
+    # (MAX_STORY_REPLANS + MAX_MAJOR_REVISIONS) is small but this avoids
+    # ever running out across any test's cycles.
+    worker = FakeAgent({
+        ColdHookVerdict: worker_responses or [ColdHookVerdict() for _ in range(20)],
+        ColdViewerVerdict: cold_viewer_responses or [ColdViewerVerdict() for _ in range(60)],
+    })
     return PipelineAgents(story_lead=story_lead, narration_lead=narration_lead,
                            review_lead=review_lead, cm_agent=cm_agent, worker=worker)
 
@@ -673,8 +680,9 @@ def test_cold_hook_critic_receives_the_plans_title_and_first_beats_narration():
         target_duration_seconds=600.0, agents=agents, budget=make_budget(), initial_plan=plan,
     )
 
-    assert len(agents.worker.calls) == 1
-    payload = agents.worker.calls[0]["payload"]
+    cold_hook_calls = [c for c in agents.worker.calls if c["pass_id"] == "C4a"]
+    assert len(cold_hook_calls) == 1
+    payload = cold_hook_calls[0]["payload"]
     assert payload["title"] == "t"  # plan.title.chosen from make_plan()
 
 
@@ -729,3 +737,58 @@ def test_a_flagged_cold_hook_verdict_produces_a_real_issue_in_the_bundle():
     hook_issues = [i for i in result.review_bundle.issues if i.category == "hook"]
     assert len(hook_issues) == 1
     assert hook_issues[0].problem == "generic opening, no curiosity gap"
+
+
+def test_c4c_mid_video_cold_viewer_actually_runs_once_per_review_cycle():
+    """STORY_IMPROVEMENT_PLAN.md Phase 8.2: C4a/C4b only judge the opening
+    -- confirms C4c actually fires (against sampled middle-beat scenes,
+    never the first/last beat) with the plan's real title reaching it."""
+    plan = make_plan()
+    agents = make_agents(
+        narration_responses=[make_empty_narration_response(), GeneratedNarration(scenes=[])],
+        review_responses={
+            "c1": [StoryCritique(issues=[]), StoryCritique(issues=[])],
+            "c2b": [GroundingReview(issues=[]), GroundingReview(issues=[])],
+            "cm": [ClaimMapperOutput(sentences=[]), ClaimMapperOutput(sentences=[])],
+        },
+    )
+    run_story_and_narration_loop(
+        source_brief=__import__("planning.models", fromlist=["SourceBrief"]).SourceBrief(
+            topic="t", core_question="q", viewer_problem="p", central_insight="i"),
+        claims=[], ledger=AssumptionLedger(), all_source_unit_ids=["u1"],
+        target_duration_seconds=600.0, agents=agents, budget=make_budget(), initial_plan=plan,
+    )
+
+    cold_viewer_calls = [c for c in agents.worker.calls if c["pass_id"] == "C4c"]
+    assert len(cold_viewer_calls) >= 1
+    assert cold_viewer_calls[0]["payload"]["title"] == "t"
+
+
+def test_a_flagged_cold_viewer_verdict_produces_a_real_issue_in_the_bundle():
+    plan = make_plan()
+    flagged = ColdViewerVerdict(understands_why=False, flagged=True, confidence="high")
+    cold_viewer_issue = {
+        "issue_id": "cv1", "severity": "major", "category": "cognitive_load", "layer": "STORY",
+        "scene_ids": ["s1"], "problem": "viewer lost mid-video", "why_it_matters": "drops off before the payoff",
+        "recommended_intent": "re-orient the viewer here", "repair_owner": "story_lead",
+    }
+    agents = make_agents(
+        narration_responses=[make_empty_narration_response(), GeneratedNarration(scenes=[])],
+        review_responses={
+            "c1": [StoryCritique(issues=[]), StoryCritique(issues=[])],
+            "c2b": [GroundingReview(issues=[]), GroundingReview(issues=[])],
+            "cold_viewer": [ColdViewerCritique(issues=[cold_viewer_issue])],
+            "cm": [ClaimMapperOutput(sentences=[]), ClaimMapperOutput(sentences=[])],
+        },
+        cold_viewer_responses=[flagged] + [ColdViewerVerdict() for _ in range(60)],
+    )
+    result = run_story_and_narration_loop(
+        source_brief=__import__("planning.models", fromlist=["SourceBrief"]).SourceBrief(
+            topic="t", core_question="q", viewer_problem="p", central_insight="i"),
+        claims=[], ledger=AssumptionLedger(), all_source_unit_ids=["u1"],
+        target_duration_seconds=600.0, agents=agents, budget=make_budget(), initial_plan=plan,
+    )
+
+    cognitive_load_issues = [i for i in result.review_bundle.issues if i.category == "cognitive_load"]
+    assert len(cognitive_load_issues) == 1
+    assert cognitive_load_issues[0].problem == "viewer lost mid-video"

@@ -28,6 +28,7 @@ from planning.story_planner import plan_story
 from review.aggregator import aggregate_review
 from review.claim_mapper import map_claims
 from review.cold_hook_critic import critique_cold_hook
+from review.cold_viewer_critic import critique_cold_viewer
 from review.grounding_verifier import verify_grounding
 from review.models import CritiqueIssue, ReviewBundle
 from review.story_critic import critique_story
@@ -111,6 +112,14 @@ def _run_review_block(
         haiku_pass_id="C4a", gemini_pass_id="C4b",
     )
 
+    # C4c mid-video cold viewer (STORY_IMPROVEMENT_PLAN.md Phase 8.2): C4a/
+    # C4b only judge the OPENING -- nothing judged whether a viewer who just
+    # landed partway through would still know why this is being discussed
+    # and still want to keep watching. Sampled at a few evenly-spaced
+    # mid-video scenes (never the first/last beat), same free-first cascade.
+    narration_text_by_scene_id = {n.scene_id: " ".join(s.text for s in n.sentences) for n in narration}
+    cold_viewer_issues = critique_cold_viewer(plan, narration_text_by_scene_id, agents.worker, agents.review_lead, budget)
+
     diagnostics = check_retention(plan) + [
         check_cta_position(plan), check_hook_tension_pacing(plan), check_novelty_coverage(plan, source_brief),
         check_beat_airtime_outliers(plan, claims),
@@ -129,7 +138,7 @@ def _run_review_block(
         run_id="pipeline",
         structural_issues=structural,
         grounding_violations=grounding_violations,
-        critique_issues=grounding_issues + story_issues + cold_hook_issues + style_issues,
+        critique_issues=grounding_issues + story_issues + cold_hook_issues + cold_viewer_issues + style_issues,
         diagnostics=diagnostics,
     )
     return narration, bundle
