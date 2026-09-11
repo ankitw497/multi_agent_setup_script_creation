@@ -1512,6 +1512,25 @@ Full suite: 752 passed, 16 deselected.
 
 ---
 
+## Cold-hook critic live-verified in long-form (2026-09-11)
+
+Ran `video-01-attention-coldhook-verify/runs/v01` against the real source (the same
+attention-series pronoun-resolution source used throughout this fix). `C4a` fires exactly
+once per review cycle -- confirmed 4/4 across a run that included a full replan (A2 →
+targeted_rewrite → replan → targeted_rewrite), each on `lane=subscription`,
+`model=claude-haiku-4-5-20251001`, `billed_microusd=0`, matching the cascade's design (a
+clean, confident Haiku pass costs nothing). No `C4b` escalation fired in any of the 4 cycles,
+and `review_bundle.json` carries zero `category="hook"` issues -- consistent with this
+source's real hook being genuinely strong (a concrete "the cat couldn't climb the stairs..."
+pronoun example), not evidence the wiring is inert; the short-circuit-on-clean-verdict
+behavior the unit tests assert is exactly what a real, good hook should produce.
+
+**Not yet observed live**: the `C4b` escalation path itself, since no run so far has had a
+genuinely weak hook to trigger it. Would need a deliberately weak source (or a mutated
+title/hook) to confirm live, tracked as a residual gap in Phase 8.2, not blocking.
+
+---
+
 ## Open items (not yet bugs, flagged for future attention)
 
 - **A2b's per-beat expansion doesn't always self-track its own new concepts within one

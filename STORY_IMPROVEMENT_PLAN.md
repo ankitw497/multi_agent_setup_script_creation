@@ -746,9 +746,15 @@ precisely the retention/interest measurement every external review has asked for
       confirmed the cascade still short-circuits on a clean, confident Haiku verdict (existing
       tests use a clean default and never call the Gemini escalation)
 - [x] `.venv/bin/python3 -m pytest -q` green (752 passed, up from 748)
-- [ ] **Live-verify**: a real long-form run shows a `C4a`/`C4b` entry in `usage.jsonl`, and (on
-      a source with a genuinely weak hook) a real `category="hook"` issue in
-      `review_bundle.json` that a clean run doesn't produce -- not yet run
+- [x] **Live-verify** (`video-01-attention-coldhook-verify/runs/v01`, 2026-09-11): `C4a`
+      appears exactly once per review cycle (4/4, including through a full replan) --
+      `lane=subscription`, `model=claude-haiku-4-5-20251001`, `billed_microusd=0` each time, as
+      designed. No `C4b` escalation across any cycle (a clean, confident verdict every time)
+      and zero `category="hook"` issues in `review_bundle.json` -- consistent with this
+      source's real hook (the "cat couldn't climb the stairs" pronoun example) being genuinely
+      strong, not evidence the check is inert. Escalation path (C4b firing on a real weak hook)
+      still not observed live -- would need a source with an actually weak opening to trigger
+      it. See ERROR_LOG.md.
 - [ ] New `review/cold_viewer_critic.py` (C4c) — mid-video cold viewer, sampled at a few
       deterministic points (reuse `review/visual_sample.py`'s evenly-spaced selection pattern
       rather than inventing another sampler): at this point in the video, would a viewer who
