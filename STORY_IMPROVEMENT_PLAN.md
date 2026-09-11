@@ -258,10 +258,19 @@ of using them. The leaner fix: thread the EXISTING fields through, don't invent 
 - [ ] `review/story_critic.py` — extend the REPETITION check: when a scene's own
       `scene_function=derivation` lists a `must_not_repeat` concept and narration re-explains
       it anyway, that is a confirmed plan-violation, not just a suspected repetition
-- [ ] New check for running-example fidelity: confirm (or refute) whether the "cat/stairs vs.
-      dog/park/bone"-style drift the external review described actually still occurs
-      post-Phase-1 -- not yet verified either way. Best done as a C1 judgment check (semantic
-      equivalence isn't something a deterministic Python check can verify), not a new hard gate
+- [x] **Confirmed real, not hypothetical** (2026-09-11, visual audit of `runs/video-01-attention-model-a-gpt4o/v01`):
+      rendered the real HTML with Playwright and read the screenshots directly. `hook_s01`,
+      `origin_s01`, `matrix_s01`, `heads_s01`, `recap_s01` all correctly use the locked example
+      ("the cat couldn't climb the stairs because it was too tired"). `score_s02`/`score_s03`
+      invent an entirely different one (`q(it) . k(dog)`, `k(park)`, `k(bone)`) -- isolated to
+      those two adjacent scenes, not pervasive. `render_report.json` shows zero hard-check hits
+      for this (only the known word-count band issue) -- confirms nothing today catches
+      semantic example drift, only structural defects. See ERROR_LOG.md and Phase 6 below for
+      the root cause this pointed to.
+- [ ] New check for running-example fidelity, now that the failure mode is confirmed real: best
+      done as a C1 judgment check (semantic equivalence isn't something a deterministic Python
+      check can fully verify), given `running_example` explicitly and asked to flag any scene
+      that introduces different named entities for the same underlying illustration
 - [ ] Unit tests: neighbor contract threading in `scene_expander.py`/`story_planner.py`
       (first/last beat have `None` neighbors, correctly handled); `story_critic.py` payload
       carries `scene_plan` fields
@@ -273,7 +282,68 @@ of using them. The leaner fix: thread the EXISTING fields through, don't invent 
 
 ---
 
-## Final verification (Phases 1-3 done; Phases 4-5 still open)
+## Phase 6 — Cross-artifact consistency + technical invariants (new, from general pipeline feedback)
+
+**Fixes:** items #9 (numeric state), #10 (technical invariants), #20 (cross-agent artifact
+consistency) from `General Multi-Agent Video Script Pipeline Improvement Feedback.md` --
+genuinely new territory, not covered by Phases 1-5. The Phase 5 visual audit's `score_s02`/
+`score_s03` finding pointed directly at the root cause this phase targets.
+
+**Root cause, confirmed by reading the actual code** (`html_synth/synthesizer.py`):
+`synthesize_beat_visual()` (H -- generates the on-screen `diagram_card`/component content) is
+a call **completely separate** from `generate_narration()` (B1) and receives **none** of the
+shared state Phase 1 built: no `running_example`, no `viewer_knows`, not even the actual
+narration text for the scene it's illustrating -- only `visual_description` (a field set back
+during A2b, before narration exists) and the beat's own claims. So even where A2b/B1 get the
+running example right, H has no way to know it, and vice versa -- two independently-generated
+artifacts (spoken narration and on-screen diagram) can each be locally consistent with
+whatever they were told, while diverging from each other and from the plan's own locked
+example. This is exactly feedback item #20's *"narration entities vs. HTML entities vs.
+diagram entities... a render should fail validation if these diverge materially."*
+
+- [ ] `html_synth/synthesizer.py` — thread `plan.running_example` into `synthesize_beat_visual()`
+      and `synthesize_hero()`'s payloads; extend `TASK_PROMPT`/`HERO_TASK_PROMPT`: if
+      `running_example` is set and a `diagram_card`/component illustrates it, reuse its exact
+      named objects/values -- never invent a different one for the same underlying idea (same
+      instruction pattern already used in `scene_expander.py`/`narration/generator.py`)
+- [ ] `html_synth/synthesizer.py` — also thread the scene's own actual narration text (not just
+      `visual_description`) into `synthesize_beat_visual()`'s payload, so H illustrates what was
+      actually narrated, not a stale pre-narration description that may have drifted
+- [ ] New deterministic-leaning check: given `running_example.values`' named entities, scan a
+      beat's generated `diagram_card`/component content for named entities that don't overlap
+      with either the locked example or the beat's `available_claims` -- flag as a candidate
+      cross-artifact mismatch. Entity extraction for arbitrary technical prose is not perfectly
+      reliable by regex alone, so treat this as a diagnostic signal (AMBER-banded), not a hard
+      gate that blocks promotion on its own -- pair it with a C1-style judgment check for the
+      cases the heuristic can't resolve confidently
+- [ ] **Technical invariants** (item #10): add an optional `invariants` section the source can
+      declare (or S2a/S2b can extract deterministically, similar to how `AssumptionLedger`
+      already captures source-declared constants) -- e.g. equation form, operation order
+      ("mask applied before softmax, not after"), tensor/data orientation. Validate narration
+      and H's screen prose against these as a new `verification/hard/` check (Python string/
+      pattern matching against the declared invariant, not model judgment) where the invariant
+      is concrete enough to check mechanically; fall back to flagging for C1's OVERCLAIM check
+      otherwise. Scope narrowly at first -- start with whatever invariant the real source
+      material actually states explicitly, not a speculative general framework
+- [ ] **Numeric state tracking** (item #9): distinct from entity consistency -- when a
+      calculation genuinely spans multiple scenes (raw values -> scaled -> normalized -> final),
+      the SAME numbers must reuse, not just the same named objects. `RunningExample.values`
+      already holds arbitrary key/value pairs -- extend `narration/generator.py`'s prompt to
+      explicitly require reusing prior numeric values already established for the same
+      calculation, rather than inventing new illustrative numbers at each step. No new schema
+      needed; this is a prompt-strength and validation gap, not a modeling gap
+- [ ] Unit tests: `synthesizer.py` payload carries `running_example` and actual narration text;
+      the new entity-overlap diagnostic (clean case, mismatch case, ambiguous case treated as
+      AMBER not a crash)
+- [ ] `.venv/bin/python3 -m pytest -q` green
+- [ ] **Live-verify**: re-render the same real source; confirm `score_s02`/`score_s03`-style
+      diagrams now reuse the locked running example instead of inventing `dog/park/bone`;
+      confirm the new diagnostic actually fires on a deliberately-reintroduced mismatch (so we
+      know it isn't silently inert) before trusting it clean on a real run
+
+---
+
+## Final verification (Phases 1-3 done; Phases 4-6 still open)
 
 - [x] `.venv/bin/python3 -m pytest -q` green throughout (checked after each phase; 744 passed
       as of the Phase 4 config fix, up from 689 before this work began)

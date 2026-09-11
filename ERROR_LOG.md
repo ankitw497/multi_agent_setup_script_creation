@@ -1287,6 +1287,36 @@ pick."
 
 ---
 
+## Real running-example drift confirmed via visual HTML audit (2026-09-11) -- STORY_IMPROVEMENT_PLAN.md Phase 6
+
+Rendered `project/attention_series/video-01-attention-model-a-gpt4o/runs/v01/html/video_script.html`
+with Playwright (the same approach `verification/hard/render_rendered.py` already uses for
+C3), screenshotted individual scenes, and read them directly -- the first time this session
+actually looked at rendered HTML rather than JSON/text output.
+
+**Real finding:** `hook_s01`, `origin_s01`, `matrix_s01`, `heads_s01`, `recap_s01` all
+correctly use the plan's locked running example ("the cat couldn't climb the stairs because
+it was too tired"). `score_s02` and `score_s03` invent an entirely different one --
+`q(it) . k(dog)`, `k(park)`, `k(bone)`, `yard` -- isolated to those two adjacent scenes;
+`score_s04` onward drops named entities again. `render_report.json` for this run shows only
+the known `reader_standalone_word_count_out_of_band` hard-check hit -- nothing caught the
+example drift, because it's a semantic/entity-consistency defect, not a structural one.
+
+**Root cause, traced in `html_synth/synthesizer.py`:** `synthesize_beat_visual()` (H --
+generates the `diagram_card`/component content actually shown on screen) is a call completely
+separate from `generate_narration()` (B1) and receives **none** of Phase 1's shared state --
+no `running_example`, no `viewer_knows`, not even the scene's actual narration text, only the
+pre-narration `visual_description` field and the beat's claims. Two independently-generated
+artifacts (narration, on-screen diagram) can each be locally self-consistent while diverging
+from each other and from the plan's own locked example -- exactly the class of gap
+`STORY_IMPROVEMENT_PLAN.md`'s Phase 6 now targets (threading `running_example` + real
+narration text into H's payload, plus a new entity-overlap diagnostic).
+
+**Not yet fixed** -- this is Phase 6 planning, not a completed fix. Logged here because the
+finding is real and reproducible, not because the defect is resolved yet.
+
+---
+
 ## Open items (not yet bugs, flagged for future attention)
 
 - **A2b's per-beat expansion doesn't always self-track its own new concepts within one
