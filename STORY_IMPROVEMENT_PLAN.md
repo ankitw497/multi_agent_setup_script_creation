@@ -61,11 +61,11 @@ certain first:
 
 | # | Item | Phase | Why first |
 |---|---|---|---|
-| 1 | Thread the ledger into B2 | 8.1 | It's an outright bug silently undoing Phase 1 on every run; ~20 lines |
-| 2 | Wire `critique_cold_hook` into long-form | 8.2 | The critic already exists and is tested -- it's one call site |
-| 3 | Build the §9 Learning gate | 8.3 | Deterministic, cheap, a designed hard gate that was simply skipped |
-| 4 | Retention diagnostics read narration, not planner flags | 8.4 | Turns three always-GREEN diagnostics into real signal |
-| 5 | Reject regressing revision cycles + narrow B2's blast radius | 8.5 | Stops the loop making things worse; cheap guard |
+| 1 | ~~Thread the ledger into B2~~ [x] done, live-verified | 8.1 | It's an outright bug silently undoing Phase 1 on every run; ~20 lines |
+| 2 | ~~Wire `critique_cold_hook` into long-form~~ [x] done, live-verified | 8.2 | The critic already exists and is tested -- it's one call site |
+| 3 | ~~Build the §9 Learning gate~~ [x] done, live-verified | 8.3 | Deterministic, cheap, a designed hard gate that was simply skipped |
+| 4 | ~~Retention diagnostics read narration, not planner flags~~ [x] done, live-verified | 8.4 | Turns three always-GREEN diagnostics into real signal |
+| 5 | ~~Reject regressing revision cycles + narrow B2's blast radius~~ [x] done, live-verified | 8.5 | Stops the loop making things worse; cheap guard |
 | 6 | ~~C3 also reviews H's screen prose~~ [x] code+tests done, live-verify pending | 6 | A whole artifact currently has zero critique coverage |
 | 7 | ~~Typed formula/numeric state validators~~ [x] code+tests done, live-verify pending | 6 | Fixes the confirmed raw-vs-scaled and dropped-`√d_k` class of bug |
 | 8 | A2b neighbor contract | 5 | Improves transitions; larger change than the above |
@@ -843,9 +843,17 @@ passed to A2b/H/candidate_finder but never validated as non-empty or meaningful.
       non-overlapping `viewer_can_now` ("do x") -- the new gate correctly flagged every test
       using them. Updated to realistic, overlapping values rather than weakening the check.
 - [x] `.venv/bin/python3 -m pytest -q` green (766 passed, up from 753)
-- [ ] **Live-verify**: confirm the gate fires on a real plan with a blank `learning_objective`,
-      and does NOT fire on a genuinely well-formed plan (so it isn't inert or over-strict) --
-      not yet run
+- [x] **Live-verify** (`video-01-attention-batch2-verify/runs/v01`, 2026-09-11): a real run
+      where every beat had a real `learning_objective` produced NO `no_central_insight`/
+      `beat_missing_learning_objective`/`viewer_can_now_unreachable` hard failure -- confirms
+      the gate is not over-strict/inert-in-the-wrong-direction on a genuinely well-formed plan.
+      `retention.novelty_coverage` (the soft half) fired **GREEN** with real evidence:
+      `novelty_statement='...how the attention mechanism avoids saturation issues in softmax by
+      scaling dot product scores...'` matched against beat B4's `learning_objective`
+      (`'Understand the necessity of scaling in scoring.'`) -- confirms it actually reads and
+      compares real content, not a stub that always passes. The blank-`learning_objective`
+      firing case is covered by the 9 unit tests in `test_structure.py` (harder to force live
+      without deliberately corrupting a real A2 output).
 
 ### 8.4 — Retention diagnostics grade the planner's own homework
 
@@ -879,8 +887,12 @@ dimension. These currently measure schema compliance, not viewer experience.
       beats claiming `new_information=True` had zero scenes with any `new_concepts` in either
       fixture. Updated to carry a real entry consistent with the claim, not weakening the check.
 - [x] `.venv/bin/python3 -m pytest -q` green (773 passed, up from 766)
-- [ ] **Live-verify**: confirm a real run's retention diagnostics now sometimes disagree with
-      the planner's own booleans on a source where that's genuinely true -- not yet run
+- [x] **Live-verify** (`video-01-attention-batch2-verify/runs/v01`, 2026-09-11): real
+      disagreement found and surfaced -- `retention.new_information_disagreement` fired
+      **AMBER** with evidence `"beat(s) claim new_information=True but no scene lists a
+      new_concepts entry: ['B9']"`. Confirms the secondary self-report signal is live and not
+      silently inert, exactly the "sometimes disagree with the planner's own booleans" case
+      this item asked to confirm.
 
 ### 8.5 — The revision loop does not converge, and can regress
 
@@ -931,10 +943,18 @@ verbosity finding and a factual finding all funnel into the same generic narrati
       `rewrite_scenes`' narrower blast radius), `tests/editing/test_revision_planner.py`
       (prompt-content test for the narrowest-tool guidance).
 - [x] `.venv/bin/python3 -m pytest -q` green (780 passed, up from 773)
-- [ ] **Live-verify**: re-run against a real source that previously showed the "6 beats
-      rewritten for 1 fix" pattern; confirm A3 now prefers `rewrite_scenes` for scene-level
-      findings, and confirm a real regression (if one occurs) gets reverted and logged -- not
-      yet run
+- [x] **Live-verify** (`video-01-attention-batch2-verify/runs/v01`, 2026-09-11), `final/
+      status.json`'s own log, both confirmed on the SAME real source used to originally
+      diagnose the "6 beats rewritten for 1 fix" pattern:
+      - **`rewrite_scenes` preferred**: `"targeted rewrite #1: 0 beat(s), 8 scene(s), 1
+        fix(es), 0 delete/compress"` and `"targeted rewrite #2: 0 beat(s), 6 scene(s), 0
+        fix(es), 0 delete/compress"` -- zero whole-beat rewrites across both cycles, exactly
+        the narrower blast radius this fix was for.
+      - **Revert-on-regression fired for real**: `"targeted rewrite #2 made things worse (6
+        hard failures, 4 issues vs 4/3 before) -- reverting"` -- the exact mechanism (not a
+        hypothetical) caught a real regression mid-run and reverted it before the next A3
+        decision, then correctly reported `"revision budget exhausted -> emit best
+        candidate"` rather than shipping the worse state.
 
 ### 8.6 — Story and visual layers never inform each other
 

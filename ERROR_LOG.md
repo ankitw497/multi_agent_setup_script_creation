@@ -1584,6 +1584,52 @@ to confirm a real `category="repetition"`/`"clarity"` finding appears in a real
 
 ---
 
+## Phases 8.3/8.4/8.5 live-verified together (2026-09-11, `video-01-attention-batch2-verify/runs/v01`)
+
+A long-running background pipeline invocation against the real attention-series source (13
+source units, 69 claims, archetype=build, 9 beats, 43 scenes) completed with real evidence for
+three checklist items at once. **Process note**: this run was launched BEFORE this session's
+Phase 6 (C3 screen-prose / formula-consistency) commits, so its code predates both of those --
+it is valid evidence for 8.3/8.4/8.5 only, not for the later Phase 6 work (confirmed: its
+`render_report.json` has no `visual_critique_issues` key at all, since that field didn't exist
+yet when this Python process started). A duplicate re-launch of the same run was mistakenly
+started mid-session after this run's `runs/v01` directory was checked too early (only 16
+`usage.jsonl` lines, all folders empty) and wrongly read as "crashed" -- it had simply not
+reached its next usage-logged call yet on a real, slow, multi-cycle run. The duplicate
+(`runs/v02`) was stopped once the original's completion notification arrived; no results were
+taken from it.
+
+**8.3 (§9 Learning gate):** `reviews/review_bundle.json` shows zero
+`no_central_insight`/`beat_missing_learning_objective`/`viewer_can_now_unreachable` hard
+failures against a real plan where every beat had a genuine `learning_objective` -- confirms
+the gate isn't over-strict on well-formed input. The soft half,
+`retention.novelty_coverage`, fired **GREEN** with real matched content: A1's
+`novelty_statement` ("...how the attention mechanism avoids saturation issues in softmax by
+scaling dot product scores...") against B4's `learning_objective` ("Understand the necessity
+of scaling in scoring.") -- a genuine, non-trivial overlap, not a stub always passing.
+
+**8.4 (retention self-report disagreement):** `retention.new_information_disagreement` fired
+**AMBER**: `"beat(s) claim new_information=True but no scene lists a new_concepts entry:
+['B9']"` -- a real, previously-invisible planner/narration disagreement surfaced on a genuine
+run, confirming the diagnostic is live signal, not dead code.
+
+**8.5 (revision-loop convergence + narrower blast radius):** `final/status.json`'s own log is
+direct proof of both fixes on the SAME source that originally showed the "6 beats rewritten
+for 1 fix" pattern:
+```
+"targeted rewrite #1: 0 beat(s), 8 scene(s), 1 fix(es), 0 delete/compress"
+"targeted rewrite #2: 0 beat(s), 6 scene(s), 0 fix(es), 0 delete/compress"
+"targeted rewrite #2 made things worse (6 hard failures, 4 issues vs 4/3 before) -- reverting"
+"revision budget exhausted -> emit best candidate"
+```
+Zero whole-beat rewrites across both cycles (narrower blast radius confirmed); a real
+regression was caught mid-run and reverted rather than accepted, and the run correctly shipped
+its best-seen candidate (still `FAIL` overall, on pre-existing, unrelated hard failures --
+`source_units_uncovered`, `core_role_missing`, `title_promise_unrelated_to_hook`, a
+`masking_logical_paradox` clarity issue -- none of which this session's fixes targeted).
+
+---
+
 ## Open items (not yet bugs, flagged for future attention)
 
 - **A2b's per-beat expansion doesn't always self-track its own new concepts within one
