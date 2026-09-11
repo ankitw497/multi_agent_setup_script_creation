@@ -978,6 +978,53 @@ run since the hook-extraction and reveal-visibility fixes landed):
 
 ---
 
+## ERR-039 — Concrete claims were abstracted into vague restatements by A2/A2b; shorts' layout/type/diagram treatment was still not "up to the mark"
+**Date:** 2026-09-11 · **Severity:** major · **Status:** fixed (hook/scene prompts); shorts redesigned per direct user feedback · **Component:** `planning/story_planner.py`, `planning/scene_expander.py`, `html_synth/vertical_assembler.py`
+
+Two more real findings, both user-reported directly against generated output:
+
+1. **Concrete example still missing from the hook, even after ERR-036's extraction fix.**
+   Verified precisely: S2b correctly extracts a crisp, literal claim from the source's own
+   hook ("changing 'it was too tired' to 'it was too steep' causes 'it' to refer to a
+   different entity") -- confirmed via a live, free claim-extraction check. Yet a real
+   generated `hook.tension` still read as a generic abstraction ("the same pronoun can
+   refer to different things depending on context"). The data reaches A2 correctly; A2 and
+   A2b were never told to prefer a concrete illustration already in the claim registry over
+   their own paraphrase of one. **Fix:** both `story_planner.py`'s hook-writing guidance and
+   `scene_expander.py`'s scene guidance now explicitly require using a concrete
+   illustration (an actual example, number, or named scenario) directly when an available
+   claim already is one, with a worked contrast ("the kind of vague restatement to avoid").
+   **Tests:** `tests/planning/test_story_planner.py::test_prompt_instructs_using_a_concrete_example_when_the_source_gives_one`,
+   `tests/planning/test_scene_expander.py::test_prompt_instructs_using_a_concrete_illustration_when_a_claim_has_one`.
+
+2. **Shorts still not "up to the mark" after the ERR-038 restraint pass.** Asked the user
+   directly what specifically felt off (no way to render/screenshot HTML in this
+   environment) -- answer: too plain/boring, wrong layout/composition (not a colour/font
+   issue), and needed a real visual rather than text. Root cause: every screen used the
+   exact same flat 36px prose regardless of role, and the "diagram" was one line of
+   monospace arrow-joined text -- neither reads as a designed video mockup. **Fix:** real
+   type-scale hierarchy per screen role (hook 58px/700-weight and payoff 44px/700-weight
+   bookend the piece; setup/mechanism drop to 30-32px/500-weight body copy for their longer
+   sentences -- deliberate size contrast, not one size everywhere), and the mechanism
+   diagram is now a genuine connected node-flow (a labelled accent-coloured dot per stage
+   joined by a connecting line, HTML/CSS -- reuses the long-form `step_list` visual idiom)
+   instead of monospace arrow-text; HTML text wraps naturally regardless of label length,
+   which hand-authored SVG text would not have done without manual line-breaking.
+   **Tests:** `tests/html_synth/test_vertical_assembler.py::test_visual_dominant_object_and_states_render_as_a_flow_diagram_on_the_mechanism_screen`
+   and the surrounding diagram/escaping tests, updated for the new markup.
+
+**Also tried, not adopted:** `gpt-5.6-sol` as a one-off `openai_story_strong` alternative
+for A2 (user-requested experiment) -- confirmed real and callable via litellm, reasoning-
+capable but not a hidden-reasoning-burn trap (69/272 completion tokens on a moderate real-
+shaped prompt). On the one real A2 call tried, it returned a WORSE result than the existing
+`gpt-4o`: `hook.tension`/`viewer_problem`/`promise` all came back completely empty rather
+than merely generic. Logged as `openai_story_strong_gpt56` in `config/models.yaml` for
+future reference, not wired into any default agent -- not chased further on one bad sample
+per this project's own established precedent, but a caution against adopting it without
+more evidence.
+
+---
+
 ## Open items (not yet bugs, flagged for future attention)
 
 - **V1B's HV static checks are now the full plan §13 list** (updated 2026-09-11; the note

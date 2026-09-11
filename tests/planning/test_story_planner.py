@@ -105,6 +105,22 @@ def test_prompt_instructs_populating_source_unit_ids():
     assert "never leave this empty" in TASK_PROMPT
 
 
+def test_prompt_instructs_using_a_concrete_example_when_the_source_gives_one():
+    """Real gap found 2026-09-11 (user-reported, comparing generated output
+    against the source directly): S2b correctly extracted a crisp, literal
+    claim from the source's own hook ("changing 'it was too tired' to 'it
+    was too steep' causes 'it' to refer to a different entity"), but the
+    generated hook.tension still read as a generic abstraction ("the same
+    pronoun can refer to different things depending on context") rather
+    than using that concrete pair. The claim data was correct; the prompt
+    never told A2 to prefer a concrete illustration over its own paraphrase
+    of one."""
+    from planning.story_planner import TASK_PROMPT
+
+    assert "concrete illustration" in TASK_PROMPT
+    assert "hook.tension" in TASK_PROMPT
+
+
 def test_prompt_instructs_populating_archetype_role_with_the_render_vocabulary():
     """Real gap found 2026-09-11 (user-reported missing figures/visualizations):
     `html_synth/synthesizer.py` gates a beat's allowed visual components on

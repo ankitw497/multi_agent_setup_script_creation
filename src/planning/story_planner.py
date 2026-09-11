@@ -86,7 +86,14 @@ handful of them.
 
 The hook must create a knowledge gap, not announce a syllabus -- no "in this
 video we will cover X". `must_not_reveal_yet` must list what the hook
-deliberately withholds.
+deliberately withholds. If a claim or source unit gives you a concrete,
+specific illustration of the hook's tension (an actual example sentence, a
+specific number, a named scenario -- not a generic description of the
+category of problem), `hook.tension` must USE that concrete illustration
+directly, not abstract it into a general statement. "The same word can
+mean two different things depending on context" is the kind of vague
+restatement to avoid when the source already hands you the literal
+sentence pair that proves it -- use the literal example.
 
 The CTA's `intent` should default to VALUE_LINKED (it names the payoff just
 earned and the channel's promise) unless there's a clear reason for another

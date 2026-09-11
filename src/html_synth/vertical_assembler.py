@@ -34,6 +34,18 @@ SAFE_BOTTOM = 320  # reserved for caption/engagement-button overlays
 
 _SEGMENT_ORDER = ("hook", "setup", "mechanism", "payoff")
 
+# Real type-scale hierarchy per screen role (2026-09-11 redesign, replacing a
+# uniform 36px everywhere on every screen regardless of role -- the flat
+# treatment read as "unfinished" rather than minimal). hook/payoff bookend
+# the short with the same large, bold voice; setup/mechanism read more like
+# body copy since they carry the longer explanatory sentences.
+_PROSE_STYLE = {
+    "hook": "font-size:58px;line-height:1.15;font-weight:700;letter-spacing:-1.4px;",
+    "setup": "font-size:32px;line-height:1.5;font-weight:500;letter-spacing:-0.2px;",
+    "mechanism": "font-size:30px;line-height:1.5;font-weight:500;letter-spacing:-0.2px;",
+    "payoff": "font-size:44px;line-height:1.25;font-weight:700;letter-spacing:-0.8px;",
+}
+
 VERTICAL_STYLESHEET = f"""\
 body{{background:#111;}}
 .short-page{{max-width:{VERTICAL_WIDTH}px;margin:0 auto;}}
@@ -44,9 +56,13 @@ body{{background:#111;}}
 .short-label{{display:inline-block;font-size:11px;font-weight:600;text-transform:uppercase;
   letter-spacing:0.1em;color:var(--accent);background:var(--bg3);
   padding:6px 14px;border-radius:20px;position:absolute;top:32px;left:32px;}}
-.short-prose{{font-size:36px;line-height:1.5;color:var(--text);font-family:var(--sans);font-weight:600;letter-spacing:-0.3px;}}
-.short-visual{{font-family:'JetBrains Mono','SF Mono',monospace;font-size:20px;line-height:1.8;color:var(--text2);
-  text-align:center;white-space:pre-wrap;margin-bottom:28px;padding:18px 16px;background:var(--bg3);border-radius:var(--r-sm);}}
+.short-prose{{color:var(--text);font-family:var(--sans);}}
+.short-flow{{display:flex;flex-direction:column;gap:0;margin-bottom:36px;}}
+.short-flow-node{{display:flex;gap:18px;align-items:flex-start;}}
+.short-flow-dot{{width:14px;height:14px;border-radius:50%;background:var(--accent);
+  flex-shrink:0;margin-top:8px;}}
+.short-flow-connector{{width:2px;flex-grow:1;background:var(--border);margin:2px 0 2px 6px;min-height:24px;}}
+.short-flow-label{{font-family:var(--sans);font-size:24px;font-weight:500;color:var(--text);line-height:1.4;padding-bottom:20px;}}
 """
 
 
@@ -54,27 +70,46 @@ def _esc(text: str) -> str:
     return html_module.escape(text, quote=False)
 
 
-def _dominant_object_flow(plan: ShortPlan) -> str:
-    """A deterministic, zero-extra-cost state-flow diagram from A2s's own
-    `visual.dominant_object`/`states` (plan §20.5) -- that data is already
-    authored by a real LLM call and was simply never rendered anywhere
-    (real gap, user-reported 2026-09-11: the short's whole visual field
-    was collected and then silently dropped). No new call is needed; this
-    only draws what A2s already decided."""
+def _flow_stages(plan: ShortPlan) -> list[str]:
+    """A2s's own `visual.dominant_object`/`states` (plan §20.5) -- real
+    content already authored by a real LLM call, previously silently
+    dropped (user-reported 2026-09-11). No new call is needed; this only
+    draws what A2s already decided."""
     states = [s for s in plan.visual.states if s.strip()]
     if not states:
+        return []
+    return ([plan.visual.dominant_object] if plan.visual.dominant_object.strip() else []) + states
+
+
+def _render_flow_diagram(stages: list[str]) -> str:
+    """A real connected node-flow diagram (HTML/CSS, not monospace arrow
+    text) -- a labelled dot per stage joined by a connecting line, the
+    same visual idiom as the long-form `step_list` component. HTML text
+    wraps naturally regardless of label length, unlike hand-authored SVG
+    text (which does not wrap without manual line-breaking)."""
+    if not stages:
         return ""
-    stages = ([plan.visual.dominant_object] if plan.visual.dominant_object.strip() else []) + states
-    return " → ".join(stages)
+    nodes = []
+    for i, stage in enumerate(stages):
+        connector = '<div class="short-flow-connector"></div>' if i < len(stages) - 1 else ""
+        nodes.append(
+            '<div class="short-flow-node">'
+            '<div style="display:flex;flex-direction:column;align-items:center;">'
+            f'<div class="short-flow-dot"></div>{connector}'
+            "</div>"
+            f'<div class="short-flow-label">{_esc(stage)}</div>'
+            "</div>"
+        )
+    return f'<div class="short-flow">{"".join(nodes)}</div>'
 
 
 def _render_screen(segment: str, prose: str, include_metadata: bool, diagram: str = "") -> str:
     narration_attr = f' data-narration-id="{_esc(segment)}"' if include_metadata else ""
-    diagram_html = f'<div class="short-visual">{_esc(diagram)}</div>' if diagram else ""
+    prose_style = _PROSE_STYLE.get(segment, _PROSE_STYLE["setup"])
     return (
         f'<div id="{_esc(segment)}" class="short-screen reveal"{narration_attr}>'
         f'<div class="short-label">{_esc(segment)}</div>'
-        f'<div class="short-safe-content"><div>{diagram_html}<p class="short-prose">{_esc(prose)}</p></div></div>'
+        f'<div class="short-safe-content"><div>{diagram}<p class="short-prose" style="{prose_style}">{_esc(prose)}</p></div></div>'
         f"</div>"
     )
 
@@ -83,7 +118,7 @@ def synthesize_short_html(plan: ShortPlan, narration: list[SceneNarration]) -> s
     from .component_library import BASE_STYLESHEET, css_tokens, escape_script_json
 
     narration_by_id = {n.scene_id: n for n in narration}
-    diagram = _dominant_object_flow(plan)
+    diagram = _render_flow_diagram(_flow_stages(plan))
     screens_html = "".join(
         _render_screen(
             seg, " ".join(s.text for s in narration_by_id[seg].sentences), include_metadata=True,

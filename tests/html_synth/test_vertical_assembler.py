@@ -72,44 +72,51 @@ def test_prose_is_html_escaped():
     JSON blob, which is safe (script content is never HTML-parsed)."""
     narration = [SceneNarration(scene_id="hook", sentences=[SentenceNarration(text="<b>x</b>", sentence_type="transition")])]
     html = synthesize_short_html(make_plan(), narration)
-    assert '<p class="short-prose">&lt;b&gt;x&lt;/b&gt;</p>' in html
+    hook_screen = html.split('<div id="hook"')[1].split('<div id="setup"')[0] if '<div id="setup"' in html else html.split('<div id="hook"')[1]
+    assert "&lt;b&gt;x&lt;/b&gt;" in hook_screen
+    assert "<b>x</b>" not in hook_screen
 
 
-def test_visual_dominant_object_and_states_render_as_a_diagram_on_the_mechanism_screen():
+def test_visual_dominant_object_and_states_render_as_a_flow_diagram_on_the_mechanism_screen():
     """Real gap found 2026-09-11 (user-reported): A2s's own `visual` field
     (dominant_object + states, plan §20.5) was authored by a real LLM call
     and then never rendered anywhere -- shorts were bare prose with no
-    visual at all. This is a deterministic, zero-extra-cost render of data
-    that already exists, not a new LLM call."""
+    visual at all. Rendered as a real connected node-flow diagram (a
+    labelled dot per stage, HTML/CSS not monospace text) rather than one
+    joined arrow-string, per direct user feedback that plain text never
+    reads as "a real visual"."""
     plan = make_plan(visual=ShortVisual(dominant_object="attention weights", states=["uniform", "peaked", "dominant"]))
     html = synthesize_short_html(plan, make_narration())
-    assert "attention weights → uniform → peaked → dominant" in html
     # the diagram belongs on the mechanism screen specifically -- split on
     # the screen's own opening `<div id="...">` tag, not the bare "id=..."
     # substring (which also matches this same screen's `data-narration-id`)
     mechanism_screen = html.split('<div id="mechanism"')[1].split('<div id="payoff"')[0]
-    assert 'class="short-visual"' in mechanism_screen
+    assert 'class="short-flow"' in mechanism_screen
+    for stage in ("attention weights", "uniform", "peaked", "dominant"):
+        assert f'class="short-flow-label">{stage}<' in mechanism_screen
     hook_screen = html.split('<div id="hook"')[1].split('<div id="setup"')[0]
-    assert 'class="short-visual"' not in hook_screen
+    assert 'class="short-flow"' not in hook_screen
 
 
 def test_no_visual_states_renders_no_diagram_block_not_a_crash():
     html = synthesize_short_html(make_plan(visual=ShortVisual()), make_narration())
-    assert 'class="short-visual"' not in html
+    assert 'class="short-flow"' not in html
 
 
 def test_dominant_object_alone_with_no_states_renders_no_diagram():
     """A single label with no states to move through isn't a flow diagram --
     nothing forced onto the page just because one field is set."""
     html = synthesize_short_html(make_plan(visual=ShortVisual(dominant_object="attention weights")), make_narration())
-    assert 'class="short-visual"' not in html
+    assert 'class="short-flow"' not in html
 
 
 def test_diagram_content_is_html_escaped():
     plan = make_plan(visual=ShortVisual(dominant_object="<b>x</b>", states=["<i>y</i>"]))
     html = synthesize_short_html(plan, make_narration())
     assert "<b>x</b>" not in html
+    assert "<i>y</i>" not in html
     assert "&lt;b&gt;x&lt;/b&gt;" in html
+    assert "&lt;i&gt;y&lt;/i&gt;" in html
 
 
 def test_narration_containing_script_close_tag_cannot_break_out_of_the_script_block():

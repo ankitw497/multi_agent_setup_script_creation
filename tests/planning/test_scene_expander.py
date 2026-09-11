@@ -25,6 +25,17 @@ def make_budget() -> BudgetCounter:
     return BudgetCounter(tier=DEFAULT_TIERS["longform"])
 
 
+def test_prompt_instructs_using_a_concrete_illustration_when_a_claim_has_one():
+    """Real gap found 2026-09-11 (user-reported): a hook beat's scene
+    visual_description stayed a generic paraphrase even though its own
+    available_claims included a crisp, literal example (the source's
+    "tired" vs "steep" minimal pair) -- the prompt never told this pass to
+    prefer the concrete illustration over its own restatement of one."""
+    from planning.scene_expander import TASK_PROMPT
+
+    assert "concrete illustration" in TASK_PROMPT
+
+
 def test_scenes_are_ided_and_tagged_with_the_beat():
     story_lead = FakeStoryLead(BeatSceneExpansion(scenes=[
         {"narrative_beat": "teaching", "visual_description": "x", "word_budget": 60},

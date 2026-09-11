@@ -29,7 +29,13 @@ preferred), a narrative_beat (hook/teaching/escalation/reveal/close --
 single-idea visual_description that follows from the beat's own
 `purpose`, `forward_driver`, and `archetype_role` -- the scene must feel
 caused by what came before it. Ground everything in the `available_claims`
-given; never introduce a technical claim outside that registry.
+given; never introduce a technical claim outside that registry. When an
+available claim already IS a concrete illustration (an actual example, a
+specific sentence pair, a real number) rather than an abstract statement,
+the `visual_description` for the scene grounded in it must reference that
+concrete illustration directly -- do not compress a claim like "changing
+X to Y flips the answer" into a vaguer restatement like "context matters
+for meaning."
 """
 
 

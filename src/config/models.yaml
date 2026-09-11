@@ -32,6 +32,18 @@ paid_api_lane:
   openai_story_mini:
     resolved: "gpt-4o-mini"
     verified: true          # confirmed working 2026-09-10: 12 in / 1 out tokens, $0.0000024
+  openai_story_strong_gpt56:
+    resolved: "gpt-5.6-sol"
+    verified: true          # confirmed 2026-09-11: reasoning-capable (litellm.supports_
+                            # reasoning() is True, unlike gpt-4o) but NOT a hidden-
+                            # reasoning-burn trap like gemini_review_flash's default --
+                            # a moderate real-shaped prompt used 69/272 completion tokens
+                            # on reasoning ($0.005968), not the 95/96 seen there. Left
+                            # reasoning_effort unset on purpose, matching the strong
+                            # tier's existing convention, pending more real-call evidence
+                            # before pinning an explicit value. Not yet the default
+                            # openai_story_strong alias -- a one-off comparison run
+                            # (user-requested, 2026-09-11), not adopted pipeline-wide.
   gemini_review_strong:
     resolved: "gemini/gemini-3.1-pro-preview"
     verified: true            # confirmed 2026-09-10, $0.001128 for a 6 in/93 out call
