@@ -69,7 +69,7 @@ certain first:
 | 6 | ~~C3 also reviews H's screen prose~~ [x] code+tests done, live-verify pending | 6 | A whole artifact currently has zero critique coverage |
 | 7 | ~~Typed formula/numeric state validators~~ [x] code+tests done, live-verify pending | 6 | Fixes the confirmed raw-vs-scaled and dropped-`√d_k` class of bug |
 | 8 | ~~A2b neighbor contract~~ [x] code+tests done, live-verify pending | 5 | Improves transitions; larger change than the above |
-| 9 | Airtime by narrative role, not source volume | 7 | Real fix for section bloat, but touches allocation for every run |
+| 9 | ~~Airtime by narrative role, not source volume~~ [x] sub-item #1 done, #2/#3 still open | 7 | Real fix for section bloat, but touches allocation for every run |
 | 10 | Build C4c mid-video cold viewer | 8.2 | New module; do after the cheap retention wins land |
 
 Everything above item 5 is small and low-risk. Items 6-10 are real work. Item 8.6 (story
@@ -673,16 +673,21 @@ section, because they happened to cite a similar number of source units. The "ho
 long / masking is too long" complaints every review has raised are therefore not narration
 failures at all -- they are decided at allocation time, before a word is written.
 
-- [ ] `planning/beat_word_budget.py` — allow the plan's own archetype/hook to declare
-      `retention_deadlines` (central_problem/mechanism_preview/first_payoff seconds), and
-      weight the deterministic per-beat allocation to respect them, not just split
-      proportionally by `len(source_unit_ids)`. Keep the allocation itself deterministic
-      Python, matching this module's own existing ERR-010/ERR-023 rationale -- do not move
-      this back into an LLM call
-- [ ] `verification/hard/structure.py` or a new diagnostic — flag a beat whose ALLOCATED
-      budget is a large outlier relative to its own content density (e.g. `available_claims`
-      count), not just whether the grand total matches -- catches an individual bloated
-      section even when the overall video is within budget
+- [x] **Implemented 2026-09-11.** `planning/models.py` gained `RetentionDeadline
+      (archetype_role, max_seconds)`; `StoryStructure.retention_deadlines: list[RetentionDeadline]`
+      (empty by default, A2's own `TASK_PROMPT` instructs it to only declare one where pacing
+      genuinely matters). `planning/beat_word_budget.py::allocate_beat_word_budgets()` gained
+      an optional `retention_deadlines` param -- caps the beat matching a declared
+      `archetype_role` so its cumulative runtime never exceeds `max_seconds` (never below
+      `MIN_BEAT_WORDS`), redistributing the reclaimed words proportionally across every other
+      beat so the total still sums to exactly the target. Allocation stays deterministic
+      Python throughout, per this module's own ERR-010/ERR-023 rationale -- no LLM involved.
+- [x] **Implemented.** `verification/diagnostics/pacing.py::check_beat_airtime_outliers(plan,
+      claims)` -- new AMBER-banded diagnostic (never a hard gate, matching this session's
+      pattern for new soft checks) flagging a beat whose allocated words-per-claim is a
+      >2x/<0.5x outlier against the plan's own median, using each beat's own claim density as
+      the yardstick rather than a fixed word-count band. Wired into `pipeline.py`'s existing
+      diagnostics list.
 
 **#2 -- Preview can be too complete, not just present.** `B2` (Phase 1's `scene_function` would
 tag this `preview`) gives the viewer the exact Q, K, V roles, exact match scores, and exact
@@ -717,12 +722,26 @@ knowing the video's own current mode:
 - [ ] `narration/generator.py`/`review/story_critic.py` — a recap/summary scene must not state a
       scoped mechanism as if unconditional; extend the OVERCLAIM check (or a new, narrow check)
       to flag exactly this pattern using the ledger's own recorded scope, not just prose judgment
-- [ ] Unit tests for all three sub-items above
-- [ ] `.venv/bin/python3 -m pytest -q` green
-- [ ] **Live-verify**: re-run against the same real source; confirm per-section outlier
-      detection fires on a deliberately-bloated section; confirm a derivation scene following a
-      complete preview narrates as confirmation, not fresh discovery; confirm a recap after a
-      scoped mechanism (like masking) is introduced states the scope correctly
+- [x] Unit tests for sub-item #1 (`test_beat_word_budget.py`: deadline caps and redistributes,
+      no-op with no deadlines/no matching role/already-satisfied, floor never breached;
+      `test_pacing.py`: outlier flagged, even allocation clean, zero-claim beats excluded, too
+      few beats is GREEN not a crash; `test_story_planner.py`: prompt-content test, a spy test
+      confirming `retention_deadlines` actually reaches the allocator). **Sub-items #2
+      (preview completeness) and #3 (mechanism scope) remain fully unimplemented** -- not
+      started this pass; scoped out to keep this change reviewable, tracked below as still open.
+- [x] `.venv/bin/python3 -m pytest -q` green (820 passed, up from 809) -- for sub-item #1 only
+- [ ] **Live-verify** (sub-item #1 only): re-run against the same real source; confirm
+      per-section outlier detection fires on a deliberately-bloated section -- not yet run
+- [ ] Sub-item #2 (preview completeness) -- not started: `planning/scene_expander.py` extend
+      `scene_function=preview`'s guidance to be explicit about which exact values (if any) it
+      reveals; `narration/generator.py` require derivation scenes to frame an already-previewed
+      exact value as confirming/explaining, never as a fresh reveal
+- [ ] Sub-item #3 (mechanism scope) -- not started: `planning/models.py` add a lightweight
+      `mechanism_scope` concept to `ViewerLedger` (or a sibling), e.g.
+      `{"causal_mask_required": bool}`, set once a beat like B10 establishes it;
+      `narration/generator.py`/`review/story_critic.py` flag a recap/summary stating a scoped
+      mechanism as if unconditional, using the ledger's own recorded scope
+- [ ] Unit tests + live-verify for sub-items #2 and #3, once built
 
 ---
 
