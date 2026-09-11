@@ -256,12 +256,16 @@ def test_prompt_instructs_addressing_replan_feedback():
     assert "previous_archetype" in TASK_PROMPT
 
 
-def test_requests_a_generous_max_tokens_override():
+def test_does_not_override_max_tokens_itself_leaves_it_to_the_agents_own_default():
     """Real bug found 2026-09-10 (ERR-021): a full multi-scene StoryPlan was
-    truncated mid-string at the shared 2048-token default. Now that
-    scene_plan is a separate pass (ERR-010/ERR-023), A2's own call is much
-    smaller, but it still gets an explicit override rather than relying on
-    the shared default alone -- cheap insurance for a plan with many beats."""
+    truncated mid-string at the shared 2048-token default -- originally
+    fixed with a hardcoded max_tokens=4000 override right here. Moved
+    2026-09-11 (STORY_IMPROVEMENT_PLAN.md Phase 4) into per-alias config
+    (config/models.yaml's own max_tokens field, threaded through
+    Agent.default_max_tokens) so a DIFFERENT story_lead alias (e.g. a
+    reasoning-capable model) can carry its own, different ceiling instead
+    of inheriting gpt-4o's -- see agents/test_factories.py for the
+    per-alias coverage. plan_story() itself must no longer hardcode one."""
     story_lead = FakeStoryLead(make_plan())  # make_plan() has no beats -> only the A2 call happens
     from planning.models import SourceBrief
 
@@ -270,7 +274,7 @@ def test_requests_a_generous_max_tokens_override():
         [], AssumptionLedger(), story_lead, BudgetCounter(tier=DEFAULT_TIERS["longform"]),
         target_duration_seconds=600, source_units=[],
     )
-    assert story_lead.calls[0]["max_tokens"] >= 4000
+    assert "max_tokens" not in story_lead.calls[0]
 
 
 def test_viewer_ledger_threads_across_multiple_beats_end_to_end():

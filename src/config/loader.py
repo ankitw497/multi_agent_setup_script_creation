@@ -22,7 +22,11 @@ def budget_config() -> dict:
     return load_yaml("budget.yaml")
 
 
-def resolve_model(lane: str, alias: str) -> tuple[str, str | None]:
-    """(model_resolved, reasoning_effort) for one alias, e.g. ("paid_api_lane", "gemini_review_flash")."""
+def resolve_model(lane: str, alias: str) -> tuple[str, str | None, int | None]:
+    """(model_resolved, reasoning_effort, max_tokens) for one alias, e.g.
+    ("paid_api_lane", "gemini_review_flash"). `max_tokens` is the per-alias
+    output-token ceiling (reasoning tokens count against it for a
+    reasoning-capable model, per the provider's own combined-budget
+    behavior) -- None means "use the backend's own default"."""
     entry = models_config()[lane][alias]
-    return entry["resolved"], entry.get("reasoning_effort")
+    return entry["resolved"], entry.get("reasoning_effort"), entry.get("max_tokens")

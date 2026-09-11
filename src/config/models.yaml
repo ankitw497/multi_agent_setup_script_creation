@@ -21,6 +21,12 @@ subscription_lane:
 paid_api_lane:
   openai_story_strong:
     resolved: "gpt-4o"
+    max_tokens: 4000        # moved here from story_planner.py's own hardcoded A2 override
+                            # (2026-09-11) so a different story_lead alias (e.g. the
+                            # reasoning-capable gpt-5.6-sol below) can carry its OWN
+                            # ceiling instead of inheriting gpt-4o's. Same value, same
+                            # behavior as before this move -- see ERR-021 for why 4000
+                            # (raised from a 2048 default that truncated a full StoryPlan).
     verified: true          # confirmed 2026-09-10 across several real A2/A3 calls.
                             # Not a reasoning model (litellm.supports_reasoning("gpt-4o")
                             # is False, unlike e.g. "o3-mini") -- no reasoning_effort
@@ -34,16 +40,35 @@ paid_api_lane:
     verified: true          # confirmed working 2026-09-10: 12 in / 1 out tokens, $0.0000024
   openai_story_strong_gpt56:
     resolved: "gpt-5.6-sol"
+    reasoning_effort: "medium"  # 2026-09-11 STORY_IMPROVEMENT_PLAN.md Phase 4 fix: a real
+                            # A2 call with this LEFT UNSET (relying on the provider default,
+                            # which litellm's own model_cost map confirms IS "medium" for
+                            # this model) still burned the ENTIRE 4000-token max_tokens
+                            # ceiling on hidden reasoning against a real, complex A2 prompt
+                            # (13.7k input tokens) -- output.beats came back empty
+                            # (StoryStructure's own pydantic defaults, never actually
+                            # generated), and the run FAILed after exhausting its replan
+                            # budget, at ~$0.28 wasted on the two empty A2 calls alone.
+                            # `reasoning_effort` and `max_tokens` (below) are NOT
+                            # independent controls here -- litellm/OpenAI's own
+                            # max_tokens is a COMBINED ceiling over hidden reasoning +
+                            # visible output tokens for a reasoning model, confirmed via
+                            # litellm.model_cost["gpt-5.6-sol"] (supports_reasoning=true,
+                            # $4/1M input, $20/1M output -- reasoning tokens bill at the
+                            # OUTPUT rate, no separate reasoning price). Pinned explicitly
+                            # here (matching the provider default) rather than left unset,
+                            # per this project's own "pin the exact config, never trust an
+                            # implicit default" discipline (plan Appendix E #8).
+    max_tokens: 10000       # raised from the inherited 4000 (see reasoning_effort comment
+                            # above) specifically so reasoning + the actual StoryStructure
+                            # JSON can both fit -- not yet confirmed sufficient by a live
+                            # run; if this alias is adopted, revisit whether 10000 is
+                            # enough headroom or still needs raising further.
     verified: true          # confirmed 2026-09-11: reasoning-capable (litellm.supports_
-                            # reasoning() is True, unlike gpt-4o) but NOT a hidden-
-                            # reasoning-burn trap like gemini_review_flash's default --
-                            # a moderate real-shaped prompt used 69/272 completion tokens
-                            # on reasoning ($0.005968), not the 95/96 seen there. Left
-                            # reasoning_effort unset on purpose, matching the strong
-                            # tier's existing convention, pending more real-call evidence
-                            # before pinning an explicit value. Not yet the default
-                            # openai_story_strong alias -- a one-off comparison run
-                            # (user-requested, 2026-09-11), not adopted pipeline-wide.
+                            # reasoning() is True, unlike gpt-4o). Still NOT yet the
+                            # default openai_story_strong alias -- a live A/B comparison
+                            # (STORY_IMPROVEMENT_PLAN.md Phase 4), not adopted pipeline-wide
+                            # until it demonstrably helps.
   gemini_review_strong:
     resolved: "gemini/gemini-3.1-pro-preview"
     verified: true            # confirmed 2026-09-10, $0.001128 for a 6 in/93 out call

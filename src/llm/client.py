@@ -141,6 +141,7 @@ class LLMClient:
             revision_cycle=revision_cycle,
             input_tokens=result.input_tokens,
             output_tokens=result.output_tokens,
+            reasoning_tokens=result.reasoning_tokens,
             billed_microusd=result.billed_microusd,
             latency_ms=result.latency_ms,
         )

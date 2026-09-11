@@ -30,6 +30,7 @@ class Agent:
     model_resolved: str
     base_system_prompt: str
     default_reasoning_effort: str | None = None  # from config/models.yaml; a per-call override wins
+    default_max_tokens: int | None = None  # from config/models.yaml; a per-call override wins
 
     def run(
         self,
@@ -48,6 +49,7 @@ class Agent:
         images: list[str] | None = None,
     ) -> T:
         reasoning_effort = reasoning_effort if reasoning_effort is not None else self.default_reasoning_effort
+        max_tokens = max_tokens if max_tokens is not None else self.default_max_tokens
         system_prompt = f"{self.base_system_prompt}\n\n{task_prompt}\n\n{schema_prompt(schema)}"
         user_payload = json.dumps(payload, default=str)
 

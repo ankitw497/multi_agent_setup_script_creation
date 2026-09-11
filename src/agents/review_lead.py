@@ -26,10 +26,11 @@ BASE_SYSTEM_PROMPT = (
 
 def make_review_lead(client: LLMClient, tier: str = "strong") -> Agent:
     alias = "gemini_review_strong" if tier == "strong" else "gemini_review_flash"
-    model_resolved, reasoning_effort = resolve_model("paid_api_lane", alias)
+    model_resolved, reasoning_effort, max_tokens = resolve_model("paid_api_lane", alias)
     return Agent(
         name="review_lead", lane="paid_api", client=client,
         model_alias=alias, model_resolved=model_resolved,
         base_system_prompt=BASE_SYSTEM_PROMPT,
         default_reasoning_effort=reasoning_effort,
+        default_max_tokens=max_tokens,
     )

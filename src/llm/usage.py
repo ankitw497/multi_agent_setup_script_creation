@@ -41,6 +41,7 @@ class UsageRecord:
     revision_cycle: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
+    reasoning_tokens: int = 0  # subset of output_tokens a reasoning-capable model spent on hidden reasoning
     cache_read_tokens: int = 0
     cache_write_tokens: int = 0
     billed_microusd: int = 0  # paid lane only

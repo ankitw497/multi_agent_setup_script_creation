@@ -190,17 +190,17 @@ def plan_story(
     structure = story_lead.run(
         pass_id="A2", mode="PLAN", task_prompt=TASK_PROMPT,
         payload=payload, schema=StoryStructure, budget=budget, estimated_usd=0.10,
-        # A real 2048-token default truncated a full StoryPlan mid-string
-        # (2026-09-10, ERR-021) before the scene-plan split existed; kept
-        # generous here too even though this call's output is now much
-        # smaller (no scene_plan) -- cheap insurance against a plan with
-        # unusually many beats. Confirmed via litellm.supports_reasoning()
-        # the original truncation was genuine output-length truncation, NOT
-        # the ERR-005 hidden-reasoning-token trap: openai_story_strong
-        # resolves to gpt-4o, which litellm reports has no reasoning budget
-        # at all. Re-check that first if this alias is ever repointed at a
-        # reasoning-capable model.
-        max_tokens=4000,
+        # No max_tokens override here -- it comes from story_lead's own
+        # `default_max_tokens` (config/models.yaml, per alias). A real
+        # 2048-token default truncated a full StoryPlan mid-string
+        # (2026-09-10, ERR-021) before the scene-plan split existed;
+        # `openai_story_strong` (gpt-4o) keeps 4000 there for exactly this
+        # reason. A reasoning-capable alias needs its OWN, usually larger,
+        # ceiling -- reasoning tokens count against the same budget as the
+        # actual output (confirmed 2026-09-11 for gpt-5.6-sol: an unset/
+        # default reasoning effort burned the entire ceiling with zero room
+        # left for the real StoryStructure). Per-alias config is what lets
+        # each model carry the ceiling it actually needs.
     )
     if archetype_override and structure.archetype != archetype_override:
         raise ValueError(

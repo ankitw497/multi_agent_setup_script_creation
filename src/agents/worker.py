@@ -20,7 +20,7 @@ BASE_SYSTEM_PROMPT = (
 
 
 def make_worker(client: LLMClient) -> Agent:
-    model_resolved, _ = resolve_model("subscription_lane", "haiku")
+    model_resolved, _, _ = resolve_model("subscription_lane", "haiku")
     return Agent(
         name="worker", lane="subscription", client=client,
         model_alias="haiku", model_resolved=model_resolved,

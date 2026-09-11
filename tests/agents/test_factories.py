@@ -46,6 +46,28 @@ def test_story_lead_alias_override_pins_a_specific_model():
     assert agent.model_resolved == "gpt-5.6-sol"
 
 
+def test_story_lead_default_alias_carries_its_own_max_tokens_ceiling():
+    """ERR-021's fix (max_tokens=4000 for A2) moved from a hardcoded
+    override in story_planner.py into per-alias config (2026-09-11) so a
+    different alias can carry a different ceiling -- confirms gpt-4o keeps
+    the exact same effective value as before the move."""
+    agent = make_story_lead(DummyClient())
+    assert agent.default_max_tokens == 4000
+
+
+def test_story_lead_gpt56_alias_pins_reasoning_effort_and_a_larger_ceiling():
+    """Real finding (2026-09-11, STORY_IMPROVEMENT_PLAN.md Phase 4): with
+    reasoning_effort left unset and max_tokens=4000 inherited from gpt-4o's
+    own value, a real A2 call against gpt-5.6-sol burned the entire ceiling
+    on hidden reasoning and returned an empty StoryStructure (beats=[]) --
+    max_tokens is a COMBINED budget over reasoning + visible output for a
+    reasoning-capable model, not a separate reasoning allowance. Pinned
+    explicitly (not left unset) and raised, pending live re-verification."""
+    agent = make_story_lead(DummyClient(), alias_override="openai_story_strong_gpt56")
+    assert agent.default_reasoning_effort == "medium"
+    assert agent.default_max_tokens == 10000
+
+
 def test_story_lead_alias_override_takes_precedence_over_tier():
     agent = make_story_lead(DummyClient(), tier="mini", alias_override="openai_story_strong_gpt56")
     assert agent.model_alias == "openai_story_strong_gpt56"

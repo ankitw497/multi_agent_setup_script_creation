@@ -32,10 +32,11 @@ def make_story_lead(client: LLMClient, tier: str = "strong", alias_override: str
     tier-based default -- never adopted as the default itself without a
     real live comparison first."""
     alias = alias_override or ("openai_story_strong" if tier == "strong" else "openai_story_mini")
-    model_resolved, reasoning_effort = resolve_model("paid_api_lane", alias)
+    model_resolved, reasoning_effort, max_tokens = resolve_model("paid_api_lane", alias)
     return Agent(
         name="story_lead", lane="paid_api", client=client,
         model_alias=alias, model_resolved=model_resolved,
         base_system_prompt=BASE_SYSTEM_PROMPT,
         default_reasoning_effort=reasoning_effort,
+        default_max_tokens=max_tokens,
     )

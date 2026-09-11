@@ -29,7 +29,7 @@ BASE_SYSTEM_PROMPT = (
 
 
 def make_narration_lead(client: LLMClient) -> Agent:
-    model_resolved, _ = resolve_model("subscription_lane", "sonnet")
+    model_resolved, _, _ = resolve_model("subscription_lane", "sonnet")
     return Agent(
         name="narration_lead", lane="subscription", client=client,
         model_alias="sonnet", model_resolved=model_resolved,
