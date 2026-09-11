@@ -5,7 +5,7 @@ import pytest
 
 from llm.budget import BudgetCounter, DEFAULT_TIERS
 from review.models import CritiqueIssue
-from review.visual_critic import VisualCritique, critique_visuals, scene_payload
+from review.visual_critic import TASK_PROMPT, VisualCritique, critique_visuals, scene_payload
 
 
 class FakeVisualAuditor:
@@ -49,6 +49,7 @@ def test_scene_payload_shape_reaches_the_call():
     assert sent_scenes == [{
         "scene_id": "s1", "image_index": 0,
         "screen_prose": "the prose text", "narration_text": "the spoken text",
+        "scene_function": "standard", "must_not_repeat": [], "running_example": {},
     }]
 
 
@@ -60,6 +61,40 @@ def test_returns_the_issues_from_the_critique():
     result = critique_visuals([scene_payload("s1", 0, "p", "n")], ["img"], auditor, budget)
 
     assert result == [issue]
+
+
+def test_scene_function_must_not_repeat_and_running_example_reach_the_call():
+    """STORY_IMPROVEMENT_PLAN.md Phase 6 (BUG-4): C3 is the only place H's
+    screen prose gets checked for repetition against the plan's own
+    intent -- confirms the ledger fields actually reach the payload."""
+    auditor = FakeVisualAuditor(VisualCritique(issues=[]))
+    budget = BudgetCounter(tier=DEFAULT_TIERS["longform"])
+    payloads = [scene_payload(
+        "s1", 0, "prose", "narration",
+        scene_function="derivation", must_not_repeat=["Q/K/V roles"],
+        running_example={"label": "trophy/suitcase"},
+    )]
+
+    critique_visuals(payloads, ["img"], auditor, budget)
+
+    sent = auditor.calls[0]["payload"]["scenes"][0]
+    assert sent["scene_function"] == "derivation"
+    assert sent["must_not_repeat"] == ["Q/K/V roles"]
+    assert sent["running_example"] == {"label": "trophy/suitcase"}
+
+
+def test_prompt_instructs_checking_screen_prose_for_repetition_and_overclaim():
+    assert "REPETITION" in TASK_PROMPT
+    assert "OVERCLAIM" in TASK_PROMPT
+    assert "must_not_repeat" in TASK_PROMPT
+
+
+def test_prompt_has_no_hardcoded_topic_vocabulary():
+    """Overfitting guard (Phase 3's own precedent) -- this prompt runs on
+    every future video regardless of topic."""
+    lowered = TASK_PROMPT.lower()
+    for term in ("q/k/v", "softmax", "multi-head"):
+        assert term not in lowered, f"found topic-specific term {term!r} in a generic per-video prompt"
 
 
 def test_uses_pass_id_c3_and_visual_auditor_mode():

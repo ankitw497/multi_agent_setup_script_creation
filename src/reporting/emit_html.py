@@ -19,6 +19,11 @@ def emit_html_deliverables(result: HtmlSynthesisResult, target_dir: str | Path) 
     (target_dir / "render_report.json").write_text(json.dumps({
         "render_issues": [{"code": i.code, "detail": i.detail} for i in result.render_issues],
         "renderer_compat_ok": len(result.render_issues) == 0,
+        # Every C3 finding, not just the structural subset that already
+        # routed to repair -- STORY_IMPROVEMENT_PLAN.md Phase 6 fix: these
+        # used to be silently discarded once the structural ones were
+        # pulled out (never surfaced anywhere, not even here).
+        "visual_critique_issues": [i.model_dump() for i in result.visual_critique_issues],
     }, indent=2))
 
     return target_dir

@@ -36,6 +36,11 @@ class HtmlSynthesisResult:
     render_issues: list[RenderIssue] = field(default_factory=list)
     repairs_used: int = 0
     degraded_capabilities: list[str] = field(default_factory=list)
+    # Every C3 finding, not just the structural subset that routes to
+    # repair -- STORY_IMPROVEMENT_PLAN.md Phase 6 fix: these used to be
+    # computed and then silently discarded (never returned, never
+    # reported anywhere) once the structural ones were pulled out.
+    visual_critique_issues: list[CritiqueIssue] = field(default_factory=list)
 
 
 def synthesize_video_html(
@@ -147,6 +152,7 @@ def synthesize_and_repair_video_html(
     # Not marked degraded when rendered checks ran but never got clean
     # within budget -- that's a real gate that failed, not a missing
     # capability; only "Playwright was never available at all" degrades. ----
+    visual_critique_issues: list[CritiqueIssue] = []
     if enable_rendered_checks and rendered_ran_clean:
         video_script_html, page_html = synthesize_page(plan, hero, beat_visuals, narration)
         scene_ids = [n.scene_id for n in narration]
@@ -157,11 +163,19 @@ def synthesize_and_repair_video_html(
         if screenshots:
             prose_by_scene = {s.scene_id: s.screen_prose for bv in beat_visuals for s in bv.scenes}
             narration_by_scene = {n.scene_id: " ".join(s.text for s in n.sentences) for n in narration}
-            payloads = [
-                scene_payload(sid, i, prose_by_scene.get(sid, ""), narration_by_scene.get(sid, ""))
-                for i, sid in enumerate(screenshots)
-            ]
+            scene_meta_by_id = {s.scene_id: s for s in plan.scene_plan}
+            running_example = plan.running_example.model_dump()
+            payloads = []
+            for i, sid in enumerate(screenshots):
+                meta = scene_meta_by_id.get(sid)
+                payloads.append(scene_payload(
+                    sid, i, prose_by_scene.get(sid, ""), narration_by_scene.get(sid, ""),
+                    scene_function=meta.scene_function if meta else "standard",
+                    must_not_repeat=meta.must_not_repeat if meta else [],
+                    running_example=running_example,
+                ))
             visual_issues = critique_visuals(payloads, list(screenshots.values()), visual_auditor, budget)
+            visual_critique_issues = visual_issues
             structural = _visual_critique_to_render_issues(visual_issues)
             if structural and apply_repairs(structural):
                 video_script_html, page_html = synthesize_page(plan, hero, beat_visuals, narration)
@@ -179,4 +193,5 @@ def synthesize_and_repair_video_html(
         video_script_html=video_script_html, page_html=page_html,
         hero=hero, beat_visuals=beat_visuals, render_issues=render_issues,
         repairs_used=repairs_used, degraded_capabilities=degraded_capabilities,
+        visual_critique_issues=visual_critique_issues,
     )

@@ -207,6 +207,64 @@ def test_playwright_unavailable_is_recorded_as_a_visible_degradation_and_skips_c
     assert not any(c["mode"] == "VISUAL_AUDITOR" for c in visual_auditor.calls)
 
 
+def test_c3_payload_carries_scene_function_must_not_repeat_and_running_example(monkeypatch):
+    """STORY_IMPROVEMENT_PLAN.md Phase 6 (BUG-4): C3 is the only place H's
+    screen prose gets any repetition/overclaim check at all -- confirms
+    the plan's own ledger fields actually reach its payload, not just
+    that visual_critic.py's own function signature accepts them."""
+    from planning.models import RunningExample
+
+    _patch_static_clean(monkeypatch)
+    monkeypatch.setattr("verification.hard.render_rendered.run_rendered_checks", lambda *a, **k: [])
+    monkeypatch.setattr(
+        "verification.hard.render_rendered.capture_scene_screenshots",
+        lambda *a, **k: {"s1": "data:image/jpeg;base64,AAAA"},
+    )
+    agent = make_agent()
+    visual_auditor = FakeAgent({VisualCritique: [VisualCritique(issues=[])]})
+
+    plan = make_plan()
+    plan.scene_plan[0].scene_function = "derivation"
+    plan.scene_plan[0].must_not_repeat = ["Q/K/V roles"]
+    plan.running_example = RunningExample(label="trophy/suitcase", values={"trophy": "9.6"})
+
+    synthesize_and_repair_video_html(plan, make_narration(), [], agent, visual_auditor, make_budget())
+
+    c3_call = next(c for c in visual_auditor.calls if c["mode"] == "VISUAL_AUDITOR")
+    sent = next(s for s in c3_call["payload"]["scenes"] if s["scene_id"] == "s1")
+    assert sent["scene_function"] == "derivation"
+    assert sent["must_not_repeat"] == ["Q/K/V roles"]
+    assert sent["running_example"]["label"] == "trophy/suitcase"
+
+
+def test_non_structural_c3_findings_are_captured_not_silently_dropped(monkeypatch):
+    """Real gap found 2026-09-11: C3's ordinary content critique (anything
+    not critical+RENDERER+html_author) used to be computed and then
+    discarded -- never returned, never reported anywhere."""
+    _patch_static_clean(monkeypatch)
+    monkeypatch.setattr("verification.hard.render_rendered.run_rendered_checks", lambda *a, **k: [])
+    monkeypatch.setattr(
+        "verification.hard.render_rendered.capture_scene_screenshots",
+        lambda *a, **k: {"s1": "data:image/jpeg;base64,AAAA"},
+    )
+    agent = make_agent()
+    repetition_issue = {
+        "issue_id": "V1", "severity": "major", "category": "repetition", "layer": "NARRATION",
+        "scene_ids": ["s1"], "problem": "re-explains an already-taught concept", "why_it_matters": "y",
+        "recommended_intent": "compress it", "repair_owner": "html_author",
+    }
+    visual_auditor = FakeAgent({VisualCritique: [VisualCritique(issues=[repetition_issue])]})
+
+    result = synthesize_and_repair_video_html(make_plan(), make_narration(), [], agent, visual_auditor, make_budget())
+
+    assert len(result.visual_critique_issues) == 1
+    assert result.visual_critique_issues[0].category == "repetition"
+    # Not structural (not RENDERER/html_author+critical) -- must not have
+    # triggered a repair or been folded into render_issues.
+    assert result.repairs_used == 0
+    assert result.render_issues == []
+
+
 def test_enable_rendered_checks_false_is_an_explicit_opt_out_not_a_degradation(monkeypatch):
     """Turning rendered checks off on purpose is not the same as them
     being unavailable -- only a genuinely missing capability degrades."""
