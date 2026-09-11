@@ -78,6 +78,145 @@ partial fixes above.
 
 ---
 
+## Confirmed bugs — implementation detail
+
+Every bug below is code-confirmed (not inferred), with the exact location and current shape,
+so it can be fixed without re-deriving the diagnosis. Line numbers are as of 2026-09-11 and
+may drift -- match on the code, not the line.
+
+### BUG-1 — B2 discards the Viewer Knowledge Ledger (Phase 8.1) · *start here*
+
+**Where:** `src/editing/targeted_rewrite.py`, in `apply_targeted_rewrite()`.
+
+**Current (broken) shape** — `scenes_payload` (~line 100) and the outer `payload` (~line 111):
+
+```python
+scenes_payload.append({
+    "scene_id": scene.scene_id, "beat_id": scene.beat_id,
+    "narrative_job": scene.narrative_job, "archetype_role": scene.archetype_role,
+    "narrative_beat": scene.narrative_beat, "visual_description": scene.visual_description,
+    "word_budget": scene.word_budget, "required_intent": intent,
+    "available_claims": [_claim_payload(c) for c in beat_claims],
+})
+payload = {
+    "story_promise": plan.story_promise, "central_question": plan.central_question,
+    "preserve": revision_plan.preserve, "scenes": scenes_payload,
+}
+```
+
+**Fix:** add the four Phase 1 fields, mirroring exactly what `narration/generator.py` already
+sends. Everything needed is already in scope -- `scene` is a `ScenePlan` (carries
+`scene_function`/`new_concepts`/`must_not_repeat`) and `plan` is a `StoryPlan` (carries
+`running_example`). **No signature change required.**
+
+```python
+    "scene_function": scene.scene_function, "new_concepts": scene.new_concepts,
+    "must_not_repeat": scene.must_not_repeat,
+# and on the outer payload:
+    "running_example": plan.running_example.model_dump(),
+```
+
+**Also:** `targeted_rewrite.py`'s `TASK_PROMPT` needs the same compress-don't-re-derive and
+reuse-the-locked-example rules `narration/generator.py`'s prompt already carries -- copy the
+generic (non-topic-specific) wording from there, and keep it generic (see the Phase 3
+overfitting note).
+
+**Verify:** unit test that B2's payload carries all four fields; then a real run where a scene
+tagged `scene_function=derivation` is rewritten by B2 and still doesn't re-derive its
+`must_not_repeat` concepts.
+
+### BUG-2 — hook pacing sums "hook"-tagged scenes across the whole video (Phase 2)
+
+**Where:** `src/verification/diagnostics/pacing.py`, `_hook_scene_seconds()` (~line 32).
+
+**Current (broken) shape:**
+
+```python
+hook_scenes = [s for s in plan.scene_plan if s.narrative_beat == "hook"]
+if hook_scenes:
+    return sum(s.word_budget for s in hook_scenes) / PLANNING_WPM * 60
+```
+
+**Why it's wrong:** A2b uses `narrative_beat="hook"` as a *per-section* rhetorical device, not
+exclusively for the video's opening. Real plan
+(`video-01-attention-model-c-gpt56sol-tuned/runs/v01`) tagged `B1_s01, B2_s01, B3_s01, B4_s01,
+B9_s01, B10_s01, B11_s01` -- so the sum included scenes from near the END of the video and
+reported 143s where the true hook was 64s.
+
+**Fix:** intersect the tag scan with the FIRST beat's own scenes, never the whole plan. The
+existing fallback branch (first beat's scenes) was correct all along -- make it the primary
+path, or filter `hook_scenes` to `s.beat_id == plan.beats[0].beat_id`.
+
+**Verify:** regression test where a late beat also carries a `narrative_beat="hook"` scene and
+must not inflate the measurement; then re-check the same real plan reports ~64s, not 143s.
+
+### BUG-3 — retention diagnostics read the planner's own booleans (Phase 8.4)
+
+**Where:** `src/verification/diagnostics/retention.py`, `_is_state_change()` (~line 32), used
+by `check_valleys` (~line 58) and `check_payoff_gap` (~line 90).
+
+**Current (broken) shape:**
+
+```python
+def _is_state_change(beat) -> bool:
+    return beat.new_information or beat.payoff or beat.visual_mode_change or beat.question_progress != "none"
+```
+
+All four are fields **A2 sets about its own plan**, so a plan that fills them in passes by
+construction. `check_driver_coverage` has the same problem in weaker form -- it only checks
+`forward_driver.strip()` is non-empty, never that the driver drives anything.
+
+**Fix:** derive state-change from the narration against the Phase 1 ledger -- did this beat's
+scenes actually introduce anything in `new_concepts`, or were they all `must_not_repeat`
+references? This wasn't possible when these diagnostics were written; Phase 1 made it
+possible. Note this changes the signature: these functions currently take only `plan`, and
+will need `narration` too (all call sites are in `orchestration/pipeline.py::_run_review_block`,
+which already has `narration` in scope).
+
+**Keep** the self-reported fields as a secondary signal: a beat declaring
+`new_information=True` whose scenes introduce zero `new_concepts` is itself a useful finding
+(planner/narration disagreement), just not the primary measurement.
+
+### BUG-4 — C1 cannot see H's on-screen prose, and cannot be simply extended to (Phase 6)
+
+**Where:** `src/review/story_critic.py`'s payload (~line 120) contains `narration` but no
+screen prose. H's output (`BeatVisual.scenes[].screen_prose`) is what the viewer actually
+reads, and no critic reviews it.
+
+**Implementation constraint that Phase 6's wording understates:** C1 runs inside
+`run_story_and_narration_loop()`, which **completes before** `synthesize_and_repair_video_html()`
+is called at all (`orchestration/run_pipeline.py` calls them in sequence). So "add screen prose
+to `critique_story()`'s payload" is *not implementable as written* -- at the time C1 runs, the
+screen prose does not exist yet.
+
+**Fix, one of:**
+- (a) a separate post-H critique pass reusing `story_critic.py`'s REPETITION/OVERCLAIM prompt
+  text against `BeatVisual` content, run inside `synthesize_and_repair_video_html`'s existing
+  repair loop so its findings can actually drive an H repair; **or**
+- (b) move the screen-prose review into the existing C3 visual-critic pass
+  (`review/visual_critic.py`), which already runs post-H and already has an `H REPAIR` route.
+
+(b) is likely cheaper -- C3 already exists, already runs at the right point, and already has a
+repair path. Decide before building.
+
+### BUG-5 — H receives none of the shared story state (Phase 6)
+
+**Where:** `src/html_synth/synthesizer.py::synthesize_beat_visual(beat, plan, claims, narration_lead)`
+(~line 110). Its payload carries `beat_purpose`, `forward_driver`, `learning_objective`, each
+scene's `visual_description`, allowed components and claims -- but no `running_example`, no
+`viewer_knows`, and not the scene's actual narration text.
+
+**Useful detail:** `plan` is *already a parameter*, so `plan.running_example` needs **no
+signature change** -- it's a payload-only fix. Passing the actual narration DOES need a
+signature change; both call sites are `orchestration/html_pipeline.py` (~lines 45 and 75),
+which already have `narration` in scope.
+
+**Verify:** re-render the real source and confirm a `diagram_card` in the scoring section
+reuses the locked example instead of inventing new entities (the confirmed `dog/park/bone`
+regression).
+
+---
+
 ## Phase 1 — Viewer Knowledge Ledger threaded through A2b (highest leverage)
 
 **Fixes:** the mechanical cause of cross-scene repetition (feedback §2.2, §3, §4, §5, §6, §7).
@@ -145,7 +284,8 @@ diagnostics, not an invented threshold.
       before the central tension is established" (target ≤30s) -- independently
       reproducing almost the exact magnitude the original feedback complained about
       (~180s). Confirms the diagnostic is wired correctly end to end. See ERROR_LOG.md.
-- [ ] **Real bug found** (2026-09-11, while independently verifying an external review's
+- [ ] **Real bug found — see BUG-2 above for the exact code and fix** (2026-09-11, while
+      independently verifying an external review's
       timing table against `video-01-attention-model-c-gpt56sol-tuned/runs/v01`): the review's
       own precise word-count-based timing (hook = 64s) was exactly right; this diagnostic
       instead reported 143s. Root cause: `check_hook_tension_pacing()` sums every scene
@@ -361,7 +501,9 @@ whatever they were told, while diverging from each other and from the plan's own
 example. This is exactly feedback item #20's *"narration entities vs. HTML entities vs.
 diagram entities... a render should fail validation if these diverge materially."*
 
-- [ ] `html_synth/synthesizer.py` — thread `plan.running_example` into `synthesize_beat_visual()`
+- [ ] **See BUG-5 above** (`plan` is already a parameter, so `running_example` needs no
+      signature change; the narration text does). `html_synth/synthesizer.py` — thread
+      `plan.running_example` into `synthesize_beat_visual()`
       and `synthesize_hero()`'s payloads; extend `TASK_PROMPT`/`HERO_TASK_PROMPT`: if
       `running_example` is set and a `diagram_card`/component illustrates it, reuse its exact
       named objects/values -- never invent a different one for the same underlying idea (same
@@ -402,10 +544,13 @@ reviews this artifact at all** -- only spoken narration. So the on-screen text a
 actually reads has zero critique coverage today, not even the OVERCLAIM check Phase 3 already
 built. This is a bigger, more concrete version of this phase's "cross-artifact" scope:
 
-- [ ] `review/story_critic.py` — extend `critique_story()`'s payload to also include H's
-      generated `screen_prose`/component content per scene (not just spoken narration), and
-      extend the REPETITION/OVERCLAIM checks to explicitly cover it. This is a real, currently
-      fully-uncovered artifact, not a hypothetical gap
+- [ ] Get H's generated `screen_prose`/component content under REPETITION/OVERCLAIM review --
+      a real, currently fully-uncovered artifact. **See BUG-4 above before starting**: C1 runs
+      inside the story loop, which finishes before H is ever called, so simply extending
+      `critique_story()`'s payload is NOT implementable -- the screen prose doesn't exist yet
+      at that point. Choose between a post-H critique pass and folding it into C3 (which
+      already runs post-H and already has an H-repair route); BUG-4 records why (b) looks
+      cheaper
 - [ ] **Do not** reach for "add more critic passes" or "escalate to a stronger model" as the
       first response to a missed on-screen overclaim -- the honest cause here is zero coverage,
       not weak coverage. Only consider giving C1 an escalation tier (matching the existing
@@ -551,7 +696,8 @@ B2 (both comparison runs ran it twice). This is the most likely mechanism behind
 issues that never clear across revision rounds, and a plausible one for the confirmed
 `dog/park/bone` running-example drift.
 
-- [ ] `editing/targeted_rewrite.py` — add `scene_function`, `new_concepts`, `must_not_repeat`
+- [ ] **See BUG-1 above for the exact payload shape and fix.** `editing/targeted_rewrite.py` —
+      add `scene_function`, `new_concepts`, `must_not_repeat`
       per scene and the shared `running_example` to B2's payload, matching what
       `narration/generator.py` already sends; extend B2's `TASK_PROMPT` with the same
       compress-don't-re-derive and reuse-the-locked-example rules B1 already carries
@@ -616,7 +762,8 @@ run C returned GREEN on all three retention diagnostics (`driver_coverage`, `val
 `payoff_gap`) while the human review scored retention/pacing as that run's *weakest*
 dimension. These currently measure schema compliance, not viewer experience.
 
-- [ ] `verification/diagnostics/retention.py` — derive state-change from the NARRATION against
+- [ ] **See BUG-3 above for the exact code, the signature change it forces, and the fix.**
+      `verification/diagnostics/retention.py` — derive state-change from the NARRATION against
       the ledger (did this beat's scenes actually introduce anything in `new_concepts`, or was
       it all `must_not_repeat` references?) instead of trusting the planner's booleans. The
       Phase 1 ledger makes this possible for the first time -- it wasn't available when these
