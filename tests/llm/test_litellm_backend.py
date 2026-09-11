@@ -139,6 +139,46 @@ def test_default_max_tokens_is_4096_not_2048(monkeypatch):
     assert captured["max_tokens"] == 4096
 
 
+def test_num_retries_defaults_to_3_and_is_forwarded_to_litellm(monkeypatch):
+    """ERR-032, 2026-09-11: a real ~45-minute, ~$0.71 run died on a single
+    transient Gemini 503 ("high demand, try again later") at the very last
+    call before completion -- litellm.completion() does not retry unless
+    told to. Whether litellm actually retries a given exception class is
+    litellm's own already-tested behavior, not ours to re-verify here;
+    this only locks in that we ask for it."""
+    fake_response = FakeResponse("OK", "gemini-3.6-flash", 6, 1)
+    captured = {}
+
+    def fake_completion(**kwargs):
+        captured.update(kwargs)
+        return fake_response
+
+    monkeypatch.setattr("litellm.completion", fake_completion)
+    monkeypatch.setattr("litellm.completion_cost", lambda completion_response: 0.0)
+
+    backend = LiteLLMBackend()
+    backend.call("gemini/gemini-3.6-flash", "sys", "user")
+
+    assert captured["num_retries"] == 3
+
+
+def test_num_retries_is_configurable(monkeypatch):
+    fake_response = FakeResponse("OK", "gemini-3.6-flash", 6, 1)
+    captured = {}
+
+    def fake_completion(**kwargs):
+        captured.update(kwargs)
+        return fake_response
+
+    monkeypatch.setattr("litellm.completion", fake_completion)
+    monkeypatch.setattr("litellm.completion_cost", lambda completion_response: 0.0)
+
+    backend = LiteLLMBackend(num_retries=5)
+    backend.call("gemini/gemini-3.6-flash", "sys", "user")
+
+    assert captured["num_retries"] == 5
+
+
 def test_max_tokens_override_is_forwarded_when_given(monkeypatch):
     fake_response = FakeResponse("OK", "gpt-4o", 6, 1)
     captured = {}

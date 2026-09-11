@@ -43,7 +43,9 @@ body{{background:#111;}}
   display:flex;align-items:center;}}
 .short-label{{position:absolute;top:24px;left:32px;font-size:15px;color:var(--text3);
   text-transform:uppercase;letter-spacing:0.08em;}}
-.short-prose{{font-size:38px;line-height:1.4;color:var(--text);font-family:var(--serif);}}
+.short-prose{{font-size:38px;line-height:1.4;color:var(--text);font-family:var(--sans);font-weight:600;letter-spacing:-0.5px;}}
+.short-visual{{font-family:'JetBrains Mono','SF Mono',monospace;font-size:20px;line-height:1.8;color:var(--text2);
+  text-align:center;white-space:pre-wrap;margin-bottom:28px;padding:16px 12px;background:var(--bg3);border-radius:var(--r-sm);}}
 """
 
 
@@ -51,12 +53,27 @@ def _esc(text: str) -> str:
     return html_module.escape(text, quote=False)
 
 
-def _render_screen(segment: str, prose: str, include_metadata: bool) -> str:
+def _dominant_object_flow(plan: ShortPlan) -> str:
+    """A deterministic, zero-extra-cost state-flow diagram from A2s's own
+    `visual.dominant_object`/`states` (plan §20.5) -- that data is already
+    authored by a real LLM call and was simply never rendered anywhere
+    (real gap, user-reported 2026-09-11: the short's whole visual field
+    was collected and then silently dropped). No new call is needed; this
+    only draws what A2s already decided."""
+    states = [s for s in plan.visual.states if s.strip()]
+    if not states:
+        return ""
+    stages = ([plan.visual.dominant_object] if plan.visual.dominant_object.strip() else []) + states
+    return " → ".join(stages)
+
+
+def _render_screen(segment: str, prose: str, include_metadata: bool, diagram: str = "") -> str:
     narration_attr = f' data-narration-id="{_esc(segment)}"' if include_metadata else ""
+    diagram_html = f'<div class="short-visual">{_esc(diagram)}</div>' if diagram else ""
     return (
         f'<div id="{_esc(segment)}" class="short-screen reveal"{narration_attr}>'
         f'<div class="short-label">{_esc(segment)}</div>'
-        f'<div class="short-safe-content"><p class="short-prose">{_esc(prose)}</p></div>'
+        f'<div class="short-safe-content"><div>{diagram_html}<p class="short-prose">{_esc(prose)}</p></div></div>'
         f"</div>"
     )
 
@@ -65,8 +82,12 @@ def synthesize_short_html(plan: ShortPlan, narration: list[SceneNarration]) -> s
     from .component_library import BASE_STYLESHEET, REVEAL_SCRIPT, css_tokens, escape_script_json
 
     narration_by_id = {n.scene_id: n for n in narration}
+    diagram = _dominant_object_flow(plan)
     screens_html = "".join(
-        _render_screen(seg, " ".join(s.text for s in narration_by_id[seg].sentences), include_metadata=True)
+        _render_screen(
+            seg, " ".join(s.text for s in narration_by_id[seg].sentences), include_metadata=True,
+            diagram=diagram if seg == "mechanism" else "",
+        )
         for seg in _SEGMENT_ORDER if seg in narration_by_id
     )
 

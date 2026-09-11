@@ -40,7 +40,11 @@ For each scene in this beat:
 - `component_data`: if `component_id` is set, fill in exactly the slots
   that component needs (see `component_slots` for the exact fields) with
   real content grounded in `available_claims` -- never invent a number or
-  fact.
+  fact. For `diagram_card` specifically, `content` must be an actual
+  compact ASCII-art diagram (arrows like -> or |, boxes, short labels)
+  that concretely depicts this scene's mechanism step -- e.g. a labeled
+  flow of a few short stages connected by arrows. Never leave it blank
+  and never just restate the caption in prose form.
 - `annotated_numbers`: every number in `screen_prose` (or in
   `component_data`, for a card/table) that comes from a specific claim --
   list `{text, claim_id}` pairs with `text` as the EXACT substring as it

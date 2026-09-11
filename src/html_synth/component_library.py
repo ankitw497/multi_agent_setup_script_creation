@@ -20,18 +20,18 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);line-height:
 section{padding:64px 40px;max-width:1100px;margin:0 auto;}
 .sec-wrap{background:var(--bg);}
 .sec-alt{background:var(--bg3);}
-.section-title{font-family:var(--serif);font-size:clamp(28px,4vw,42px);line-height:1.15;color:var(--text);margin-bottom:16px;}
+.section-title{font-family:var(--sans);font-weight:700;letter-spacing:-0.8px;font-size:clamp(28px,4vw,42px);line-height:1.15;color:var(--text);margin-bottom:16px;}
 .section-sub{font-size:16px;color:var(--text3);max-width:720px;line-height:1.7;margin-bottom:32px;}
 
 #hero-story{padding:0;}
 .hero-inner{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:96px 40px 72px;}
 .hero-badge2{display:inline-block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--accent3);background:rgba(255,59,48,0.08);padding:6px 14px;border-radius:20px;margin-bottom:24px;}
-.hero-title{font-family:var(--serif);font-size:clamp(34px,6vw,58px);line-height:1.1;color:var(--text);margin-bottom:20px;max-width:820px;}
+.hero-title{font-family:var(--sans);font-weight:700;letter-spacing:-1.2px;font-size:clamp(34px,6vw,58px);line-height:1.1;color:var(--text);margin-bottom:20px;max-width:820px;}
 .hero-subtitle{font-size:17px;color:var(--text3);max-width:640px;line-height:1.7;margin:0 auto;}
 
 .card{background:var(--bg2);border-radius:var(--r);border:1px solid var(--border);box-shadow:var(--shadow);padding:24px 28px;}
 .card-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--text3);margin-bottom:8px;}
-.card-value{font-family:var(--serif);font-size:30px;color:var(--text);line-height:1;margin-bottom:6px;}
+.card-value{font-family:var(--sans);font-weight:700;font-size:30px;color:var(--text);line-height:1;margin-bottom:6px;}
 .card-desc{font-size:14px;color:var(--text3);line-height:1.5;}
 
 .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:28px;}
@@ -65,7 +65,7 @@ section{padding:64px 40px;max-width:1100px;margin:0 auto;}
 .math-block-equation{font-family:'JetBrains Mono',monospace;}
 
 .diagram-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:24px;margin:20px 0;}
-.diagram-placeholder{background:var(--bg3);border-radius:var(--r_sm);min-height:160px;}
+.diagram-pre{font-family:'JetBrains Mono','SF Mono','Fira Code',monospace;font-size:13px;line-height:1.7;color:var(--text2);white-space:pre;overflow-x:auto;text-align:center;}
 .diagram-caption{text-align:center;font-size:12.5px;color:var(--text3);margin-top:12px;}
 
 .metric-table{width:100%;border-collapse:collapse;font-size:14px;margin-bottom:20px;}

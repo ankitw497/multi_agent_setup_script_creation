@@ -679,6 +679,167 @@ locks in the first fix; the function itself remains fully unit-tested for future
 
 ---
 
+## ERR-032 — No retry on transient paid-API errors; a real ~45-min/~$0.71 run died on one Gemini 503
+**Date:** 2026-09-11 · **Severity:** major (pipeline crash, real money/time lost) · **Status:** fixed · **Component:** `llm/backends/litellm_backend.py` · **Live cost:** yes (~$0.71 sunk, run lost)
+
+The first-ever live run of the new `orchestration/run_pipeline.py` CLI entry point (see
+BUILD_PLAN.md's cross-cutting orchestrator item) ran S0 through H/HV/SC/A2s for real —
+71 claims, A1, the full story+narration loop, 10 H beats — then crashed inside
+`run_short`'s `map_claims` call with `litellm.exceptions.ServiceUnavailableError`: a 503
+from Gemini ("This model is currently experiencing high demand. Spikes in demand are
+usually temporary."). The entire run (~45 minutes wall-clock, ~$0.71 of real paid-lane
+spend already recorded in `usage.jsonl`) was lost to a single transient upstream error
+with no run-state recovery.
+
+Root cause: `LiteLLMBackend.call()` invoked `litellm.completion(...)` with no
+`num_retries`, and litellm does not retry by default — `num_retries` must be passed
+explicitly to activate its own tenacity-backed retry classification (which already knows
+to retry `RateLimitError`/`Timeout`/`ServiceUnavailableError`-class failures and never
+retry a genuine `AuthenticationError`/`BadRequestError`).
+
+**Fix:** `LiteLLMBackend.__init__` gained `num_retries: int = 3`, forwarded into every
+`litellm.completion(...)` call. Deliberately reuses litellm's own already-tested retry
+policy rather than hand-rolling exception-type matching.
+**Tests:** `tests/llm/test_litellm_backend.py::test_num_retries_defaults_to_3_and_is_forwarded_to_litellm`,
+`::test_num_retries_is_configurable`.
+**Not yet fixed:** a run still can't resume mid-pipeline after a fatal crash (that needs
+`orchestration.state.PipelineState` actually wired through `run_pipeline.py`, which it
+isn't yet — see BUILD_PLAN.md). Retries reduce how often this matters; they don't remove
+the gap.
+
+---
+
+## ERR-033 — `diagram_card` rendered an empty placeholder; headline components used a non-Apple serif font
+**Date:** 2026-09-11 · **Severity:** major (every "figure" in the final HTML was visually blank) · **Status:** fixed · **Component:** `html_synth/component_library.py`, `config/design_system.yaml`, `html_synth/synthesizer.py`
+
+User-reported after inspecting a real rendered `page.html`: (1) the page didn't look like
+the source's own Apple-style white theme, and (2) every figure/visualization from the
+source was missing. Root-caused to two separate, real gaps:
+
+1. `diagram_card`'s design-system skeleton was, by its own docstring, *"A labeled
+   placeholder for a visual the render stage will eventually draw"* — `slots: [caption]`
+   only, rendering `<div class="diagram-placeholder"></div>`: a permanently empty gray
+   box. The H pass (Sonnet) had no slot to put actual diagram content into even when it
+   picked this component — the schema itself made a real figure impossible, not a model
+   failure.
+2. `design_system.yaml`'s `fonts.sans`/`fonts.serif` were `'DM Sans'`/`'DM Serif Display'`
+   (external Google Fonts), and `component_library.py`'s `BASE_STYLESHEET` used
+   `font-family:var(--serif)` for `.hero-title`/`.section-title`/`.card-value` — headline
+   elements rendered in a serif face the source itself never uses for headlines (the
+   source's real `--font` is the Apple system stack; its one `--serif` use is a small
+   italic editorial subtitle, never a headline).
+
+**Fix:**
+- `diagram_card` gained a real `content` slot (rendered as `<pre class="diagram-pre">`,
+  monospace, matching the source's own `.code-pre` ASCII-art pattern) alongside `caption`;
+  `synthesizer.py`'s H task prompt now explicitly requires a real compact ASCII-art
+  diagram in `content`, never blank, never a prose restatement of the caption.
+- `fonts.sans` is now the real Apple system stack (`-apple-system, BlinkMacSystemFont,
+  'SF Pro Display', 'SF Pro Text', 'Helvetica Neue', sans-serif`, matching the source
+  corpus verbatim); `fonts.serif` is `'Literata'` (also matching the source), kept
+  available for a future editorial-accent component but no longer used by any headline
+  selector — `.hero-title`/`.section-title`/`.card-value` now use `var(--sans)`.
+
+**Live-verified:** a real CLI run (`runs/v11`) confirms no `DM Serif`/`DM Sans` anywhere in
+the emitted HTML and `-apple-system` present; that specific run's H pass happened not to
+select `diagram_card` for any of its 10 beats (component choice is deliberate per-scene
+LLM judgment, "never force a component onto every scene" — not itself a bug on one run),
+so real ASCII-art `diagram_card` content is unit-tested but still pending a live sample —
+flagged below as a follow-up, not chased by forcing the prompt (ERR-010/ERR-031's own
+precedent against over-fitting to one observed run).
+**Tests:** `tests/html_synth/test_component_library.py::test_diagram_card_renders_real_content_not_an_empty_placeholder`,
+`::test_diagram_card_content_is_html_escaped`, `::test_headline_components_use_the_sans_apple_system_stack_not_serif`.
+
+---
+
+## ERR-034 — Shorts' own `visual` field (dominant_object/states) was authored by a real LLM call and then never rendered
+**Date:** 2026-09-11 · **Severity:** major (every short was bare prose, no visual at all) · **Status:** fixed · **Component:** `html_synth/vertical_assembler.py`
+
+User-reported: "Shorts script is only few sentences no diagram, nothing." A short's brief
+narration length (45-60s, plan §20.4's own "no narrative oxygen for a recap") is by
+design, not a bug — but the complete absence of any visual was a real gap: A2s
+(`planning/short_planner.py`) already asks the model to design `ShortPlan.visual`
+(`dominant_object` + `states` + `safe_zones`) for every short, and `vertical_assembler.py`'s
+`_render_screen` simply never read that field — every short screen rendered bare
+`.short-prose` text only, regardless of what A2s had designed. Same root-cause shape as
+ERR-033: real content collected, then silently dropped before rendering. Also carried the
+same serif-vs-Apple-sans font mismatch as ERR-033's headlines (`.short-prose` used
+`var(--serif)`).
+
+**Fix:** a new deterministic (zero-extra-LLM-cost) `_dominant_object_flow()` renders
+`dominant_object` + `states` as an arrow-joined flow string (e.g. "attention weights →
+uniform → peaked → dominant") on the short's `mechanism` screen only, styled as a
+monospace `.short-visual` block matching the long-form diagram language; omitted entirely
+when `states` is empty (no diagram forced onto content that has none, matching
+`diagram_card`'s own optionality rule). `.short-prose` now uses `var(--sans)`.
+**Tests:** `tests/html_synth/test_vertical_assembler.py::test_visual_dominant_object_and_states_render_as_a_diagram_on_the_mechanism_screen`,
+`::test_no_visual_states_renders_no_diagram_block_not_a_crash`,
+`::test_dominant_object_alone_with_no_states_renders_no_diagram`,
+`::test_diagram_content_is_html_escaped`, `::test_short_prose_uses_the_sans_apple_system_stack_not_serif`.
+
+---
+
+## ERR-035 — `archetype_role` (the field that gates visual-component choice) has been unreachable in EVERY real run to date
+**Date:** 2026-09-11 · **Severity:** critical (silently made most of the component library dead code in every real run) · **Status:** fixed · **Component:** `planning/story_planner.py` · **Live cost:** yes (~$0.31 across 2 confirmatory A2-only calls)
+
+While investigating ERR-033's "missing figures" report, checked every real plan produced
+this session (`v01`, `v09`, `v10`, `v11`) for what `StoryBeat.archetype_role` actually
+contained — the field `html_synth/synthesizer.py` reads to decide which components
+(`components_for_story_role(beat.archetype_role or "observations")`) a beat's scenes may
+use. Found: **every beat, in every one of the 4 real plans, resolved to exactly
+`(grid_3, defbox)`** — never `diagram_card`, `math_block`, `hero` (beyond page 1), `card`
+as a standalone choice, any `callout_*`, `metric_table`, or `step_list`. Root cause: A2's
+`TASK_PROMPT` (`story_planner.py`) only ever explained `archetype_stage` (the resolved
+archetype's OWN vocabulary, e.g. "justified_step" for derivation) — it never mentioned
+`archetype_role` at all (a separate field holding the FIXED, generic, cross-archetype
+vocabulary — hook/contradiction/investigation/problem_fix/mechanism/comparison/
+derivation/observations/payoff — that `design_system.yaml`'s `story_roles` table actually
+keys on). Two real plans (v01, v09) show the LLM filling `archetype_role` with
+`archetype_stage`-shaped values anyway (schema field present, never explained); two (v10,
+v11) show it left entirely blank. Either way, `components_for_story_role()` never
+recognized the value (or got none), fell back to `"observations"` every single time, and
+every beat in every real run to date got the same two components regardless of content.
+This is a much larger, more systemic finding than ERR-033's placeholder bug — it explains
+why figures/visuals were missing far more completely: even a correctly-filled
+`diagram_card` (ERR-033's fix) could never be *chosen* for any beat, because `mechanism`
+(the role that includes it) was unreachable.
+
+**Fix, in two passes (both live-verified):**
+1. First pass: explained `archetype_role` as a field separate from `archetype_stage`,
+   listing the 9-term vocabulary. Live result: 1/10 beats correct, 9/10 still swapped the
+   two fields (put the archetype-specific term in `archetype_role`, left `archetype_stage`
+   blank) — the field NAMES alone ("role" vs "stage") didn't disambiguate which vocabulary
+   went where.
+2. Second pass: added a concrete worked example directly in the prompt (`archetype =
+   "derivation"` → `archetype_stage = "justified_step"`, `archetype_role = "mechanism"`,
+   explicitly "NOT justified_step"). Live result: **7/7 beats correct** on a fresh real A2
+   call (archetype=build) — every beat got a valid, vocabulary-correct `archetype_role`
+   (`problem_fix`/`mechanism`) distinct from its own `archetype_stage`
+   (`problem_to_solution_pair`/`further_limitation_fix_round`/`assembled_system`).
+**H-stage confirmation (live, $0.0986, free/subscription lane):** ran H on the same fresh
+`archetype_role`-correct plan (11 beats, 8 now tagged `mechanism`/`problem_fix`). Component
+usage across all beats: `{card: 11, math_block: 5, diagram_card: 9, callout_warn: 2,
+step_list: 2, callout_success: 2, defbox: 2, grid_3: 1, hero: 1}` — every component family
+in the library is now actually reachable and chosen, not just `grid_3`/`defbox`. The 9 real
+`diagram_card` instances are genuine, well-formed ASCII-art diagrams matching the source's
+own visual language (e.g. `build_matrix_s04`: `"Q1 --\\  /-- K1\nQ2 ---- ALL-TO-ALL ----
+K2\nQ3 --/  \\-- K3"`; `build_heads_s02`: a per-head Q/K/V fan-out diagram), and the 5
+`math_block` instances carry real equations (`q = x W_Q, k = x W_K, v = x W_V`,
+`softmax(QK^T / sqrt(d_k))`, `MultiHead(Q,K,V) = Concat(head_1, ..., head_n) * W_O`). This
+confirms ERR-033's `content`-slot fix and this entry's `archetype_role` fix together fully
+resolve the "missing figures" report — the placeholder fix alone was necessary but not
+sufficient; the role-gating fix is what actually made the component reachable at all.
+**Residual minor gap:** one of the 11 beats (`build_origin`) still got `role='context'`, a
+term outside the fixed 9-word vocabulary despite the explicit instruction — `components_for
+_story_role("context")` returns `[]`, so Python's own `or components_for_story_role
+("observations")` fallback (already in place, not new) absorbed it gracefully rather than
+crashing. 10/11 correct on this run is a large, real improvement over 0/11 before; not
+chased further per the ERR-010/ERR-031 precedent against over-fitting a prompt to one
+observed run — worth revisiting only if a future run shows this recurring often.
+**Tests:** `tests/planning/test_story_planner.py::test_prompt_instructs_populating_archetype_role_with_the_render_vocabulary`.
+
+---
+
 ## Open items (not yet bugs, flagged for future attention)
 
 - **V1B's HV static checks are now the full plan §13 list** (updated 2026-09-11; the note

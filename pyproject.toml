@@ -17,6 +17,9 @@ dependencies = [
   "pyyaml>=6.0",
 ]
 
+[project.scripts]
+run-pipeline = "orchestration.run_pipeline:main"
+
 [project.optional-dependencies]
 # Pulled in phase by phase, not up front (plan Appendix D / phased rollout).
 dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "pytest-mock>=3.14"]

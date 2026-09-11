@@ -14,6 +14,13 @@
 #
 # Manual component additions only (plan §7) -- automatic fitting from
 # arbitrary references is V1D.
+#
+# fonts.sans is the real Apple system stack (2026-09-11 fix, matching the
+# source corpus's own `--font` value verbatim), not an external Google Font
+# -- headline components (`hero-title`/`section-title`/`card-value`) render
+# in it, never in `fonts.serif`, which stays available for a future
+# editorial-accent use the way the guide corpus uses it (an italic
+# sub-headline only), never for an actual headline.
 
 tokens:
   colors:
@@ -30,8 +37,8 @@ tokens:
     accent5: "#af52de"
     border: "rgba(0,0,0,0.08)"
   fonts:
-    serif: "'DM Serif Display',Georgia,serif"
-    sans: "'DM Sans',-apple-system,BlinkMacSystemFont,sans-serif"
+    serif: "'Literata',Georgia,serif"
+    sans: "-apple-system,BlinkMacSystemFont,'SF Pro Display','SF Pro Text','Helvetica Neue',sans-serif"
   radii:
     r: "18px"
     r_sm: "10px"
@@ -142,11 +149,11 @@ components:
       </div>
 
   diagram_card:
-    description: "A labeled placeholder for a visual the render stage will eventually draw (visual_description from the ScenePlan). Adapted from the guide markup family."
-    slots: [caption]
+    description: "A compact ASCII-art diagram (arrows/boxes/labels) illustrating one concrete mechanism step, with a one-line caption -- real content, not a placeholder. Adapted from the guide markup family's own diagram-card + code-pre pattern (2026-09-11: the original placeholder-only version never actually drew anything)."
+    slots: [content, caption]
     skeleton: |
       <div class="diagram-card">
-        <div class="diagram-placeholder"></div>
+        <pre class="diagram-pre">{content}</pre>
         <footer class="diagram-caption">{caption}</footer>
       </div>
 

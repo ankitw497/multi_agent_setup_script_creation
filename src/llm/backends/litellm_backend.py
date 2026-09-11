@@ -37,7 +37,7 @@ class LiteLLMBackend:
 
     lane = "paid_api"
 
-    def __init__(self, max_tokens: int = 4096):
+    def __init__(self, max_tokens: int = 4096, num_retries: int = 3):
         # 4096 default (raised from 2048, 2026-09-10): a real A2 call on a
         # source_units-enriched payload returned a truncated ("Unterminated
         # string") response at 2048 -- a full multi-scene StoryPlan (20-30
@@ -46,6 +46,16 @@ class LiteLLMBackend:
         # repair path can't recover a response that was cut off mid-string.
         # A2 itself additionally overrides this per-call (see story_planner.py).
         self.max_tokens = max_tokens
+        # num_retries (2026-09-11, ERR-032): litellm.completion() does NOT
+        # retry by default -- a real ~45-minute, ~$0.71 run died on a single
+        # transient Gemini 503 ("high demand, try again later") at the very
+        # last call before completion, with the whole run lost. Passing
+        # num_retries here activates litellm's own tenacity-backed retry
+        # classification (backs off and retries RateLimitError/Timeout/
+        # ServiceUnavailableError-class failures; never retries a genuine
+        # AuthenticationError/BadRequestError, which would just waste the
+        # same call three times over).
+        self.num_retries = num_retries
 
     def call(
         self,
@@ -67,6 +77,7 @@ class LiteLLMBackend:
                 {"role": "user", "content": user_payload},
             ],
             max_tokens=max_tokens if max_tokens is not None else self.max_tokens,
+            num_retries=self.num_retries,
             **extra_kwargs,
         )
         latency_ms = int((time.monotonic() - start) * 1000)

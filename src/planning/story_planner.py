@@ -49,8 +49,30 @@ Every beat needs: `source_unit_ids` listing the ACTUAL source unit ids it
 draws from (never leave this empty -- it is what lets narration later know
 which claims are relevant, and what lets a downstream check confirm the
 source's real content was actually used, not silently dropped); which of
-the resolved archetype's CORE roles it instantiates (`archetype_stage`, if
-any -- optional roles are allowed but never required); a `forward_driver`
+the resolved archetype's CORE roles it instantiates -- put THAT
+archetype-specific term (e.g. "justified_step" for derivation,
+"problem_to_solution_pair" for build) in `archetype_stage`, if any
+(optional roles are allowed but never required).
+
+Separately, ALSO set `archetype_role` to a DIFFERENT, FIXED, generic term
+from this exact list, never an archetype-specific one: hook, contradiction,
+investigation, problem_fix, mechanism, comparison, derivation, observations,
+payoff. This is the ONE vocabulary shared across all six archetypes that
+later decides which visual component this beat's scenes are allowed to use
+when rendered -- pick whichever term this beat's actual content genuinely
+is (a beat walking through how something works is `mechanism`; a beat
+contrasting two things is `comparison`; a beat resolving a real failure is
+`contradiction`; and so on), regardless of which archetype you resolved.
+Concrete worked example -- do not confuse the two fields, they hold
+DIFFERENT vocabularies and are almost never the same string:
+  archetype = "derivation", this beat justifies one algebraic step
+  -> archetype_stage = "justified_step" (derivation's own term)
+  -> archetype_role = "mechanism" (the fixed generic term, NOT "justified_step")
+Leave `archetype_role` blank only for a beat that is genuinely none of the
+nine terms above -- blank should be the rare exception, not most beats,
+and never every beat; a mostly-blank plan means every beat will render
+with the same generic fallback components regardless of what it actually
+covers. Also needed: a `forward_driver`
 describing what it advances toward the archetype's own driver concept; a
 `learning_objective` stating what the viewer can do afterward that they
 couldn't before; and the observable fields (`new_information`, `payoff`,

@@ -105,6 +105,26 @@ def test_prompt_instructs_populating_source_unit_ids():
     assert "never leave this empty" in TASK_PROMPT
 
 
+def test_prompt_instructs_populating_archetype_role_with_the_render_vocabulary():
+    """Real gap found 2026-09-11 (user-reported missing figures/visualizations):
+    `html_synth/synthesizer.py` gates a beat's allowed visual components on
+    `StoryBeat.archetype_role`, but the prompt only ever explained
+    `archetype_stage` (a DIFFERENT field, holding the resolved archetype's
+    OWN vocabulary, e.g. "organizing_principle" for framework) -- so across
+    every real run checked (v01/v09/v10/v11), `archetype_role` was either
+    left blank or filled with `archetype_stage`-shaped values that don't
+    match any story_roles key, and EVERY beat silently fell back to the
+    same generic (grid_3, defbox) component set regardless of content --
+    diagram_card/math_block/callout_*/metric_table/step_list/hero (beyond
+    page 1) were never reachable in any real run to date."""
+    from planning.story_planner import TASK_PROMPT
+
+    assert "archetype_role" in TASK_PROMPT
+    assert "archetype_stage" in TASK_PROMPT
+    for role in ("hook", "contradiction", "investigation", "problem_fix", "mechanism", "comparison", "derivation", "observations", "payoff"):
+        assert role in TASK_PROMPT
+
+
 def test_passes_real_source_units_not_just_the_compressed_brief():
     """Real gap found 2026-09-10: A2 only ever saw A1's lossy SourceBrief
     summary, never the source's real content -- so it had no way to weigh an

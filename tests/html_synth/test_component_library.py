@@ -94,6 +94,39 @@ def test_math_block_renders_label_and_equation():
     assert "sqrt(d_k)" in out
 
 
+def test_diagram_card_renders_real_content_not_an_empty_placeholder():
+    """Real gap found 2026-09-11 (user-reported): diagram_card used to
+    render an empty `.diagram-placeholder` div -- every figure in the
+    final HTML was visually blank regardless of what H produced, since
+    the component had no slot to put content in at all. `content` is now
+    a real slot, rendered as a monospace ASCII-art block."""
+    out = render_component("diagram_card", {
+        "content": "query → score → softmax → weighted sum", "caption": "The retrieval loop.",
+    })
+    assert "diagram-placeholder" not in out
+    assert "query → score → softmax → weighted sum" in out
+    assert "The retrieval loop." in out
+    assert '<pre class="diagram-pre">' in out
+
+
+def test_diagram_card_content_is_html_escaped():
+    out = render_component("diagram_card", {"content": "<script>alert(1)</script>", "caption": "x"})
+    assert "<script>" not in out
+    assert "&lt;script&gt;" in out
+
+
+def test_headline_components_use_the_sans_apple_system_stack_not_serif():
+    """Real gap found 2026-09-11 (user-reported): headline components
+    rendered in an external Google-Fonts serif face (DM Serif Display),
+    not the Apple-style sans system stack the source itself actually
+    uses for its own headlines."""
+    from html_synth.component_library import BASE_STYLESHEET
+
+    assert "font-family:var(--serif)" not in BASE_STYLESHEET
+    ds_sans = css_tokens()
+    assert "-apple-system" in ds_sans
+
+
 def test_unknown_component_id_raises():
     with pytest.raises(ValueError, match="unknown component_id"):
         render_component("not_a_real_component", {})
