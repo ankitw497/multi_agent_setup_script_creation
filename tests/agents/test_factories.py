@@ -36,6 +36,21 @@ def test_story_lead_mini_tier_is_selectable():
     assert agent.model_resolved == "gpt-4o-mini"
 
 
+def test_story_lead_alias_override_pins_a_specific_model():
+    """STORY_IMPROVEMENT_PLAN.md Phase 4: lets a live A/B comparison run
+    pin story_lead to a specific alias (e.g. the reasoning-capable
+    gpt-5.6-sol) without touching the tier-based default, which stays
+    gpt-4o until a real comparison justifies changing it."""
+    agent = make_story_lead(DummyClient(), alias_override="openai_story_strong_gpt56")
+    assert agent.model_alias == "openai_story_strong_gpt56"
+    assert agent.model_resolved == "gpt-5.6-sol"
+
+
+def test_story_lead_alias_override_takes_precedence_over_tier():
+    agent = make_story_lead(DummyClient(), tier="mini", alias_override="openai_story_strong_gpt56")
+    assert agent.model_alias == "openai_story_strong_gpt56"
+
+
 def test_review_lead_strong_tier_caps_reasoning_to_low():
     """Cost-discipline fix (2026-09-10): the strong-tier Gemini model reasons
     by default and, left unset, burned $0.218/11 calls on hidden reasoning

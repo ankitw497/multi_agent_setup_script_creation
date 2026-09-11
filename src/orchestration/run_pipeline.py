@@ -131,6 +131,7 @@ def run_full_pipeline(
     shorts_count: int = 1,
     references_dir: Path = DEFAULT_REFERENCES_DIR,
     web_backend: WebSearchBackend | None = None,
+    story_lead_alias: str | None = None,
     log=print,
 ) -> PipelineRunOutput:
     run_dir = P.next_run_dir(project_root, playlist, video_slug)
@@ -142,7 +143,7 @@ def run_full_pipeline(
     client = make_llm_client(run_id=run_id, ledger=usage_ledger)
 
     worker = make_worker(client)
-    story_lead = make_story_lead(client)
+    story_lead = make_story_lead(client, alias_override=story_lead_alias)
     story_lead_mini = make_story_lead(client, tier="mini")
     narration_lead = make_narration_lead(client)
     review_lead_strong = make_review_lead(client, tier="strong")
@@ -268,6 +269,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--no-shorts", action="store_true", help="skip the shorts pipeline")
     parser.add_argument("--shorts-count", type=int, default=1)
     parser.add_argument("--references-dir", type=Path, default=DEFAULT_REFERENCES_DIR)
+    parser.add_argument(
+        "--story-lead-alias", default=None,
+        help="paid_api_lane alias to pin story_lead to (e.g. openai_story_strong_gpt56 for a "
+             "model-tier A/B comparison, STORY_IMPROVEMENT_PLAN.md Phase 4) -- default is the "
+             "tier's own default (openai_story_strong / gpt-4o), never changed by this flag alone",
+    )
     return parser.parse_args(argv)
 
 
@@ -277,6 +284,7 @@ def main(argv: list[str] | None = None) -> int:
         project_root=args.project_root, playlist=args.playlist, video_slug=args.video_slug,
         source_html_path=args.source, target_duration_seconds=args.duration, audience=args.audience,
         run_shorts=not args.no_shorts, shorts_count=args.shorts_count, references_dir=args.references_dir,
+        story_lead_alias=args.story_lead_alias,
     )
     print(f"\nfinal_status: {output.final_status}")
     print(f"promoted: {output.promoted}")

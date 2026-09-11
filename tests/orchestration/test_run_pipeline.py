@@ -57,7 +57,10 @@ def patched(monkeypatch, tmp_path):
 
     monkeypatch.setattr(rp, "make_llm_client", lambda **kw: SimpleNamespace())
     monkeypatch.setattr(rp, "make_worker", lambda client: "worker")
-    monkeypatch.setattr(rp, "make_story_lead", lambda client, tier="strong": f"story_lead:{tier}")
+    monkeypatch.setattr(
+        rp, "make_story_lead",
+        lambda client, tier="strong", alias_override=None: f"story_lead:{tier}:{alias_override}",
+    )
     monkeypatch.setattr(rp, "make_narration_lead", lambda client: "narration_lead")
     monkeypatch.setattr(rp, "make_review_lead", lambda client, tier="strong": f"review_lead:{tier}")
 
@@ -282,3 +285,31 @@ def test_no_shorts_are_written_into_final_when_the_overall_run_fails(patched):
     assert output.promoted is False
     assert "emit_short_deliverables" not in patched.calls
     assert "run_short" in patched.calls  # still computed, just not promoted
+
+
+def test_story_lead_alias_override_reaches_make_story_lead(patched, monkeypatch):
+    """STORY_IMPROVEMENT_PLAN.md Phase 4: a model-tier A/B comparison run
+    must be able to pin story_lead to a specific alias end to end from the
+    CLI/run_full_pipeline() call, not just at the make_story_lead() level."""
+    calls = []
+    monkeypatch.setattr(
+        rp, "make_story_lead",
+        lambda client, tier="strong", alias_override=None: calls.append((tier, alias_override)) or f"story_lead:{tier}",
+    )
+
+    _run(patched, story_lead_alias="openai_story_strong_gpt56")
+
+    assert ("strong", "openai_story_strong_gpt56") in calls  # the main story_lead got the override
+    assert ("mini", None) in calls  # story_lead_mini is untouched by the override
+
+
+def test_story_lead_alias_defaults_to_none(patched, monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        rp, "make_story_lead",
+        lambda client, tier="strong", alias_override=None: calls.append((tier, alias_override)) or f"story_lead:{tier}",
+    )
+
+    _run(patched)
+
+    assert ("strong", None) in calls
