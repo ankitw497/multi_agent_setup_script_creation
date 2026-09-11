@@ -941,6 +941,43 @@ green against the dialed-back CSS), `tests/narration/test_short_generator.py::te
 
 ---
 
+## Full e2e confirmation (2026-09-11, `runs/v13`, $0.6575) -- ERR-036/037/038 combined
+
+A fresh CLI run with every fix from ERR-032 through ERR-038 in play together (the first
+run since the hook-extraction and reveal-visibility fixes landed):
+
+- **S0: 13 units** (was 12 pre-ERR-036) -- the `hook` unit is real this run, and
+  `source_units_uncovered` no longer lists it (only `origin`/`production_notes` remain
+  uncovered, both expected: production_notes is meta-commentary for planning, never meant
+  to become its own beat).
+- **archetype_role: 8/8 beats valid** (hook/problem_fix/mechanism/derivation/payoff), third
+  consecutive live confirmation of ERR-035's fix.
+- **H/HV: 0 render issues**, 3 real `diagram_card`s + 4 real `math_block`s + 3 `step_list`s
+  in the emitted `page.html`; correct Apple font; `.reveal{opacity:1;...}` present (ERR-037
+  visible-at-rest fix confirmed).
+- **Hook narration is qualitatively better** even without quoting the source's exact
+  example sentence: "Take a simple sentence with the word 'it' in it... change just one
+  other word in that same sentence, and 'it' can suddenly point somewhere completely
+  different" -- genuinely conveys the source's own minimal-pair insight, versus the prior
+  generic "understanding the seemingly complex mechanism" framing.
+- **Shorts**: this short's own `bridge.mode` was `NONE` (a different, also-valid choice
+  than the SPOKEN case ERR-038 fixed) -- payoff correctly has no forced subscribe line;
+  `visual.states` populated and rendered as a real `.short-visual` diagram on the mechanism
+  screen; dialed-back 36px font confirmed; no leftover watermark/per-segment-accent markup.
+- **FAIL was correct**, on real, legitimate findings unrelated to this fix set: two
+  grounding-policy violations (a REJECTED claim narrated, several UNVERIFIED CORE claims
+  narrated without a hedge), a missing `build`-archetype core role, and a promise-chain
+  mismatch -- exactly what the hard gate exists to catch.
+- **New soft observation, not fixed:** `ending.next_video_bridge` in the StoryPlan named
+  the source's specific follow-up techniques ("sparse, linear, flash attention"), but the
+  actual spoken narration's ending stayed generic ("So where does attention go from
+  here?") -- narration generation isn't tightly grounding the ending on the plan's own
+  bridge field, a similar shape of gap to ERR-038's shorts case but for long-form B1. Not
+  chased this round (one observed run, and the ending still functions as a real bridge,
+  just a softer one) -- worth a targeted fix if a future run shows this recurring.
+
+---
+
 ## Open items (not yet bugs, flagged for future attention)
 
 - **V1B's HV static checks are now the full plan §13 list** (updated 2026-09-11; the note
