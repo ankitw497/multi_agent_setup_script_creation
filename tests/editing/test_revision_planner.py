@@ -121,3 +121,15 @@ def test_uses_pass_id_a3_and_revision_planner_mode():
     call = story_lead.calls[0]
     assert call["pass_id"] == "A3"
     assert call["mode"] == "REVISION_PLANNER"
+
+
+def test_prompt_instructs_preferring_rewrite_scenes_over_rewrite_beats():
+    """STORY_IMPROVEMENT_PLAN.md Phase 8.5: A3 used to have only
+    rewrite_beats (whole beat) as its content-rewrite tool for a general
+    narrative finding -- confirmed live, a real run rewrote 6 beats to
+    apply 1 fix. rewrite_scenes must be the documented default for a
+    finding naming specific scenes."""
+    from editing.revision_planner import TASK_PROMPT
+
+    assert "rewrite_scenes" in TASK_PROMPT
+    assert "NARROWEST" in TASK_PROMPT

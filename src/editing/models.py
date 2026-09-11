@@ -14,6 +14,18 @@ class RewriteBeat(BaseModel):
     intent: str  # what must change — not replacement prose
 
 
+class RewriteScene(BaseModel):
+    """Narrower than `RewriteBeat` (STORY_IMPROVEMENT_PLAN.md Phase 8.5):
+    a general narrative fix (e.g. a repetition/pacing critique naming 1-2
+    specific scenes) doesn't need a whole beat rewritten just because
+    `technical_fixes` is scoped to claim-tied corrections only. Prefer
+    this over `RewriteBeat` whenever the finding names specific scenes."""
+
+    scene_id: str
+    reason: str
+    intent: str  # what must change — not replacement prose
+
+
 class TechnicalFix(BaseModel):
     scene_id: str
     claim_id: str | None = None
@@ -44,6 +56,7 @@ class RevisionPlan(BaseModel):
     revision_level: str = "targeted"  # e.g. "targeted", "major", "replan"
     preserve: list[str] = Field(default_factory=list)  # beat/scene ids or named sections
     rewrite_beats: list[RewriteBeat] = Field(default_factory=list)
+    rewrite_scenes: list[RewriteScene] = Field(default_factory=list)
     technical_fixes: list[TechnicalFix] = Field(default_factory=list)
     delete_or_compress: list[DeleteOrCompress] = Field(default_factory=list)
     story_replan_required: bool = False

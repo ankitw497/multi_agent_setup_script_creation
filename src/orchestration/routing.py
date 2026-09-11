@@ -22,6 +22,9 @@ class RevisionAction(str, Enum):
 def decide_action(revision_plan: RevisionPlan) -> RevisionAction:
     if revision_plan.story_replan_required:
         return RevisionAction.REPLAN
-    if revision_plan.rewrite_beats or revision_plan.technical_fixes or revision_plan.delete_or_compress:
+    if (
+        revision_plan.rewrite_beats or revision_plan.rewrite_scenes
+        or revision_plan.technical_fixes or revision_plan.delete_or_compress
+    ):
         return RevisionAction.TARGETED_REWRITE
     return RevisionAction.NONE

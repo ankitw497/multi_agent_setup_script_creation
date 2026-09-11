@@ -85,6 +85,13 @@ def _touched_scene_intents(plan: StoryPlan, revision_plan: RevisionPlan) -> dict
         if scene.beat_id in rewrite_intent_by_beat:
             intents[scene.scene_id] = rewrite_intent_by_beat[scene.beat_id]
 
+    # Narrower than rewrite_beats (STORY_IMPROVEMENT_PLAN.md Phase 8.5): a
+    # scene-scoped fix, same blast radius as technical_fixes/
+    # delete_or_compress below -- never the whole beat's worth of scenes.
+    for rs in revision_plan.rewrite_scenes:
+        note = f"targeted fix: {rs.intent}"
+        intents[rs.scene_id] = f"{intents[rs.scene_id]}; {note}" if rs.scene_id in intents else note
+
     for fix in revision_plan.technical_fixes:
         note = f"technical correction: {fix.required_change}"
         if fix.claim_id:

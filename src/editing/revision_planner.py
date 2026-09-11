@@ -53,11 +53,20 @@ plan's total word budget is far short of the target duration (rewriting
 existing scenes cannot manufacture missing scenes), most of the source's
 content was never covered by any beat, a required core archetype role is
 entirely absent, or step 4 above found a genuinely new archetype dispute.
-In every other case, prefer `rewrite_beats` (naming the specific beats and
-the INTENT of the fix, never the prose itself), `technical_fixes` (a
-specific correction tied to a claim id), or `delete_or_compress` (a
-specific redundant scene) -- and list everything that should be
-`preserve`d untouched.
+In every other case, choose the NARROWEST tool that actually covers the
+finding -- do not reach for a bigger blast radius than the finding itself
+names:
+- `rewrite_scenes` (naming specific `scene_id`s and the INTENT of the fix,
+  never the prose itself) -- the default choice for a critique issue that
+  already names specific `scene_ids` (repetition, pacing, a bad
+  transition, an overclaim). Most findings should end up here.
+- `rewrite_beats` (naming the whole `beat_id`) -- ONLY when the problem
+  genuinely spans every scene in that beat (e.g. the beat's entire causal
+  arc needs restructuring, not just one or two sentences inside it). A
+  finding naming 1-2 specific scenes is a `rewrite_scenes` case, not a
+  `rewrite_beats` case, even if the scenes happen to sit in the same beat.
+- `technical_fixes` (a specific correction tied to a claim id), or
+  `delete_or_compress` (a specific redundant scene) -- unchanged.
 
 List `preserve` generously: anything not directly implicated by a finding
 should be explicitly preserved, not left ambiguous.

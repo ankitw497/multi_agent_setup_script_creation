@@ -6,7 +6,7 @@ tests prove the scoping contract: only named scenes are touched, everything
 else survives byte-for-byte, and every finding type (rewrite_beats,
 technical_fixes, delete_or_compress) actually reaches the model.
 """
-from editing.models import DeleteOrCompress, RevisionPlan, RewriteBeat, TechnicalFix
+from editing.models import DeleteOrCompress, RevisionPlan, RewriteBeat, RewriteScene, TechnicalFix
 from editing.targeted_rewrite import apply_targeted_rewrite
 from narration.generator import GeneratedNarration
 from narration.models import SceneNarration, SentenceNarration
@@ -207,3 +207,48 @@ def test_prompt_has_no_hardcoded_topic_vocabulary():
     lowered = TASK_PROMPT.lower()
     for term in ("q/k/v", "softmax", "multi-head", "q asks", "k matches", "v carries"):
         assert term not in lowered, f"found topic-specific term {term!r} in a generic per-video prompt"
+
+
+def test_rewrite_scenes_touches_only_the_named_scene_not_the_whole_beat():
+    """STORY_IMPROVEMENT_PLAN.md Phase 8.5: the narrower scene-scoped tool
+    must only reach the scenes A3 actually named, never every scene in
+    that scene's beat the way rewrite_beats does."""
+    narration_lead = FakeNarrationLead(GeneratedNarration(scenes=[
+        {"scene_id": "s1", "sentences": [{"text": "rewritten one", "sentence_type": "transition"}]},
+    ]))
+    revision_plan = RevisionPlan(run_id="r", rewrite_scenes=[
+        RewriteScene(scene_id="s1", reason="repeats s2's explanation", intent="compress to one bridging clause"),
+    ])
+
+    apply_targeted_rewrite(make_plan(), make_narration(), [], revision_plan, narration_lead)
+
+    sent_scene_ids = {s["scene_id"] for s in narration_lead.calls[0]["payload"]["scenes"]}
+    assert sent_scene_ids == {"s1"}  # not s2, even though both are in beat B01
+
+
+def test_rewrite_scenes_intent_reaches_the_model():
+    narration_lead = FakeNarrationLead(GeneratedNarration(scenes=[]))
+    revision_plan = RevisionPlan(run_id="r", rewrite_scenes=[
+        RewriteScene(scene_id="s3", reason="x", intent="tighten the transition into this scene"),
+    ])
+
+    apply_targeted_rewrite(make_plan(), make_narration(), [], revision_plan, narration_lead)
+
+    payload_scene = narration_lead.calls[0]["payload"]["scenes"][0]
+    assert payload_scene["scene_id"] == "s3"
+    assert "tighten the transition" in payload_scene["required_intent"]
+
+
+def test_rewrite_scenes_and_technical_fixes_on_the_same_scene_combine():
+    narration_lead = FakeNarrationLead(GeneratedNarration(scenes=[]))
+    revision_plan = RevisionPlan(
+        run_id="r",
+        rewrite_scenes=[RewriteScene(scene_id="s1", reason="x", intent="compress the repetition")],
+        technical_fixes=[TechnicalFix(scene_id="s1", claim_id="C001", required_change="use the verified figure")],
+    )
+
+    apply_targeted_rewrite(make_plan(), make_narration(), [], revision_plan, narration_lead)
+
+    payload_scene = narration_lead.calls[0]["payload"]["scenes"][0]
+    assert "compress the repetition" in payload_scene["required_intent"]
+    assert "C001" in payload_scene["required_intent"]

@@ -173,6 +173,13 @@ def _remove_dismissed_hard_failures(hard_failures: list[str], dismissed_issue_id
     return [f for f in hard_failures if not any(f"[{iid}]" in f for iid in dismissed_issue_ids)]
 
 
+def _badness(bundle: ReviewBundle) -> tuple[int, int]:
+    """Lower is better. Hard failures dominate the comparison (a rewrite
+    that clears one hard failure but adds two minor issues is still real
+    progress) -- STORY_IMPROVEMENT_PLAN.md Phase 8.5."""
+    return (len(bundle.hard_failures), len(bundle.issues))
+
+
 def run_story_and_narration_loop(
     source_brief: SourceBrief,
     claims: list[Claim],
@@ -205,12 +212,35 @@ def run_story_and_narration_loop(
     narration = generate_narration(plan, claims, agents.narration_lead)
     log.append(f"B1: {len(narration)} scenes narrated")
 
+    # Set right before a TARGETED_REWRITE `continue` to the pre-rewrite
+    # (narration, bundle) -- checked at the top of the next iteration so a
+    # rewrite that made things strictly worse is reverted before it can
+    # become the accepted state (STORY_IMPROVEMENT_PLAN.md Phase 8.5: the
+    # loop used to accept whatever the last cycle produced, even when a
+    # real run showed hard failures going UP across revision rounds).
+    # Deliberately scoped to one rewrite cycle at a time, not across a
+    # REPLAN -- a replan starts the plan over for a real structural
+    # reason, so "reverting" to the pre-replan state would just
+    # reintroduce the defect that motivated it.
+    pending_rewrite_baseline: tuple[list[SceneNarration], ReviewBundle] | None = None
+
     while True:
         narration, bundle = _run_review_block(
             plan, narration, claims, all_source_unit_ids, target_duration_seconds, agents, budget, source_units,
             source_brief,
         )
         log.append(f"review: {len(bundle.hard_failures)} hard failures, {len(bundle.issues)} issues")
+
+        if pending_rewrite_baseline is not None:
+            baseline_narration, baseline_bundle = pending_rewrite_baseline
+            if _badness(bundle) > _badness(baseline_bundle):
+                log.append(
+                    f"targeted rewrite #{major_revisions_used} made things worse "
+                    f"({len(bundle.hard_failures)} hard failures, {len(bundle.issues)} issues vs "
+                    f"{len(baseline_bundle.hard_failures)}/{len(baseline_bundle.issues)} before) -- reverting"
+                )
+                narration, bundle = baseline_narration, baseline_bundle
+            pending_rewrite_baseline = None
 
         replan_budget_remaining = story_replans_used < MAX_STORY_REPLANS
         revision_budget_remaining = major_revisions_used < MAX_MAJOR_REVISIONS
@@ -289,10 +319,12 @@ def run_story_and_narration_loop(
                 final = compute_final_status(bundle.hard_failures, bundle.diagnostics, revision_budget_remaining=False)
                 return PipelineResult(plan, narration, bundle, final, story_replans_used, major_revisions_used, log)
             major_revisions_used += 1
+            pending_rewrite_baseline = (narration, bundle)
             narration = apply_targeted_rewrite(plan, narration, claims, revision_plan, agents.narration_lead)
             log.append(
                 f"targeted rewrite #{major_revisions_used}: {len(revision_plan.rewrite_beats)} beat(s), "
-                f"{len(revision_plan.technical_fixes)} fix(es), {len(revision_plan.delete_or_compress)} delete/compress"
+                f"{len(revision_plan.rewrite_scenes)} scene(s), {len(revision_plan.technical_fixes)} fix(es), "
+                f"{len(revision_plan.delete_or_compress)} delete/compress"
             )
             continue
 

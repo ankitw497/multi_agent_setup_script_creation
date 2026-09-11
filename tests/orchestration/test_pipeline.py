@@ -559,6 +559,102 @@ def test_targeted_rewrite_actually_calls_b2_with_the_named_beat_not_a_no_op():
     assert all("tighten it" == s["required_intent"] for s in b2_call["payload"]["scenes"])
 
 
+def test_a_regressing_targeted_rewrite_is_reverted_to_the_pre_rewrite_state():
+    """STORY_IMPROVEMENT_PLAN.md Phase 8.5: real runs showed hard failures
+    going UP across revision rounds (2 -> 3) instead of down. A rewrite
+    that makes things strictly worse must be reverted, not accepted as
+    the new baseline -- this replays exactly that shape: cycle 1 has 1
+    critical issue, the first rewrite makes it 2 (worse, reverted), the
+    second rewrite clears it to 0 (genuinely better, accepted)."""
+    from editing.models import RevisionPlan, RewriteScene
+
+    plan = make_plan()
+    issue_a = {
+        "issue_id": "IA", "severity": "critical", "category": "clarity", "layer": "TECHNICAL",
+        "problem": "a", "why_it_matters": "y", "recommended_intent": "fix a", "repair_owner": "narration_lead",
+    }
+    issue_b = {
+        "issue_id": "IB", "severity": "critical", "category": "clarity", "layer": "TECHNICAL",
+        "problem": "b", "why_it_matters": "y", "recommended_intent": "fix b", "repair_owner": "narration_lead",
+    }
+    agents = make_agents(
+        story_lead_responses={
+            "RevisionPlan": [
+                RevisionPlan(run_id="r", rewrite_scenes=[RewriteScene(scene_id="s0", reason="x", intent="fix a")]),
+                RevisionPlan(run_id="r", rewrite_scenes=[RewriteScene(scene_id="s0", reason="x", intent="fix a+b")]),
+            ],
+        },
+        narration_responses=[
+            make_empty_narration_response(),  # B1
+            GeneratedNarration(scenes=[{"scene_id": "s0", "sentences": [{"text": "worse rewrite", "sentence_type": "transition"}]}]),  # rewrite #1 -- makes it worse
+            GeneratedNarration(scenes=[{"scene_id": "s0", "sentences": [{"text": "fixed", "sentence_type": "transition"}]}]),  # rewrite #2 -- fixes it
+        ],
+        review_responses={
+            "cm": [ClaimMapperOutput(sentences=[])] * 3,
+            "c1": [
+                StoryCritique(issues=[issue_a]),          # cycle 1: 1 critical issue
+                StoryCritique(issues=[issue_a, issue_b]), # cycle 2 (post rewrite #1): WORSE -- 2 critical issues
+                StoryCritique(issues=[]),                 # cycle 3 (post rewrite #2): clean
+            ],
+            "c2b": [GroundingReview(issues=[])] * 3,
+        },
+    )
+    result = run_story_and_narration_loop(
+        source_brief=__import__("planning.models", fromlist=["SourceBrief"]).SourceBrief(
+            topic="t", core_question="q", viewer_problem="p", central_insight="i"),
+        claims=[], ledger=AssumptionLedger(), all_source_unit_ids=["u1"],
+        target_duration_seconds=600.0, agents=agents, budget=make_budget(), initial_plan=plan,
+    )
+
+    assert result.final_status == "PASS"
+    assert result.major_revisions_used == 2
+    assert any("made things worse" in line and "reverting" in line for line in result.log)
+    # The FINAL accepted narration is rewrite #2's ("fixed"), never the
+    # reverted, worse rewrite #1 ("worse rewrite").
+    s0 = next(s for s in result.narration if s.scene_id == "s0")
+    assert s0.sentences[0].text == "fixed"
+
+
+def test_an_improving_targeted_rewrite_is_accepted_not_reverted():
+    """The other half of Phase 8.5 -- a rewrite that actually helps must
+    not be discarded just because a regression-guard now exists."""
+    from editing.models import RevisionPlan, RewriteScene
+
+    plan = make_plan()
+    critical_issue = {
+        "issue_id": "IA", "severity": "critical", "category": "clarity", "layer": "TECHNICAL",
+        "problem": "a", "why_it_matters": "y", "recommended_intent": "fix a", "repair_owner": "narration_lead",
+    }
+    agents = make_agents(
+        story_lead_responses={
+            "RevisionPlan": [
+                RevisionPlan(run_id="r", rewrite_scenes=[RewriteScene(scene_id="s0", reason="x", intent="fix a")]),
+            ],
+        },
+        narration_responses=[
+            make_empty_narration_response(),
+            GeneratedNarration(scenes=[{"scene_id": "s0", "sentences": [{"text": "fixed", "sentence_type": "transition"}]}]),
+        ],
+        review_responses={
+            "cm": [ClaimMapperOutput(sentences=[])] * 2,
+            "c1": [StoryCritique(issues=[critical_issue]), StoryCritique(issues=[])],
+            "c2b": [GroundingReview(issues=[])] * 2,
+        },
+    )
+    result = run_story_and_narration_loop(
+        source_brief=__import__("planning.models", fromlist=["SourceBrief"]).SourceBrief(
+            topic="t", core_question="q", viewer_problem="p", central_insight="i"),
+        claims=[], ledger=AssumptionLedger(), all_source_unit_ids=["u1"],
+        target_duration_seconds=600.0, agents=agents, budget=make_budget(), initial_plan=plan,
+    )
+
+    assert result.final_status == "PASS"
+    assert result.major_revisions_used == 1
+    assert not any("made things worse" in line for line in result.log)
+    s0 = next(s for s in result.narration if s.scene_id == "s0")
+    assert s0.sentences[0].text == "fixed"
+
+
 def test_cold_hook_critic_receives_the_plans_title_and_first_beats_narration():
     """STORY_IMPROVEMENT_PLAN.md Phase 8.2: long-form now runs the same
     cold-hook cascade shorts already had -- confirms the real payload

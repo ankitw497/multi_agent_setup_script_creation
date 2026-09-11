@@ -1,5 +1,5 @@
 """Tests for orchestration/routing.py (plan §15)."""
-from editing.models import RevisionPlan, RewriteBeat
+from editing.models import RevisionPlan, RewriteBeat, RewriteScene
 from orchestration.routing import RevisionAction, decide_action
 
 
@@ -16,6 +16,13 @@ def test_replan_wins_even_if_rewrite_beats_are_also_present():
 
 def test_rewrite_beats_alone_routes_to_targeted_rewrite():
     plan = RevisionPlan(run_id="r1", rewrite_beats=[RewriteBeat(beat_id="B01", reason="x", intent="y")])
+    assert decide_action(plan) == RevisionAction.TARGETED_REWRITE
+
+
+def test_rewrite_scenes_alone_routes_to_targeted_rewrite():
+    """STORY_IMPROVEMENT_PLAN.md Phase 8.5: the narrower scene-scoped tool
+    must route the same way rewrite_beats does."""
+    plan = RevisionPlan(run_id="r1", rewrite_scenes=[RewriteScene(scene_id="s1", reason="x", intent="y")])
     assert decide_action(plan) == RevisionAction.TARGETED_REWRITE
 
 

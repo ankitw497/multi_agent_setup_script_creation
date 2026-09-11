@@ -850,18 +850,42 @@ dedicated repair paths -- **B3 precision edit** (*"verbose/repetitive only"*), *
 (*"voice RED or C5 major"*), **C6 entailment** -- have no modules at all, so a voice finding, a
 verbosity finding and a factual finding all funnel into the same generic narration rewrite.
 
-- [ ] `orchestration/pipeline.py` — before accepting a revision cycle's output, compare the new
-      issue/hard-failure counts against the previous cycle's; if a rewrite made things strictly
-      worse, keep the previous narration rather than the regression (the loop already retains
-      a "best candidate" concept at exhaustion -- apply it per-cycle, not only at the end)
-- [ ] `editing/targeted_rewrite.py` — narrow the default blast radius: rewrite only the scenes
-      A3 actually named, never a whole beat's worth of scenes, unless the issue is explicitly
-      beat-level
-- [ ] Decide (and record) whether B3/B4/C6 are genuinely wanted or should be formally dropped
-      from the design -- right now they are neither built nor removed, and `routing.py`'s
-      missing branches mean C5's voice findings have nowhere to go except a content rewrite
-      that isn't designed to fix voice. Either is defensible; the current in-between is not
-- [ ] Unit tests: a regressing cycle is rejected; a genuinely improving cycle is accepted
+- [x] **Fixed 2026-09-11.** `orchestration/pipeline.py` — before accepting a revision cycle's
+      output, compares the new hard-failure/issue counts (`_badness()`, hard failures dominate
+      the comparison) against the pre-rewrite baseline; if a `TARGETED_REWRITE` cycle made
+      things strictly worse, reverts `narration`/`bundle` to the pre-rewrite state before the
+      next decision is made, rather than letting the regression become the accepted state.
+      Deliberately scoped to one rewrite cycle at a time, not across a `REPLAN` -- a replan
+      starts the plan over for a real structural reason, so "reverting" to the pre-replan
+      state would just reintroduce the defect that motivated it.
+- [x] **Fixed.** `editing/targeted_rewrite.py` — added a genuinely scene-scoped tool,
+      `RewriteScene`/`RevisionPlan.rewrite_scenes` (`editing/models.py`), alongside the
+      existing whole-beat `RewriteBeat`. `editing/revision_planner.py`'s `TASK_PROMPT` now
+      instructs A3 to choose the NARROWEST tool that covers a finding -- `rewrite_scenes` is
+      the default for a critique naming specific `scene_ids` (repetition, pacing, a bad
+      transition), `rewrite_beats` reserved for a problem that genuinely spans every scene in
+      that beat. `orchestration/routing.py::decide_action` and
+      `targeted_rewrite.py::_touched_scene_intents` both updated to recognize it.
+- [x] **Decision recorded**: B3 (precision editor) and B4 (humanize) are dropped as separate
+      passes, not built later. The newly-added `rewrite_scenes` tool already gives A3 a
+      properly-scoped, generic lever for ANY narrative-level finding -- including a C5 voice/
+      style finding -- routed through the same B2 pass, not a specialized one; a dedicated
+      B3/B4 module would duplicate that machinery for no clear benefit. **C6 (entailment
+      check)** is kept as a real, still-open idea (verifying a `technical_fixes`-driven
+      rewrite didn't silently change a claim's meaning) -- genuinely useful as a narrow safety
+      gate, but not blocking anything else here; tracked as a future addition, not built now.
+- [x] Unit tests: `tests/orchestration/test_pipeline.py` --
+      `test_a_regressing_targeted_rewrite_is_reverted_to_the_pre_rewrite_state` (cycle 1: 1
+      critical issue -> rewrite #1 makes it 2, worse, reverted -> rewrite #2 clears it, kept);
+      `test_an_improving_targeted_rewrite_is_accepted_not_reverted`. `tests/orchestration/
+      test_routing.py`, `tests/editing/test_targeted_rewrite.py` (3 new tests for
+      `rewrite_scenes`' narrower blast radius), `tests/editing/test_revision_planner.py`
+      (prompt-content test for the narrowest-tool guidance).
+- [x] `.venv/bin/python3 -m pytest -q` green (780 passed, up from 773)
+- [ ] **Live-verify**: re-run against a real source that previously showed the "6 beats
+      rewritten for 1 fix" pattern; confirm A3 now prefers `rewrite_scenes` for scene-level
+      findings, and confirm a real regression (if one occurs) gets reverted and logged -- not
+      yet run
 
 ### 8.6 — Story and visual layers never inform each other
 
