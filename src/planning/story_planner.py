@@ -237,11 +237,16 @@ def plan_story(
     beat_word_budgets = allocate_beat_word_budgets(structure.beats, target_duration_seconds)
     scene_plan = []
     ledger = ViewerLedger(running_example=structure.running_example, formula_stages=structure.formula_stages)
-    for beat in structure.beats:
+    for i, beat in enumerate(structure.beats):
         target_words = beat_word_budgets.get(beat.beat_id, 0)
         if target_words <= 0:
             continue
-        beat_scenes, ledger = expand_beat_scenes(beat, target_words, claims, story_lead, budget, ledger)
+        previous_beat = structure.beats[i - 1] if i > 0 else None
+        next_beat = structure.beats[i + 1] if i + 1 < len(structure.beats) else None
+        beat_scenes, ledger = expand_beat_scenes(
+            beat, target_words, claims, story_lead, budget, ledger,
+            previous_beat=previous_beat, next_beat=next_beat, central_question=structure.central_question,
+        )
         scene_plan.extend(beat_scenes)
 
     return StoryPlan(**structure.model_dump(exclude={"scene_plan"}), scene_plan=scene_plan)

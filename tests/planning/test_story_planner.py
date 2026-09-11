@@ -339,6 +339,40 @@ def test_viewer_ledger_carries_the_running_example_unchanged_across_beats():
         assert call["payload"]["running_example"]["values"] == {"trophy": "9.6"}
 
 
+def test_neighbor_contract_threads_through_the_real_multi_beat_loop():
+    """Phase 5: each beat's A2b call must see its own actual neighbors from
+    `structure.beats`, with None at either end of the video -- not just in
+    an isolated expand_beat_scenes() call."""
+    from planning.models import SourceBrief
+
+    structure = make_plan(
+        central_question="how does it work?",
+        beats=[
+            StoryBeat(beat_id="B01", purpose="a", next_question="q1", source_unit_ids=["u1"]),
+            StoryBeat(beat_id="B02", purpose="b", next_question="q2", source_unit_ids=["u1"]),
+            StoryBeat(beat_id="B03", purpose="c", next_question="q3", source_unit_ids=["u1"]),
+        ],
+    )
+    story_lead = SequencedStoryLead(
+        structure_response=structure,
+        beat_responses=[BeatSceneExpansion(scenes=[]) for _ in range(3)],
+    )
+
+    plan_story(
+        SourceBrief(topic="t", core_question="q", viewer_problem="p", central_insight="i"),
+        [], AssumptionLedger(), story_lead, BudgetCounter(tier=DEFAULT_TIERS["longform"]),
+        target_duration_seconds=900, source_units=[],
+    )
+
+    a2b_calls = [c for c in story_lead.calls if c["pass_id"] == "A2b"]
+    assert a2b_calls[0]["payload"]["central_question"] == "how does it work?"
+    assert a2b_calls[0]["payload"]["neighbor_contract"]["previous_beat"] is None
+    assert a2b_calls[0]["payload"]["neighbor_contract"]["next_beat"]["purpose"] == "b"
+    assert a2b_calls[1]["payload"]["neighbor_contract"]["previous_beat"]["purpose"] == "a"
+    assert a2b_calls[1]["payload"]["neighbor_contract"]["next_beat"]["purpose"] == "c"
+    assert a2b_calls[2]["payload"]["neighbor_contract"]["next_beat"] is None
+
+
 def test_formula_stages_carry_from_structure_into_the_ledger_passed_to_a2b():
     from planning.models import FormulaStage, SourceBrief
 

@@ -163,6 +163,42 @@ def test_prompt_instructs_checking_technical_overclaims():
     assert "underlying general idea" in TASK_PROMPT
 
 
+def test_scene_plan_and_running_example_reach_the_payload():
+    from llm.budget import BudgetCounter, DEFAULT_TIERS
+    from planning.models import RunningExample, ScenePlan
+
+    plan = make_plan()
+    plan.scene_plan = [ScenePlan(
+        scene_id="s1", beat_id="B01", scene_function="derivation",
+        must_not_repeat=["Q/K/V roles"], new_concepts=[],
+    )]
+    plan.running_example = RunningExample(label="trophy/suitcase", values={"trophy": "9.6"})
+    review_lead = FakeReviewLead(StoryCritique(issues=[]))
+
+    critique_story(plan, make_narration(), review_lead, BudgetCounter(tier=DEFAULT_TIERS["longform"]), source_units=[])
+
+    payload = review_lead.calls[0]["payload"]
+    assert payload["scene_plan"] == [{
+        "scene_id": "s1", "beat_id": "B01", "scene_function": "derivation",
+        "must_not_repeat": ["Q/K/V roles"], "new_concepts": [],
+    }]
+    assert payload["running_example"]["label"] == "trophy/suitcase"
+
+
+def test_prompt_instructs_treating_a_must_not_repeat_violation_as_confirmed():
+    from review.story_critic import TASK_PROMPT
+
+    assert "scene_plan" in TASK_PROMPT
+    assert "must_not_repeat" in TASK_PROMPT
+    assert "CONFIRMED" in TASK_PROMPT
+
+
+def test_prompt_instructs_checking_running_example_fidelity():
+    from review.story_critic import TASK_PROMPT
+
+    assert "running_example" in TASK_PROMPT
+
+
 def test_prompt_has_no_hardcoded_topic_vocabulary():
     """Overfitting guard (user-flagged, STORY_IMPROVEMENT_PLAN.md): C1 runs
     on every video's narration regardless of topic -- the REPETITION/

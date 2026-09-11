@@ -140,6 +140,42 @@ def test_scene_function_and_must_not_repeat_flow_into_the_scene_plan():
     assert scenes[0].must_not_repeat == ["Q/K/V roles"]
 
 
+def test_neighbor_contract_and_central_question_reach_the_model():
+    previous = make_beat(beat_id="B00", purpose="setup", forward_driver="fd0",
+                          viewer_question_before="why?", next_question="what next?")
+    next_ = make_beat(beat_id="B02", purpose="payoff", forward_driver="fd2",
+                       viewer_question_before="how?", next_question="")
+    story_lead = FakeStoryLead(BeatSceneExpansion(scenes=[]))
+
+    expand_beat_scenes(
+        make_beat(), 100, [], story_lead, make_budget(), make_ledger(),
+        previous_beat=previous, next_beat=next_, central_question="how does it work?",
+    )
+
+    payload = story_lead.calls[0]["payload"]
+    assert payload["central_question"] == "how does it work?"
+    assert payload["neighbor_contract"]["previous_beat"]["purpose"] == "setup"
+    assert payload["neighbor_contract"]["previous_beat"]["next_question"] == "what next?"
+    assert payload["neighbor_contract"]["next_beat"]["purpose"] == "payoff"
+
+
+def test_neighbor_contract_is_null_at_either_end_of_the_video():
+    story_lead = FakeStoryLead(BeatSceneExpansion(scenes=[]))
+    expand_beat_scenes(make_beat(), 100, [], story_lead, make_budget(), make_ledger())
+
+    payload = story_lead.calls[0]["payload"]
+    assert payload["neighbor_contract"]["previous_beat"] is None
+    assert payload["neighbor_contract"]["next_beat"] is None
+    assert payload["central_question"] == ""
+
+
+def test_prompt_instructs_not_preempting_the_next_beats_open_question():
+    from planning.scene_expander import TASK_PROMPT
+
+    assert "neighbor_contract" in TASK_PROMPT
+    assert "next_beat" in TASK_PROMPT
+
+
 def test_formula_stages_are_passed_to_the_model():
     ledger = make_ledger(formula_stages=[FormulaStage(stage_id="raw_score", expression="QK^T")])
     story_lead = FakeStoryLead(BeatSceneExpansion(scenes=[]))

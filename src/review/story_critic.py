@@ -66,6 +66,21 @@ Check, in order:
    from scratch a second or third time (not just briefly referencing it
    to build on it) is a real defect, not stylistic reinforcement. Name the
    concept and every scene_id where it recurs. Use `category: repetition`.
+   You are also given `scene_plan` -- the planner's own explicit intent per
+   scene (`scene_function`, `must_not_repeat`, `new_concepts`). When a
+   scene is tagged `scene_function=derivation` with a `must_not_repeat`
+   concept, and the narration re-explains that exact concept from scratch
+   anyway, this is a CONFIRMED plan violation, not a suspected one -- say
+   so explicitly and treat it as at least `major` severity.
+
+8b. RUNNING-EXAMPLE FIDELITY. You are given `running_example` -- the one
+    concrete illustration the plan committed to reusing everywhere. If a
+    scene's narration introduces different named entities/values for what
+    is clearly meant to be the same underlying illustration (rather than
+    reusing the locked example's own names/numbers), flag it under
+    `category: repetition` -- this is a continuity break, not a stylistic
+    choice, even though nothing about the sentence itself is factually
+    wrong.
 
 8. PACING. Does the hook resolve its central tension quickly, or does the
    narration spend multiple scenes on setup/context before the first real
@@ -105,6 +120,13 @@ def _scene_payload(scene: SceneNarration) -> dict:
     return {"scene_id": scene.scene_id, "text": " ".join(s.text for s in scene.sentences)}
 
 
+def _scene_plan_payload(scene) -> dict:
+    return {
+        "scene_id": scene.scene_id, "beat_id": scene.beat_id, "scene_function": scene.scene_function,
+        "must_not_repeat": scene.must_not_repeat, "new_concepts": scene.new_concepts,
+    }
+
+
 def _source_unit_payload(unit: SourceUnit) -> dict:
     return {
         "id": unit.id, "heading": unit.heading, "text": unit.text,
@@ -125,6 +147,8 @@ def critique_story(
         "beats": [b.model_dump() for b in plan.beats],
         "ending": plan.ending.model_dump(),
         "narration": [_scene_payload(s) for s in narration],
+        "scene_plan": [_scene_plan_payload(s) for s in plan.scene_plan],
+        "running_example": plan.running_example.model_dump(),
         "source_units": [_source_unit_payload(u) for u in source_units],
     }
     critique = review_lead.run(

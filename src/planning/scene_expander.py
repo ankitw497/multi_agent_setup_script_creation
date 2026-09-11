@@ -75,6 +75,17 @@ objects/values in `visual_description` rather than inventing a new
 example for the same idea -- the viewer should not have to rebuild their
 mental model from scratch every beat.
 
+You are also given `central_question` (the whole video's driving question)
+and a `neighbor_contract` built from the plan's own existing fields for the
+beat immediately before and after this one (either may be `null` at the
+start/end of the video): each neighbor's `purpose`, `forward_driver`,
+`viewer_question_before`, and `next_question`. Use it two ways: (1) do not
+have this beat's scenes resolve or pre-empt what `next_beat.viewer_question_before`
+or `next_beat.next_question` says the NEXT beat is responsible for
+answering -- leave that genuinely open, even if a sentence resolving it
+early would be easy to write; (2) do not have this beat re-answer a
+question `previous_beat.next_question` already says was answered.
+
 If `formula_stages` is non-empty and one of this beat's scenes visually
 presents one of those registered stages (an equation, a worked
 computation, a diagram of that step), set that scene's `formula_stage_id`
@@ -104,9 +115,20 @@ def _claim_payload(claim: Claim) -> dict:
     return {"claim_id": claim.claim_id, "claim": claim.claim, "importance": claim.importance}
 
 
+def _neighbor_payload(beat: StoryBeat | None) -> dict | None:
+    if beat is None:
+        return None
+    return {
+        "purpose": beat.purpose, "forward_driver": beat.forward_driver,
+        "viewer_question_before": beat.viewer_question_before, "next_question": beat.next_question,
+    }
+
+
 def expand_beat_scenes(
     beat: StoryBeat, target_words: int, claims: list[Claim], story_lead: Agent,
     budget: BudgetCounter, ledger: ViewerLedger,
+    *, previous_beat: StoryBeat | None = None, next_beat: StoryBeat | None = None,
+    central_question: str = "",
 ) -> tuple[list[ScenePlan], ViewerLedger]:
     beat_claims = [c for c in claims if c.source_unit in set(beat.source_unit_ids)]
     payload = {
@@ -117,6 +139,11 @@ def expand_beat_scenes(
         "viewer_knows": ledger.viewer_knows,
         "running_example": ledger.running_example.model_dump(),
         "formula_stages": [s.model_dump() for s in ledger.formula_stages],
+        "central_question": central_question,
+        "neighbor_contract": {
+            "previous_beat": _neighbor_payload(previous_beat),
+            "next_beat": _neighbor_payload(next_beat),
+        },
     }
     result = story_lead.run(
         pass_id="A2b", mode="SCENE_EXPANSION", task_prompt=TASK_PROMPT,
