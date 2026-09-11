@@ -213,6 +213,21 @@ class ScenePlan(BaseModel):
     formula_stage_id: str = ""  # which registered FormulaStage (if any) this scene's equation/diagram represents
 
 
+class RetentionDeadline(BaseModel):
+    """A cumulative-time ceiling for a named `StoryBeat.archetype_role`
+    (STORY_IMPROVEMENT_PLAN.md Phase 7 item #1): "the beat instantiating
+    this role must be fully covered within `max_seconds` of video start."
+    Registered once during A2, only for roles where pacing genuinely
+    matters (e.g. the central problem should land within ~30s) -- empty
+    list is the normal case and changes no allocation behavior. Fixes the
+    confirmed bug where airtime was allocated purely by
+    `len(source_unit_ids)`, so a hook citing as many source units as a
+    deep-dive section got the same word budget as that section."""
+
+    archetype_role: str
+    max_seconds: float
+
+
 class StoryStructure(BaseModel):
     """A2a's output -- everything about the story EXCEPT its scene-level
     breakdown (plan §5, §9, §19).
@@ -245,6 +260,7 @@ class StoryStructure(BaseModel):
     ending: EndingContract
     running_example: RunningExample = Field(default_factory=RunningExample)  # V2: the one example every scene reuses
     formula_stages: list[FormulaStage] = Field(default_factory=list)  # Phase 6: empty unless the source has an evolving formula
+    retention_deadlines: list[RetentionDeadline] = Field(default_factory=list)  # Phase 7: empty unless pacing needs one
 
 
 class StoryPlan(StoryStructure):

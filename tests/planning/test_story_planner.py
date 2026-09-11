@@ -422,6 +422,44 @@ def test_prompt_instructs_populating_running_example_from_the_hook_illustration(
     assert "reuses" in TASK_PROMPT.lower() or "reuse" in TASK_PROMPT.lower()
 
 
+def test_prompt_instructs_registering_retention_deadlines_when_pacing_matters():
+    from planning.story_planner import TASK_PROMPT
+
+    assert "retention_deadlines" in TASK_PROMPT
+    assert "max_seconds" in TASK_PROMPT
+
+
+def test_retention_deadlines_reach_the_deterministic_allocator(monkeypatch):
+    """Phase 7 item #1: A2's own retention_deadlines must actually reach
+    allocate_beat_word_budgets(), not just exist as an unused field."""
+    import planning.story_planner as story_planner_module
+    from planning.models import RetentionDeadline, SourceBrief
+
+    captured = {}
+    real_allocate = story_planner_module.allocate_beat_word_budgets
+
+    def spy(beats, target_duration_seconds, **kwargs):
+        captured["retention_deadlines"] = kwargs.get("retention_deadlines")
+        return real_allocate(beats, target_duration_seconds, **kwargs)
+
+    monkeypatch.setattr(story_planner_module, "allocate_beat_word_budgets", spy)
+
+    deadlines = [RetentionDeadline(archetype_role="central_problem", max_seconds=20)]
+    structure = make_plan(
+        beats=[StoryBeat(beat_id="B01", purpose="a", archetype_role="central_problem", source_unit_ids=["u1"])],
+        retention_deadlines=deadlines,
+    )
+    story_lead = SequencedStoryLead(structure_response=structure, beat_responses=[BeatSceneExpansion(scenes=[])])
+
+    story_planner_module.plan_story(
+        SourceBrief(topic="t", core_question="q", viewer_problem="p", central_insight="i"),
+        [], AssumptionLedger(), story_lead, BudgetCounter(tier=DEFAULT_TIERS["longform"]),
+        target_duration_seconds=600, source_units=[],
+    )
+
+    assert captured["retention_deadlines"] == deadlines
+
+
 def test_prompt_instructs_registering_formula_stages_when_the_source_has_an_evolving_expression():
     from planning.story_planner import TASK_PROMPT
 

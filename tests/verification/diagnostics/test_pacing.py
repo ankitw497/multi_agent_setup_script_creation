@@ -1,8 +1,13 @@
 """Tests for verification/diagnostics/pacing.py -- D* (plan §10.2, V2 Phase 2)."""
+from facts.models import Claim
 from planning.models import (
     CTAContract, EndingContract, HookContract, ScenePlan, StoryBeat, StoryPlan, TitleContract,
 )
-from verification.diagnostics.pacing import check_hook_tension_pacing
+from verification.diagnostics.pacing import check_beat_airtime_outliers, check_hook_tension_pacing
+
+
+def make_claim(claim_id, source_unit) -> Claim:
+    return Claim(claim_id=claim_id, source_unit=source_unit, claim="x", type="mechanism")
 
 
 def make_plan(beats, scene_plan) -> StoryPlan:
@@ -94,3 +99,66 @@ def test_a_later_beats_hook_tagged_scene_does_not_inflate_the_measurement():
     result = check_hook_tension_pacing(make_plan(beats, scenes))
     assert result.band == "GREEN"
     assert result.value == 21.6  # B01's own scene only, not B01 + B03
+
+
+# ---- check_beat_airtime_outliers (STORY_IMPROVEMENT_PLAN.md Phase 7 item #1) --------------
+
+def test_too_few_beats_with_claims_is_green_not_a_crash():
+    beats = [StoryBeat(beat_id="B01", purpose="x", source_unit_ids=["u1"])]
+    scenes = [ScenePlan(scene_id="s1", beat_id="B01", word_budget=60)]
+    claims = [make_claim("C1", "u1")]
+    result = check_beat_airtime_outliers(make_plan(beats, scenes), claims)
+    assert result.band == "GREEN"
+
+
+def test_evenly_allocated_beats_are_green():
+    beats = [
+        StoryBeat(beat_id=f"B{i:02d}", purpose="x", source_unit_ids=[f"u{i}"]) for i in range(1, 5)
+    ]
+    scenes = [ScenePlan(scene_id=f"s{i}", beat_id=f"B{i:02d}", word_budget=60) for i in range(1, 5)]
+    claims = [make_claim(f"C{i}", f"u{i}") for i in range(1, 5)]
+    result = check_beat_airtime_outliers(make_plan(beats, scenes), claims)
+    assert result.band == "GREEN"
+
+
+def test_a_beat_allocated_far_more_than_its_content_density_justifies_is_flagged():
+    """The confirmed live bug's shape: a beat gets a large word budget while
+    its own claim density doesn't justify it, even though the video's
+    total word budget matches its target elsewhere."""
+    beats = [
+        StoryBeat(beat_id="B01", purpose="x", source_unit_ids=["u1"]),  # 1 claim, huge budget
+        StoryBeat(beat_id="B02", purpose="x", source_unit_ids=["u2"]),
+        StoryBeat(beat_id="B03", purpose="x", source_unit_ids=["u3"]),
+        StoryBeat(beat_id="B04", purpose="x", source_unit_ids=["u4"]),
+    ]
+    scenes = [
+        *[ScenePlan(scene_id=f"s1{i}", beat_id="B01", word_budget=100) for i in range(6)],  # 600 words total
+        ScenePlan(scene_id="s2", beat_id="B02", word_budget=60),
+        ScenePlan(scene_id="s3", beat_id="B03", word_budget=60),
+        ScenePlan(scene_id="s4", beat_id="B04", word_budget=60),
+    ]
+    claims = [make_claim(f"C{i}", f"u{i}") for i in range(1, 5)]
+
+    result = check_beat_airtime_outliers(make_plan(beats, scenes), claims)
+
+    assert result.band == "AMBER"
+    assert "B01" in result.evidence
+
+
+def test_beats_with_zero_claims_are_excluded_not_treated_as_infinite_ratio():
+    beats = [
+        StoryBeat(beat_id="B01", purpose="x", source_unit_ids=["u1"]),
+        StoryBeat(beat_id="B02", purpose="x", source_unit_ids=["u2"]),
+        StoryBeat(beat_id="B03", purpose="x"),  # no source units, no claims at all
+    ]
+    scenes = [
+        ScenePlan(scene_id="s1", beat_id="B01", word_budget=60),
+        ScenePlan(scene_id="s2", beat_id="B02", word_budget=65),
+        ScenePlan(scene_id="s3a", beat_id="B03", word_budget=100),  # large, but no claims to compare against
+        ScenePlan(scene_id="s3b", beat_id="B03", word_budget=100),
+    ]
+    claims = [make_claim("C1", "u1"), make_claim("C2", "u2")]
+
+    result = check_beat_airtime_outliers(make_plan(beats, scenes), claims)
+
+    assert result.band == "GREEN"

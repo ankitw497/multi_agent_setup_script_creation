@@ -15,12 +15,16 @@ on-screen time directly.
 """
 from __future__ import annotations
 
+import statistics
+
+from facts.models import Claim
 from planning.models import StoryPlan
 from review.models import DiagnosticResult
 
 PLANNING_WPM = 167
 HOOK_TENSION_TARGET_SECONDS = 30.0  # plan §10.2: "tension reached inside ~30 s"
 HOOK_TENSION_AMBER_MARGIN_SECONDS = 30.0  # up to ~60s still counts as AMBER, not RED
+AIRTIME_OUTLIER_RATIO = 2.0  # a beat using >2x or <0.5x the plan's own median words-per-claim
 
 
 def _hook_scene_seconds(plan: StoryPlan) -> float:
@@ -68,4 +72,58 @@ def check_hook_tension_pacing(plan: StoryPlan) -> DiagnosticResult:
         dimension="pacing.hook_tension", band=band, value=round(hook_seconds, 1),
         target=f"<= {target:.0f}s",
         evidence=f"hook scenes take {hook_seconds:.0f}s of narration before the central tension is established",
+    )
+
+
+def check_beat_airtime_outliers(plan: StoryPlan, claims: list[Claim]) -> DiagnosticResult:
+    """STORY_IMPROVEMENT_PLAN.md Phase 7 item #1: the plan's aggregate word
+    budget can match its target exactly while an individual beat is still
+    a real outlier -- confirmed live (`gpt-5.6-sol` tuned run): masking and
+    heads sections ran 30-50% over what their own content needed while the
+    overall video had slack elsewhere. `check_word_budget_matches_target`
+    (hard gate) only ever checks the sum; this checks the DISTRIBUTION,
+    using each beat's own content density (claims actually available to
+    it) as the yardstick rather than a fixed word-count band that would
+    have to be re-tuned per video length."""
+    claims_per_unit: dict[str, int] = {}
+    for claim in claims:
+        claims_per_unit[claim.source_unit] = claims_per_unit.get(claim.source_unit, 0) + 1
+
+    ratios: dict[str, float] = {}
+    for beat in plan.beats:
+        claim_count = sum(claims_per_unit.get(u, 0) for u in beat.source_unit_ids)
+        if claim_count == 0:
+            continue
+        allocated_words = sum(s.word_budget for s in plan.scene_plan if s.beat_id == beat.beat_id)
+        if allocated_words == 0:
+            continue
+        ratios[beat.beat_id] = allocated_words / claim_count
+
+    if len(ratios) < 3:
+        return DiagnosticResult(
+            dimension="pacing.beat_airtime_outliers", band="GREEN",
+            evidence=f"only {len(ratios)} beat(s) have both claims and an allocated word budget -- "
+                     "not enough to assess a distribution",
+        )
+
+    median_ratio = statistics.median(ratios.values())
+    outliers = [
+        f"{beat_id} ({ratio / median_ratio:.1f}x median)"
+        for beat_id, ratio in ratios.items()
+        if median_ratio > 0 and (ratio > median_ratio * AIRTIME_OUTLIER_RATIO or ratio < median_ratio / AIRTIME_OUTLIER_RATIO)
+    ]
+
+    if not outliers:
+        return DiagnosticResult(
+            dimension="pacing.beat_airtime_outliers", band="GREEN",
+            value=round(median_ratio, 1), target=f"within {AIRTIME_OUTLIER_RATIO:.0f}x median words-per-claim",
+            evidence=f"every beat's words-per-claim stays within {AIRTIME_OUTLIER_RATIO:.0f}x the "
+                     f"plan's own median ({median_ratio:.1f})",
+        )
+
+    return DiagnosticResult(
+        dimension="pacing.beat_airtime_outliers", band="AMBER",
+        value=round(median_ratio, 1), target=f"within {AIRTIME_OUTLIER_RATIO:.0f}x median words-per-claim",
+        evidence=f"beat(s) allocated a disproportionate airtime relative to their own content "
+                 f"density (median words/claim={median_ratio:.1f}): {', '.join(outliers)}",
     )

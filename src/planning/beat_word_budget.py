@@ -12,7 +12,7 @@ only at verification time).
 """
 from __future__ import annotations
 
-from planning.models import StoryBeat
+from planning.models import RetentionDeadline, StoryBeat
 
 PLANNING_WPM = 167
 MIN_BEAT_WORDS = 30  # ScenePlan's own hard floor (plan §9) -- a beat allocated less than
@@ -21,12 +21,24 @@ MIN_BEAT_WORDS = 30  # ScenePlan's own hard floor (plan §9) -- a beat allocated
 
 def allocate_beat_word_budgets(
     beats: list[StoryBeat], target_duration_seconds: float, planning_wpm: int = PLANNING_WPM,
+    retention_deadlines: list[RetentionDeadline] | None = None,
 ) -> dict[str, int]:
     """beat_id -> target word count, proportional to how much source content
     each beat covers (len(source_unit_ids)), falling back to an even split
     when no beat references any source units. The last beat absorbs any
     rounding remainder so the allocations always sum to exactly the target
-    (never drift from it the way an LLM's own aggregate sum would)."""
+    (never drift from it the way an LLM's own aggregate sum would).
+
+    STORY_IMPROVEMENT_PLAN.md Phase 7 item #1: proportional-by-citation-
+    count alone let a beat's airtime be driven entirely by how much source
+    material it cites, not its narrative/retention importance -- a
+    confirmed live bug where the hook received the same budget as an
+    unrelated deep-dive section. `retention_deadlines` (optional, empty by
+    default -- no behavior change for a plan that doesn't set any) caps a
+    named `archetype_role`'s beat so the CUMULATIVE runtime up to and
+    including it never exceeds its declared `max_seconds`; the reclaimed
+    words are redistributed proportionally across every other beat, so the
+    total still sums to exactly `target_words`."""
     if not beats:
         return {}
 
@@ -44,4 +56,50 @@ def allocate_beat_word_budgets(
         allocations[beat.beat_id] = max(words, MIN_BEAT_WORDS)
         allocated_so_far += words
 
+    if retention_deadlines:
+        allocations = _apply_retention_deadlines(beats, allocations, retention_deadlines, planning_wpm)
+
     return allocations
+
+
+def _apply_retention_deadlines(
+    beats: list[StoryBeat], allocations: dict[str, int],
+    retention_deadlines: list[RetentionDeadline], planning_wpm: int,
+) -> dict[str, int]:
+    deadline_by_role = {d.archetype_role: d.max_seconds for d in retention_deadlines}
+    cumulative_words = 0
+    for beat in beats:
+        cumulative_words += allocations[beat.beat_id]
+        max_seconds = deadline_by_role.get(beat.archetype_role)
+        if max_seconds is None:
+            continue
+        deadline_words = round(max_seconds / 60 * planning_wpm)
+        overshoot = cumulative_words - deadline_words
+        if overshoot <= 0:
+            continue
+        capped_words = max(MIN_BEAT_WORDS, allocations[beat.beat_id] - overshoot)
+        actual_reclaimed = allocations[beat.beat_id] - capped_words
+        if actual_reclaimed <= 0:
+            continue
+        allocations[beat.beat_id] = capped_words
+        cumulative_words -= actual_reclaimed
+        _redistribute(beats, allocations, exclude_beat_id=beat.beat_id, extra_words=actual_reclaimed)
+    return allocations
+
+
+def _redistribute(
+    beats: list[StoryBeat], allocations: dict[str, int], exclude_beat_id: str, extra_words: int,
+) -> None:
+    recipients = [b for b in beats if b.beat_id != exclude_beat_id]
+    if not recipients:
+        return
+    weights = [max(1, len(b.source_unit_ids)) for b in recipients]
+    total_weight = sum(weights)
+    distributed = 0
+    for i, (beat, weight) in enumerate(zip(recipients, weights)):
+        if i == len(recipients) - 1:
+            share = extra_words - distributed  # remainder -- keeps the total exact
+        else:
+            share = round(extra_words * weight / total_weight)
+        allocations[beat.beat_id] += share
+        distributed += share

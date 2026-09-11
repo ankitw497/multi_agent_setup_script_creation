@@ -107,6 +107,17 @@ expansion (A2b) and narration will be told to reuse -- do not leave it
 blank if the hook has a real concrete illustration, and never invent a
 second, different example for the same underlying concept.
 
+If pacing genuinely matters for a specific structural role this archetype
+gives one of your beats (e.g. the central problem should be unmistakable
+to the viewer within the first 20-40 seconds, or a key mechanism should be
+previewed before too much setup accumulates), declare it in
+`retention_deadlines` as `{archetype_role, max_seconds}` -- `archetype_role`
+must exactly match the value you gave that beat, and `max_seconds` is the
+CUMULATIVE runtime (from video start) by which that beat's content should
+be fully covered. Leave `retention_deadlines` empty when no beat has this
+kind of hard pacing requirement -- most archetypes will not need one, and
+this must never be used just to compress every beat evenly.
+
 If (and only if) the source builds up a mathematical or algorithmic
 expression progressively across multiple beats -- a raw form that later
 gets refined, scaled, normalized, or combined into a final form -- register
@@ -234,7 +245,9 @@ def plan_story(
     # (the mechanical cause of cross-scene repetition). No extra LLM call:
     # the loop was already sequential, this just carries state between its
     # existing calls.
-    beat_word_budgets = allocate_beat_word_budgets(structure.beats, target_duration_seconds)
+    beat_word_budgets = allocate_beat_word_budgets(
+        structure.beats, target_duration_seconds, retention_deadlines=structure.retention_deadlines,
+    )
     scene_plan = []
     ledger = ViewerLedger(running_example=structure.running_example, formula_stages=structure.formula_stages)
     for i, beat in enumerate(structure.beats):
