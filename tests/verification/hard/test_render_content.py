@@ -5,8 +5,9 @@ from planning.models import (
     CTAContract, EndingContract, HookContract, ScenePlan, StoryPlan, TitleContract,
 )
 from verification.hard.render import (
-    check_deictic_resolution, check_every_scene_has_prose, check_hero_states_problem,
-    check_payoff_closes, check_reader_standalone_word_count, check_renderer_compat,
+    check_component_slots_filled, check_deictic_resolution, check_every_scene_has_prose,
+    check_hero_states_problem, check_payoff_closes, check_reader_standalone_word_count,
+    check_renderer_compat,
 )
 from narration.models import SceneNarration, SentenceNarration
 
@@ -90,6 +91,82 @@ def test_scene_with_only_a_couple_words_is_flagged():
     beats = [BeatVisual(beat_id="B01", heading="h", scenes=[SceneVisual(scene_id="s1", screen_prose="just two")])]
     issues = check_every_scene_has_prose(beats)
     assert any(i.code == "scene_missing_visible_prose" for i in issues)
+
+
+# ---- component slots filled (real bug found live 2026-09-12) ----------------
+
+def test_no_component_id_is_never_flagged():
+    beats = [BeatVisual(beat_id="B01", heading="h", scenes=[SceneVisual(scene_id="s1", screen_prose="x")])]
+    assert check_component_slots_filled(beats) == []
+
+
+def test_a_fully_filled_card_is_clean():
+    beats = [BeatVisual(beat_id="B01", heading="h", scenes=[SceneVisual(
+        scene_id="s1", screen_prose="x", component_id="card",
+        component_data={"title": "Speed", "value": "3.2x", "desc": "faster than baseline"},
+    )])]
+    assert check_component_slots_filled(beats) == []
+
+
+def test_a_card_missing_a_slot_entirely_is_flagged():
+    beats = [BeatVisual(beat_id="B01", heading="h", scenes=[SceneVisual(
+        scene_id="s1", screen_prose="x", component_id="card",
+        component_data={"title": "Speed", "value": "3.2x"},  # desc missing entirely
+    )])]
+    issues = check_component_slots_filled(beats)
+    assert any(i.code == "component_slot_blank" and i.scene_id == "s1" for i in issues)
+    assert "desc" in issues[0].detail
+
+
+def test_a_card_with_a_present_but_blank_slot_is_flagged():
+    """The confirmed live shape: the slot key IS present, its value is just
+    an empty string -- functionally identical to missing at render time."""
+    beats = [BeatVisual(beat_id="B01", heading="h", scenes=[SceneVisual(
+        scene_id="s1", screen_prose="x", component_id="card",
+        component_data={"title": "Speed", "value": "", "desc": "faster"},
+    )])]
+    issues = check_component_slots_filled(beats)
+    assert any("value" in i.detail for i in issues)
+
+
+def test_diagram_card_missing_content_is_flagged():
+    beats = [BeatVisual(beat_id="B01", heading="h", scenes=[SceneVisual(
+        scene_id="s1", screen_prose="x", component_id="diagram_card",
+        component_data={"caption": "the flow"},  # content missing
+    )])]
+    issues = check_component_slots_filled(beats)
+    assert any("content" in i.detail for i in issues)
+
+
+def test_a_step_list_item_missing_its_own_desc_is_flagged():
+    """The confirmed live shape: step_list's only top-level slot is `items`
+    (present, non-empty), but an individual item's own `desc` is blank --
+    invisible to a check that only looks at the top-level slot name."""
+    beats = [BeatVisual(beat_id="B01", heading="h", scenes=[SceneVisual(
+        scene_id="s1", screen_prose="x", component_id="step_list",
+        component_data={"items": [{"title": "Step 1", "desc": "does the thing"}, {"title": "Step 2", "desc": ""}]},
+    )])]
+    issues = check_component_slots_filled(beats)
+    assert any("desc" in i.detail for i in issues)
+
+
+def test_grid_items_as_plain_strings_are_not_flagged():
+    """render_component()'s own design: a grid_2/grid_3 item MAY be a plain
+    string (rendered as a desc-only card) -- not every item needs the full
+    {title, value, desc} shape, so a plain string must not be flagged."""
+    beats = [BeatVisual(beat_id="B01", heading="h", scenes=[SceneVisual(
+        scene_id="s1", screen_prose="x", component_id="grid_3",
+        component_data={"items": ["observation one", "observation two", "observation three"]},
+    )])]
+    assert check_component_slots_filled(beats) == []
+
+
+def test_component_slot_issue_is_scene_scoped_for_the_h_repair_loop():
+    beats = [BeatVisual(beat_id="B01", heading="h", scenes=[SceneVisual(
+        scene_id="s1", screen_prose="x", component_id="card", component_data={"title": "x"},
+    )])]
+    issues = check_component_slots_filled(beats)
+    assert issues[0].scene_id == "s1"
 
 
 # ---- hero states the problem --------------------------------------------------

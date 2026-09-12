@@ -47,6 +47,14 @@ concrete illustration directly -- do not compress a claim like "changing
 X to Y flips the answer" into a vaguer restatement like "context matters
 for meaning."
 
+If `visual_description` includes any mathematical or algorithmic
+expression, write it in plain, readable notation only -- e.g. "a / sqrt(b)"
+or "f(x)" -- never LaTeX escape syntax
+(`\\frac{}{}`, `\\sqrt{}`, `\\operatorname{}`, `\\left`/`\\right`, `\\cdot`,
+`\\top`, and similar backslash commands). This page renders no LaTeX
+engine -- raw LaTeX source shows up as literal broken text on screen, not
+typeset math.
+
 You are also given `viewer_knows` -- concept labels already taught by
 EARLIER beats -- and `running_example` (the one running illustration for
 this whole video, if one has been set). The viewer has continuous memory

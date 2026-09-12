@@ -27,6 +27,7 @@ from bs4 import BeautifulSoup
 
 from facts.models import Claim
 from html_synth.assembler import narration_hash
+from html_synth.component_library import component_slots
 from html_synth.synthesizer import BeatVisual, HeroContent
 from narration.models import SceneNarration
 from planning.models import StoryPlan
@@ -200,6 +201,50 @@ def check_every_scene_has_prose(beat_visuals: list[BeatVisual], min_words: int =
     return issues
 
 
+def _is_blank_slot_value(value: object) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return not value.strip()
+    if isinstance(value, (list, dict)):
+        return len(value) == 0
+    return False
+
+
+def check_component_slots_filled(beat_visuals: list[BeatVisual]) -> list[RenderIssue]:
+    """A chosen component whose own slots aren't all filled in renders as a
+    visibly broken empty box -- `render_component()`'s generic path
+    (`html_synth/component_library.py`) silently defaults a missing slot to
+    "" rather than failing loudly. Confirmed live on two separate real runs
+    (14 empty component-slot boxes each, regardless of story_lead model --
+    H always runs on the same narration_lead) -- this was never checked
+    for at all; only whether a scene has SOME screen prose
+    (`check_every_scene_has_prose`), never whether its chosen component is
+    actually complete."""
+    issues: list[RenderIssue] = []
+    for beat in beat_visuals:
+        for scene in beat.scenes:
+            if not scene.component_id:
+                continue
+            data = scene.component_data or {}
+            blank_fields = sorted({
+                slot for slot in component_slots(scene.component_id)
+                if _is_blank_slot_value(data.get(slot))
+            })
+            items = data.get("items")
+            if isinstance(items, list):
+                for item in items:
+                    if isinstance(item, dict):
+                        blank_fields.extend(sorted(k for k, v in item.items() if _is_blank_slot_value(v)))
+            if blank_fields:
+                issues.append(RenderIssue(
+                    "component_slot_blank",
+                    f"{scene.scene_id}'s {scene.component_id!r} component has blank slot(s): {sorted(set(blank_fields))}",
+                    scene_id=scene.scene_id,
+                ))
+    return issues
+
+
 def check_hero_states_problem(hero: HeroContent, plan: StoryPlan, threshold: float = 0.1) -> list[RenderIssue]:
     """plan §12.0: "the hero states the problem." Checked against the
     plan's own hook (what the hero's badge/title/subtitle are meant to
@@ -291,6 +336,7 @@ def check_render_content(
         check_renderer_compat(page_html)
         + check_reader_standalone_word_count(page_html)
         + check_every_scene_has_prose(beat_visuals)
+        + check_component_slots_filled(beat_visuals)
         + check_hero_states_problem(hero, plan)
         + check_deictic_resolution(plan, narration)
     )

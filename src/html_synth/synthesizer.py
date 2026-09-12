@@ -37,14 +37,24 @@ For each scene in this beat:
   concrete comparison, a callout-worthy caveat, an equation, a labeled
   visual). Leave it null for scenes that are better served by prose alone
   -- do not force a component onto every scene.
-- `component_data`: if `component_id` is set, fill in exactly the slots
-  that component needs (see `component_slots` for the exact fields) with
-  real content grounded in `available_claims` -- never invent a number or
-  fact. For `diagram_card` specifically, `content` must be an actual
-  compact ASCII-art diagram (arrows like -> or |, boxes, short labels)
-  that concretely depicts this scene's mechanism step -- e.g. a labeled
-  flow of a few short stages connected by arrows. Never leave it blank
-  and never just restate the caption in prose form.
+- `component_data`: if `component_id` is set, fill in EVERY slot listed
+  for it in `component_slots` -- a component with even one slot left
+  blank renders as a visibly broken empty box on the page, which is worse
+  than not choosing a component at all. Use real content grounded in
+  `available_claims` -- never invent a number or fact. For `diagram_card`
+  specifically, `content` must be an actual compact ASCII-art diagram
+  (arrows like -> or |, boxes, short labels) that concretely depicts this
+  scene's mechanism step -- e.g. a labeled flow of a few short stages
+  connected by arrows. Never leave it blank and never just restate the
+  caption in prose form.
+- Any mathematical or algorithmic expression, in `screen_prose` OR
+  `component_data`, must use plain, readable notation only -- e.g. "a /
+  sqrt(b)" or "f(x)" -- never LaTeX escape syntax (`\\frac{}{}`,
+  `\\sqrt{}`, `\\operatorname{}`, `\\left`/`\\right`, `\\cdot`, `\\top`, and
+  similar backslash commands), even if a given field like
+  `visual_description` already contains LaTeX -- convert it to plain
+  notation rather than copying it through. This page renders no LaTeX
+  engine -- raw LaTeX source shows up as literal broken text on screen.
 - `annotated_numbers`: every number in `screen_prose` (or in
   `component_data`, for a card/table) that comes from a specific claim --
   list `{text, claim_id}` pairs with `text` as the EXACT substring as it

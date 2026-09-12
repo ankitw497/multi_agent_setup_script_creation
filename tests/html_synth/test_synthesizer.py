@@ -40,6 +40,40 @@ def test_hero_prompt_never_reuses_narration_verbatim_instruction():
     assert "never reuse" in HERO_TASK_PROMPT.lower()
 
 
+def test_prompt_instructs_plain_notation_never_latex():
+    """Real bug found live 2026-09-12: a gpt-5.6-sol-planned video's
+    visual_description carried real LaTeX (\\frac{}{}, \\operatorname{})
+    which H echoed verbatim into on-screen math-block-equation content --
+    the page loads no LaTeX renderer, so it showed as literal broken text."""
+    from html_synth.synthesizer import TASK_PROMPT
+
+    assert "LaTeX" in TASK_PROMPT
+    assert "plain" in TASK_PROMPT.lower()
+
+
+def test_prompt_instructs_filling_every_component_slot():
+    """The other real bug found on the same live run (and confirmed present
+    regardless of story_lead model): a chosen component left some of its
+    own slots blank, rendering as a visibly empty box."""
+    from html_synth.synthesizer import TASK_PROMPT
+
+    assert "blank" in TASK_PROMPT.lower()
+    assert "EVERY slot" in TASK_PROMPT
+
+
+def test_prompt_has_no_stray_control_characters_from_unescaped_backslashes():
+    """Regression guard for a bug in THIS session's own fix: writing a raw
+    LaTeX example like \\frac/\\right/\\top directly into a normal (non-raw)
+    triple-quoted Python string silently turns \\f/\\r/\\t into a real
+    form-feed/carriage-return/tab character instead of the two literal
+    characters intended -- confirmed to actually happen (caught by a
+    SyntaxWarning) before being fixed with doubled backslashes."""
+    from html_synth.synthesizer import TASK_PROMPT
+
+    for control_char in ("\x0c", "\r", "\t"):
+        assert control_char not in TASK_PROMPT
+
+
 def test_synthesize_beat_visual_scopes_scenes_to_the_beat():
     agent = FakeAgent(BeatVisual(beat_id="B01", heading="h", scenes=[{"scene_id": "s1"}]))
     synthesize_beat_visual(make_plan().beats[0], make_plan(), [], agent)

@@ -176,6 +176,30 @@ def test_prompt_instructs_not_preempting_the_next_beats_open_question():
     assert "next_beat" in TASK_PROMPT
 
 
+def test_prompt_instructs_plain_notation_never_latex_in_visual_description():
+    """Real bug found live 2026-09-12: A2b (gpt-5.6-sol on this run) wrote
+    visual_description using real LaTeX (\\frac{}{}, \\operatorname{}),
+    which H echoed verbatim -- the page loads no LaTeX renderer, so it
+    rendered as literal broken text."""
+    from planning.scene_expander import TASK_PROMPT
+
+    assert "LaTeX" in TASK_PROMPT
+    assert "plain" in TASK_PROMPT.lower()
+
+
+def test_prompt_has_no_stray_control_characters_from_unescaped_backslashes():
+    """Regression guard for a bug in THIS session's own fix: a raw LaTeX
+    example like \\frac/\\right/\\top written directly into a normal
+    (non-raw) triple-quoted Python string silently turns \\f/\\r/\\t into a
+    real form-feed/carriage-return/tab character -- confirmed to actually
+    happen (caught by a SyntaxWarning) before being fixed with doubled
+    backslashes."""
+    from planning.scene_expander import TASK_PROMPT
+
+    for control_char in ("\x0c", "\r", "\t"):
+        assert control_char not in TASK_PROMPT
+
+
 def test_formula_stages_are_passed_to_the_model():
     ledger = make_ledger(formula_stages=[FormulaStage(stage_id="raw_score", expression="QK^T")])
     story_lead = FakeStoryLead(BeatSceneExpansion(scenes=[]))
