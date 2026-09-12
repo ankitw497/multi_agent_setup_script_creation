@@ -1670,6 +1670,68 @@ confirm the grounding-violation count actually drops.
 
 ---
 
+## ERR-046 — The story+narration loop shared every other stage's $1.00 hard cap
+
+**Date:** 2026-09-12 · **Severity:** major (blocked a user-requested model comparison from completing at all) · **Status:** fixed · **Component:** `orchestration/run_pipeline.py`
+
+**Where:** a user-requested gpt-5.6-sol vs. gpt-4o `story_lead` comparison run hit
+`BudgetExceeded` mid-loop at ~$1.09 spent (pre-flight estimate $1.0029, over the $1.00 hard
+cap), never completing A3's second revision cycle.
+
+**Root cause:** `run_full_pipeline()` gives `facts_budget`/`planning_budget`/`loop_budget`/
+`html_budget` each their OWN independent `BudgetCounter(tier=DEFAULT_TIERS["longform"])` --
+all four capped at $1.00 -- with no way to raise just one. A reasoning-capable `story_lead`
+alias (`gpt-5.6-sol`) costs roughly 10-15x more per call than `gpt-4o` for the same A2/A2b/B2
+calls (confirmed: A2 $0.22 vs. ~$0.02-0.03; A2b ~$0.03/call vs. ~$0.007-0.009/call; one B2
+rewrite $0.39 vs. a few cents), so it cannot complete even one loop within the shared default.
+
+**Fix:** new optional `loop_budget_usd` param on `run_full_pipeline()` (and a `--loop-budget-usd`
+CLI flag) scales a custom `BudgetTier`'s target/warning proportionally against the longform
+tier's own ratio, touching only `loop_budget` -- the other three stages keep their independent
+$1.00 caps unchanged.
+
+**Tests:** `tests/orchestration/test_run_pipeline.py` -- `loop_budget_usd` reaches
+`run_story_and_narration_loop`'s own budget object with the right `hard_cap_usd` (and a still-
+ordered tier); defaults to $1.00 when unset. Full suite: 839 passed, 16 deselected (at the time
+of this fix).
+
+---
+
+## ERR-047 — The paid-API lane had no request timeout at all; a real run hung 6+ hours
+
+**Date:** 2026-09-12 · **Severity:** critical (a real run silently hung indefinitely, discovered only because a human noticed) · **Status:** fixed · **Component:** `llm/backends/litellm_backend.py`, `llm/client.py`, `agents/base.py` · **Live cost:** the hung run itself burned no further API cost while stuck (it was blocked on one never-returning call), but wasted 6+ hours of wall time before being found and killed by hand
+
+**Where:** a user-requested gpt-5.6-sol vs. gpt-4o model comparison run (`video-01-attention-
+phase-e2e-verify-gpt56/runs/v02`) stalled after several successful A2b calls -- `usage.jsonl`'s
+last write was at 23:01, still zero progress at 05:26 the next day. No error, no crash, no
+retry logged -- the process was simply blocked forever on one call.
+
+**Root cause, confirmed by reading the actual call path:** `agents/base.py::Agent.run()`'s
+paid-lane branch never forwarded its own `timeout_s` argument to `call_structured_paid()`,
+which didn't even accept the parameter; `llm/backends/litellm_backend.py::LiteLLMBackend.call()`
+never passed a `timeout` to `litellm.completion()` at all. ERR-032's `num_retries=3` fix only
+classifies and backs off an ALREADY-RAISED exception (`RateLimitError`/`Timeout`/
+`ServiceUnavailableError`) -- a connection that simply never responds raises nothing, so
+`num_retries` never even engages. This affects every paid_api call (GPT-4o, GPT-5.6-sol,
+Gemini) equally; the reasoning-model comparison run just happened to be the one that hit it.
+
+**Fix:** `LiteLLMBackend` gains a `timeout_s` constructor param (default 300s -- above the
+longest real call observed, a 149s gpt-5.6-sol A2 call, but loud: a genuinely slower call now
+raises `litellm.Timeout`, one of the classes `num_retries` already retries), forwarded to
+`litellm.completion(timeout=...)` and overridable per call. Threaded end-to-end:
+`LLMClient.call_structured_paid()` gained `timeout_s`; `Agent.run()`'s paid-lane branch now
+actually forwards its own `timeout_s` instead of silently dropping it.
+
+**Tests:** `tests/llm/test_litellm_backend.py` (default/override/per-call forwarding),
+`tests/llm/test_client.py` (`call_structured_paid()` forwards `timeout_s`), `tests/agents/
+test_base.py` (`Agent.run()` forwards it on the paid lane). Full suite: 844 passed, 16
+deselected.
+
+**Not yet live-verified**: needs a fresh run (ideally the same gpt-5.6-sol comparison, now with
+`--loop-budget-usd` raised too, per ERR-046 above) to confirm no further indefinite hangs.
+
+---
+
 ## Open items (not yet bugs, flagged for future attention)
 
 - **A2b's per-beat expansion doesn't always self-track its own new concepts within one
