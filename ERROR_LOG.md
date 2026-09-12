@@ -1732,6 +1732,77 @@ deselected.
 
 ---
 
+## ERR-048 — Raw LaTeX shown on screen; H silently echoed whatever notation A2b wrote
+
+**Date:** 2026-09-12 · **Severity:** major (visibly broken text on every affected scene) · **Status:** fixed · **Component:** `planning/scene_expander.py`, `html_synth/synthesizer.py`
+
+**Where:** user-reported, found on the gpt-5.6-sol comparison run's actual rendered `page.html`
+-- literal `\operatorname{softmax}\left(\frac{QK^{\top}}{\sqrt{d_k}}\right)` style text visible
+in both `.math-block-equation` blocks and ordinary prose.
+
+**Root cause:** `planning/plan.json` confirmed A2/A2b (`gpt-5.6-sol` on this run) wrote
+`visual_description` using real LaTeX escape syntax. `html_synth/synthesizer.py`'s H pass
+(always Claude Sonnet, regardless of `story_lead` alias) then copied that notation straight
+into `screen_prose`/`component_data` with no instruction to reformat it -- and the page loads
+no MathJax/KaTeX renderer at all, so raw LaTeX source is exactly what a viewer sees.
+
+**Fix:** both `planning/scene_expander.py` (A2b, the likely source) and
+`html_synth/synthesizer.py` (H, the last line of defense) gained explicit prompt instructions
+to use plain notation only ("a / sqrt(b)", never `\frac{}{}`/`\sqrt{}`/`\operatorname{}`/
+`\left`/`\right`/`\cdot`/`\top`), including converting through any LaTeX already present in a
+given field rather than copying it forward.
+
+**A real bug in this session's OWN fix, caught before commit:** writing the LaTeX command
+examples directly into a normal (non-raw) triple-quoted Python string silently turned
+`\f`/`\r`/`\t` into an actual form-feed/carriage-return/tab character (Python's own valid
+escape sequences) -- caught by a `SyntaxWarning` during the test run, fixed by doubling every
+backslash, with a regression test guarding against the same mistake recurring.
+
+**Tests:** prompt-content tests in both files; control-character regression guards in both.
+Full suite: 860 passed, 16 deselected.
+
+**Not yet live-verified**: needs a fresh gpt-5.6-sol run to confirm A2b actually stops
+producing LaTeX (a prompt instruction, not a hard gate -- nothing currently blocks a plan with
+LaTeX in it from proceeding if the model doesn't comply).
+
+---
+
+## ERR-049 — Component slots silently rendered blank; not model-specific
+
+**Date:** 2026-09-12 · **Severity:** major (visibly broken empty boxes on every affected scene) · **Status:** fixed · **Component:** `verification/hard/render.py`, `html_synth/synthesizer.py`
+
+**Where:** user-reported alongside ERR-048, same gpt-5.6-sol run's `page.html` -- several
+visibly empty boxes (`step-desc`, `card-title`, `card-value`, `card-desc` divs with no
+content). **Confirmed NOT specific to gpt-5.6-sol**: the earlier gpt-4o run's `page.html` has
+the identical defect, 14 empty divs each -- H (which writes `component_data`) always runs on
+`narration_lead` (Claude Sonnet), regardless of which model plans the story.
+
+**Root cause:** `html_synth/component_library.py::render_component()`'s generic rendering
+path does `data.get(slot, "")` for every component slot -- a slot the model's `component_data`
+never filled in (or filled with an empty string) silently renders as nothing, rather than
+failing loudly. Nothing checked for this: `check_every_scene_has_prose` only verifies a scene
+has SOME screen prose, never that its chosen component is actually complete.
+
+**Fix:** new `verification/hard/render.py::check_component_slots_filled(beat_visuals)` --
+flags a scene whose `component_data` is missing (or has a present-but-blank) any of that
+component's own `component_slots()`, including nested `{title, desc}` items inside
+`step_list`/`grid_2`/`grid_3` (while correctly NOT flagging a plain-string grid item, a
+legitimate shape `render_component()` already supports). Wired into `check_render_content()`,
+so it drives the same H-repair route as every other content-level check -- a run with this
+defect now gets it fixed automatically within the existing repair budget, not shipped silently.
+Also reinforced in `synthesizer.py`'s own prompt ("a component with even one slot left blank
+renders as a visibly broken empty box").
+
+**Tests:** `tests/verification/hard/test_render_content.py` -- clean fully-filled card, slot
+missing entirely, slot present-but-blank, `diagram_card` missing `content`, a `step_list`
+item's own blank `desc`, plain-string grid items correctly NOT flagged, scene-scoped for the
+repair loop. Full suite: 860 passed, 16 deselected.
+
+**Not yet live-verified**: needs a fresh run reaching the C3/repair stage to confirm the new
+check actually fires on a real incomplete component and drives a real repair.
+
+---
+
 ## Open items (not yet bugs, flagged for future attention)
 
 - **A2b's per-beat expansion doesn't always self-track its own new concepts within one
