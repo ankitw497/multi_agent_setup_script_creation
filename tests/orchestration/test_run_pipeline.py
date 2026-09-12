@@ -335,3 +335,42 @@ def test_loop_budget_usd_defaults_to_the_standard_longform_cap(patched):
     (_args, kwargs) = patched.calls["run_story_and_narration_loop"][0]
     loop_budget = kwargs["budget"]
     assert loop_budget.tier.hard_cap_usd == 1.0
+
+
+class TestPreventSystemSleep:
+    """A real live run (`--story-lead-alias openai_story_strong_gpt56`,
+    ERR-046/047) can take well over an hour -- macOS idle sleep mid-run can
+    stall in-flight network calls in ways that look identical to a hang.
+    `_prevent_system_sleep()` is best-effort only: it must never raise or
+    block real pipeline execution, on any platform."""
+
+    def test_spawns_caffeinate_tied_to_this_process_on_macos(self, monkeypatch):
+        monkeypatch.setattr(rp.sys, "platform", "darwin")
+        calls = []
+        monkeypatch.setattr(rp.subprocess, "Popen", lambda *a, **k: calls.append((a, k)))
+        monkeypatch.setattr(rp.os, "getpid", lambda: 12345)
+
+        rp._prevent_system_sleep()
+
+        assert len(calls) == 1
+        (args, _kwargs) = calls[0]
+        assert args[0] == ["caffeinate", "-i", "-w", "12345"]
+
+    def test_does_nothing_on_a_non_macos_platform(self, monkeypatch):
+        monkeypatch.setattr(rp.sys, "platform", "linux")
+        calls = []
+        monkeypatch.setattr(rp.subprocess, "Popen", lambda *a, **k: calls.append((a, k)))
+
+        rp._prevent_system_sleep()
+
+        assert calls == []
+
+    def test_missing_caffeinate_binary_is_swallowed_not_raised(self, monkeypatch):
+        monkeypatch.setattr(rp.sys, "platform", "darwin")
+
+        def raise_not_found(*a, **k):
+            raise FileNotFoundError("caffeinate not found")
+
+        monkeypatch.setattr(rp.subprocess, "Popen", raise_not_found)
+
+        rp._prevent_system_sleep()  # must not raise

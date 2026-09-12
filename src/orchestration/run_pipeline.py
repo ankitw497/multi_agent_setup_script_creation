@@ -42,6 +42,8 @@ degraded run must look degraded").
 from __future__ import annotations
 
 import argparse
+import os
+import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -301,7 +303,30 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def _prevent_system_sleep() -> None:
+    """A full run can take well over an hour (a reasoning-capable
+    story_lead alias especially, see ERR-046/047) -- macOS idle/display
+    sleep mid-run doesn't kill the process, but it can stall or drop
+    in-flight network calls in ways indistinguishable from ERR-047's hang
+    without close inspection. `caffeinate -w <pid>` prevents idle sleep for
+    exactly as long as THIS process is alive and exits on its own once it
+    isn't -- never left running after the fact. Best-effort only: silently
+    does nothing on a non-Darwin platform or if `caffeinate` isn't on PATH,
+    since this is a convenience, not something the pipeline should ever
+    fail a real run over."""
+    if sys.platform != "darwin":
+        return
+    try:
+        subprocess.Popen(
+            ["caffeinate", "-i", "-w", str(os.getpid())],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+    except OSError:
+        pass
+
+
 def main(argv: list[str] | None = None) -> int:
+    _prevent_system_sleep()
     args = _parse_args(argv)
     output = run_full_pipeline(
         project_root=args.project_root, playlist=args.playlist, video_slug=args.video_slug,
