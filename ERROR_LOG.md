@@ -1803,6 +1803,38 @@ check actually fires on a real incomplete component and drives a real repair.
 
 ---
 
+## ERR-050 — Subscription-lane timeout crashed the whole run instead of being retried
+
+**Date:** 2026-09-12 · **Severity:** critical (killed a full live run outright, no partial output saved) · **Status:** fixed · **Component:** `llm/backends/claude_cli.py`
+
+**Where:** the "fair" gpt-4o re-run (relaunched to compare against gpt-5.6-sol using the same
+grounding-policy fix) crashed with an unhandled `subprocess.TimeoutExpired` during a B2
+targeted rewrite -- a legitimately large payload (a full beat's scenes/claims serialized to
+JSON, visible in the traceback) took longer than the subscription lane's default 300s timeout.
+
+**Root cause:** `ClaudeCliBackend.call()`'s tenacity retry wrapper only classifies
+`ClaudeCliInvocationError` as retryable (by design -- `ModelMismatch` must never be retried,
+it's a real deterministic bug). `_call_once()`'s `subprocess.run(..., timeout=effective_timeout)`
+raises `subprocess.TimeoutExpired` on a timeout -- a completely different, never-caught
+exception class -- so it propagated straight past the retry classification and killed the
+entire run on one slow-but-transient call. This is the same bug FAMILY as ERR-047 (the paid
+lane had no timeout at all) but the inverse case: here a timeout exists, it just isn't
+retried -- exactly the class of failure this backend's own docstring says its retry logic
+exists to handle.
+
+**Fix:** `_call_once()` now catches `subprocess.TimeoutExpired` and re-raises it as
+`ClaudeCliInvocationError`, routing it through the existing retry classification like any
+other transient failure.
+
+**Tests:** `tests/llm/test_claude_cli_backend.py` -- a timeout that recovers on retry succeeds
+(mirrors the existing transient-exit-1 retry test); a timeout that never recovers still raises
+a clear `ClaudeCliInvocationError`. Full suite: 862 passed, 16 deselected.
+
+**Not yet live-verified**: needs a fresh run that actually hits a slow subscription-lane call
+to confirm the retry now succeeds instead of crashing.
+
+---
+
 ## Open items (not yet bugs, flagged for future attention)
 
 - **A2b's per-beat expansion doesn't always self-track its own new concepts within one
