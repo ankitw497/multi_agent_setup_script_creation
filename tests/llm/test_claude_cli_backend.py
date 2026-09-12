@@ -7,6 +7,7 @@ invoked, zero subscription quota spent); the live end-to-end check is
 test_live_haiku_smoke, marked integration.
 """
 import json
+import subprocess
 
 import pytest
 
@@ -196,6 +197,42 @@ def test_a_transient_failure_is_retried_and_can_still_succeed(monkeypatch):
 
     assert result.content == "OK"
     assert calls["n"] == 2
+
+
+def test_a_timeout_is_retried_and_can_still_succeed(monkeypatch):
+    """Real gap found live 2026-09-12: a legitimately large B2 rewrite
+    payload took longer than the default timeout on a real run.
+    subprocess.run() raising TimeoutExpired used to propagate straight
+    past this backend's retry classification (which only recognized
+    ClaudeCliInvocationError), killing the whole pipeline run on one
+    slow-but-transient call instead of retrying it -- the exact class of
+    failure this backend's retry logic exists to handle."""
+    calls = {"n": 0}
+    envelope = make_envelope(model="claude-haiku-4-5-20251001", result="OK")
+
+    def flaky_run(*a, **kw):
+        calls["n"] += 1
+        if calls["n"] < 2:
+            raise subprocess.TimeoutExpired(cmd="claude", timeout=300)
+        return FakeCompletedProcess(stdout=json.dumps(envelope))
+
+    monkeypatch.setattr("subprocess.run", flaky_run)
+    backend = ClaudeCliBackend(max_attempts=3, retry_wait_min_s=0.01, retry_wait_max_s=0.01)
+
+    result = backend.call("claude-haiku-4-5-20251001", "system", "payload")
+
+    assert result.content == "OK"
+    assert calls["n"] == 2
+
+
+def test_a_timeout_that_never_recovers_raises_invocation_error(monkeypatch):
+    monkeypatch.setattr(
+        "subprocess.run",
+        lambda *a, **kw: (_ for _ in ()).throw(subprocess.TimeoutExpired(cmd="claude", timeout=300)),
+    )
+    backend = ClaudeCliBackend(max_attempts=1)
+    with pytest.raises(ClaudeCliInvocationError, match="timed out"):
+        backend.call("haiku", "system", "payload")
 
 
 def test_a_deterministic_model_mismatch_is_never_retried(monkeypatch):

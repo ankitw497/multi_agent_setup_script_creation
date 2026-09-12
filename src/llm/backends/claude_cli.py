@@ -124,9 +124,22 @@ class ClaudeCliBackend:
         effective_timeout = timeout_s if timeout_s is not None else self.timeout_s
 
         start = time.monotonic()
-        proc = subprocess.run(
-            cmd, env=env, cwd=self.cwd, capture_output=True, text=True, timeout=effective_timeout,
-        )
+        try:
+            proc = subprocess.run(
+                cmd, env=env, cwd=self.cwd, capture_output=True, text=True, timeout=effective_timeout,
+            )
+        except subprocess.TimeoutExpired as e:
+            # Real bug found live 2026-09-12: a legitimately large B2
+            # rewrite payload (a full beat's scenes/claims) took longer
+            # than the default 300s timeout on a real run -- this used to
+            # propagate straight past `call()`'s retry classification
+            # below (which only recognizes ClaudeCliInvocationError),
+            # killing the entire pipeline run on one slow-but-transient
+            # call instead of retrying it, exactly the class of failure
+            # this method's own docstring says it exists to handle.
+            raise ClaudeCliInvocationError(
+                f"claude -p timed out after {effective_timeout}s"
+            ) from e
         latency_ms = int((time.monotonic() - start) * 1000)
 
         if proc.returncode != 0:
