@@ -75,6 +75,6 @@ class Agent:
                 system_prompt=system_prompt, user_payload=user_payload,
                 schema=schema, budget=budget, estimated_usd=estimated_usd,
                 revision_cycle=revision_cycle, reasoning_effort=reasoning_effort,
-                max_tokens=max_tokens, images=images,
+                max_tokens=max_tokens, images=images, timeout_s=timeout_s,
             )
         return result.value  # type: ignore[return-value]

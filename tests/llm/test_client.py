@@ -96,3 +96,26 @@ def test_reasoning_tokens_persist_through_a_real_ledger_round_trip(tmp_path):
     records = client.ledger.read_all()
     assert len(records) == 1
     assert records[0].reasoning_tokens == 3800
+
+
+def test_timeout_s_reaches_the_paid_backend(tmp_path):
+    """Real bug found live 2026-09-12: call_structured_paid() had no
+    timeout_s parameter at all, so Agent.run()'s timeout_s was silently
+    dropped for every paid-lane call -- a hung connection could block
+    forever (confirmed: a real gpt-5.6-sol run stalled 6+ hours)."""
+    call_result = CallResult(
+        content='{"text": "ok"}', model_resolved="gpt-4o",
+        input_tokens=10, output_tokens=10, reasoning_tokens=0,
+        billed_microusd=100, latency_ms=100,
+    )
+    client = make_client(tmp_path, call_result)
+    budget = BudgetCounter(tier=DEFAULT_TIERS["longform"])
+
+    client.call_structured_paid(
+        agent="story_lead", pass_id="A2", mode="PLAN", model_alias="openai_story_strong",
+        model="gpt-4o", system_prompt="x", user_payload="y", schema=Answer,
+        budget=budget, estimated_usd=0.1, timeout_s=45.0,
+    )
+
+    _args, kwargs = client.paid_backend.calls[0]
+    assert kwargs["timeout_s"] == 45.0

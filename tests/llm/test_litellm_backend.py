@@ -179,6 +179,62 @@ def test_num_retries_is_configurable(monkeypatch):
     assert captured["num_retries"] == 5
 
 
+def test_timeout_defaults_to_300s_and_is_forwarded_to_litellm(monkeypatch):
+    """Real bug found live 2026-09-12: litellm.completion() had NO timeout
+    at all -- num_retries above only backs off an already-RAISED exception,
+    but a connection that simply never responds raises nothing, so it can
+    hang forever. A real gpt-5.6-sol comparison run did exactly that (6+
+    hours, no progress, no error) before being killed by hand."""
+    fake_response = FakeResponse("OK", "gemini-3.6-flash", 6, 1)
+    captured = {}
+
+    def fake_completion(**kwargs):
+        captured.update(kwargs)
+        return fake_response
+
+    monkeypatch.setattr("litellm.completion", fake_completion)
+    monkeypatch.setattr("litellm.completion_cost", lambda completion_response: 0.0)
+
+    backend = LiteLLMBackend()
+    backend.call("gemini/gemini-3.6-flash", "sys", "user")
+
+    assert captured["timeout"] == 300.0
+
+
+def test_timeout_is_configurable_at_the_backend_level(monkeypatch):
+    fake_response = FakeResponse("OK", "gemini-3.6-flash", 6, 1)
+    captured = {}
+
+    def fake_completion(**kwargs):
+        captured.update(kwargs)
+        return fake_response
+
+    monkeypatch.setattr("litellm.completion", fake_completion)
+    monkeypatch.setattr("litellm.completion_cost", lambda completion_response: 0.0)
+
+    backend = LiteLLMBackend(timeout_s=60.0)
+    backend.call("gemini/gemini-3.6-flash", "sys", "user")
+
+    assert captured["timeout"] == 60.0
+
+
+def test_timeout_is_overridable_per_call(monkeypatch):
+    fake_response = FakeResponse("OK", "gemini-3.6-flash", 6, 1)
+    captured = {}
+
+    def fake_completion(**kwargs):
+        captured.update(kwargs)
+        return fake_response
+
+    monkeypatch.setattr("litellm.completion", fake_completion)
+    monkeypatch.setattr("litellm.completion_cost", lambda completion_response: 0.0)
+
+    backend = LiteLLMBackend(timeout_s=300.0)
+    backend.call("gemini/gemini-3.6-flash", "sys", "user", timeout_s=45.0)
+
+    assert captured["timeout"] == 45.0
+
+
 def test_max_tokens_override_is_forwarded_when_given(monkeypatch):
     fake_response = FakeResponse("OK", "gpt-4o", 6, 1)
     captured = {}

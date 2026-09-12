@@ -37,7 +37,7 @@ class LiteLLMBackend:
 
     lane = "paid_api"
 
-    def __init__(self, max_tokens: int = 4096, num_retries: int = 3):
+    def __init__(self, max_tokens: int = 4096, num_retries: int = 3, timeout_s: float = 300.0):
         # 4096 default (raised from 2048, 2026-09-10): a real A2 call on a
         # source_units-enriched payload returned a truncated ("Unterminated
         # string") response at 2048 -- a full multi-scene StoryPlan (20-30
@@ -56,6 +56,16 @@ class LiteLLMBackend:
         # AuthenticationError/BadRequestError, which would just waste the
         # same call three times over).
         self.num_retries = num_retries
+        # timeout_s (2026-09-12, real gpt-5.6-sol comparison run): num_retries
+        # above only classifies and backs off an ALREADY-RAISED exception --
+        # litellm.completion() had no `timeout` at all, so a connection that
+        # simply never responds (no error, no retry trigger) blocks forever.
+        # A real run hung 6+ hours on exactly this before being killed by
+        # hand. 300s is well above every observed real call's latency
+        # (longest seen: a 149s gpt-5.6-sol A2 call) but still loud -- a
+        # genuinely slow call raises litellm.Timeout, which IS one of the
+        # exception classes num_retries backs off and retries.
+        self.timeout_s = timeout_s
 
     def call(
         self,
@@ -65,6 +75,7 @@ class LiteLLMBackend:
         reasoning_effort: str | None = None,
         max_tokens: int | None = None,
         images: list[str] | None = None,
+        timeout_s: float | None = None,
     ) -> CallResult:
         start = time.monotonic()
         extra_kwargs = {}
@@ -91,6 +102,7 @@ class LiteLLMBackend:
             ],
             max_tokens=max_tokens if max_tokens is not None else self.max_tokens,
             num_retries=self.num_retries,
+            timeout=timeout_s if timeout_s is not None else self.timeout_s,
             **extra_kwargs,
         )
         latency_ms = int((time.monotonic() - start) * 1000)

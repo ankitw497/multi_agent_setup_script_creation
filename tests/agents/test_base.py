@@ -75,6 +75,22 @@ def test_paid_agent_calls_the_paid_backend_with_budget():
     assert client.paid_calls[0]["budget"] is budget
 
 
+def test_timeout_s_reaches_the_paid_backend():
+    """Real bug found live 2026-09-12: the paid-lane branch never forwarded
+    timeout_s to call_structured_paid() at all, so it was silently dropped
+    for every GPT/Gemini call -- confirmed via a real gpt-5.6-sol run that
+    hung 6+ hours with no timeout to ever cut it off."""
+    client = FakeClient()
+    agent = Agent(name="story_lead", lane="paid_api", client=client, model_alias="openai_story_mini",
+                  model_resolved="gpt-4o-mini", base_system_prompt="plan the story")
+    budget = BudgetCounter(tier=DEFAULT_TIERS["longform"])
+
+    agent.run(pass_id="A2", mode="PLAN", task_prompt="x", payload={}, schema=Toy,
+              budget=budget, estimated_usd=0.01, timeout_s=45)
+
+    assert client.paid_calls[0]["timeout_s"] == 45
+
+
 def test_default_reasoning_effort_is_used_when_not_overridden():
     client = FakeClient()
     agent = Agent(name="review_lead", lane="paid_api", client=client, model_alias="gemini_review_flash",
