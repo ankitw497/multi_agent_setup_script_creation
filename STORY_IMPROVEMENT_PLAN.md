@@ -1007,6 +1007,59 @@ half of the product is effectively outside the quality loop entirely.
 
 ---
 
+## Phase 9 — Move CM/C5 off Gemini flash to a Sonnet subscription agent (proposed, deferred)
+
+**Status: not started -- decision deliberately deferred by the user (2026-09-12), tracked here
+so it isn't lost, not yet approved for implementation.**
+
+**Motivation:** user asked whether the flash-tier Gemini agent could be replaced by a Sonnet
+(subscription-lane, free) agent, after a live-verification session burned through the
+project's Gemini prepayment credits (`ERROR_LOG.md`'s cost tally: $5.20 across 203 Gemini
+calls in one session, dominated by the strong tier -- C1 $1.64, C2b $1.32, C2a $1.16 -- but
+every Gemini call, flash included, draws from the same prepayment balance).
+
+**What "flash" actually covers** -- one Gemini-flash `Agent` (`gemini-3.6-flash`), constructed
+once in `run_pipeline.py` and reused across three distinct roles:
+1. **CM** (claim mapper) + **C5** (style critic) -- via `PipelineAgents.cm_agent`
+2. **C3** (visual critic) -- passed directly as `visual_auditor` to `synthesize_and_repair_video_html`
+3. **Shorts' cold-hook escalation** (C4s's second tier) -- passed directly as `review_agent` in the shorts pipeline
+
+**Proposed scope, if/when approved**: add a new `agents/cm_agent.py` (Sonnet, subscription
+lane) and swap it in for role 1 ONLY (CM + C5). Roles 2 and 3 must stay on Gemini regardless:
+- **C3 is a hard technical block, not a preference**: the Claude CLI subscription backend has
+  no multimodal support at all -- `agents/base.py::Agent.run()` already raises if a
+  subscription-lane agent is given images. It cannot run on Sonnet.
+- **Shorts' C4s escalation is a design choice, not a cost optimization**: its whole point (per
+  `review/cold_hook_critic.py`'s own docstring) is a genuinely independent, cross-family
+  second opinion after Haiku. Moving it to Sonnet would make both cascade tiers the same model
+  family, defeating the escalation's purpose entirely.
+
+**Trade-off to weigh before approving the CM/C5 swap itself:**
+- CM is a safe swap -- its independence comes from never being shown the writer's own
+  `sentence_type` (a payload-level separation per its own docstring: "never let the producer
+  define its own validation boundary"), unrelated to which model family reads it.
+- C5 is a softer concern -- its entire job is detecting narration that "sounds model-written,"
+  and a Sonnet judge reviewing Sonnet-written narration is a real (if soft) self-family blind
+  spot. Not a blocker, just a real cost of accepting a free check over a paid, more
+  independent one.
+
+**Mechanically, if approved**: new `agents/cm_agent.py::make_cm_agent(client)` (Sonnet,
+subscription); add `"cm_agent"` to `llm/usage.py`'s `VALID_AGENTS` (currently missing --
+needed regardless, since CM/C5 calls are today mislabeled `agent="review_lead"` in cost
+reports, a pre-existing open item noted elsewhere in `ERROR_LOG.md`); wire it into
+`run_pipeline.py` in place of `review_lead_flash` for the `PipelineAgents.cm_agent` field
+only; leave the other two call sites (`synthesize_and_repair_video_html`'s `visual_auditor`,
+shorts' `review_agent`) untouched; new/updated tests mirroring `tests/agents/test_factories.py`'s
+existing pattern.
+
+- [ ] Decision: approve, reject, or approve with modified scope
+- [ ] If approved: implement `agents/cm_agent.py`, wire it in, update tests
+- [ ] `.venv/bin/python3 -m pytest -q` green
+- [ ] Live-verify: confirm CM/C5 calls now show `agent="cm_agent"`, `lane="subscription"` in a
+      real run's `usage.jsonl`, and that no Gemini spend occurs for those two passes
+
+---
+
 ## Final verification (Phases 1-4 done; Phases 5-8 still open)
 
 - [x] `.venv/bin/python3 -m pytest -q` green throughout (checked after each phase; 744 passed
