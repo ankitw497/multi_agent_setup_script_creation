@@ -1019,11 +1019,27 @@ and C3 visual mismatches, but nothing the visual layer learns can ever feed back
 story. Combined with Phase 6's finding that C1 never sees H's screen prose, the on-screen
 half of the product is effectively outside the quality loop entirely.
 
-- [ ] Scope this one deliberately before building: full bidirectional feedback is a large
-      architectural change and may not be worth it. The cheaper 80% is probably Phase 6's
-      "C1 also reviews H's screen prose" plus letting a CRITICAL C3 `visual_mismatch` finding
-      raise a narration-level issue rather than only an H-repair -- evaluate that first and
-      only go further if a real run shows it insufficient
+- [x] **Scoped and implemented 2026-09-14, the cheap-80% version.** Full bidirectional
+      feedback (regenerating narration after H/C3 run) was deliberately NOT built -- a real
+      architectural change, not attempted without evidence it's needed. Instead: Phase 6's "C1
+      reviews H's screen prose" (already done) plus a new
+      `orchestration/html_pipeline.py::_visual_critique_to_narration_level_issues()`: a
+      CRITICAL C3 finding whose own `repair_owner` is `narration_lead` (a genuine
+      narration-vs-visual factual CONTRADICTION, not a rendering break -- H-repair can't fix
+      wrong facts) now routes straight to the blocking `render_issues` list instead of being
+      silently absorbed into `visual_critique_issues` with no consequence. Also found and fixed
+      the actual blocker to this ever firing: `review/visual_critic.py`'s own prompt explicitly
+      forbade `severity: critical` with `repair_owner: narration_lead` -- added an explicit
+      carve-out for a genuine contradiction (a different example, a disagreeing number, a
+      mechanism shown working differently than claimed), distinct from an ordinary
+      suboptimal-choice finding (still major/minor, unaffected).
+- [x] Unit tests: `tests/orchestration/test_html_repair_loop.py` (a critical narration-owned
+      finding blocks promotion and is never sent to repair; an ordinary major one is
+      unaffected); `tests/review/test_visual_critic.py` (prompt-content test for the carve-out).
+      Full suite: 907 passed, 16 deselected -- **Phases 6, 7, and 8 are all now fully
+      code-complete.**
+- [ ] Live-verify: confirm a real run's C3 pass can actually produce a critical+narration_lead
+      finding (not yet observed live) and that it correctly blocks promotion when it does
 
 ---
 
