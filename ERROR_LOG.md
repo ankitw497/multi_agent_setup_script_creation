@@ -2036,6 +2036,41 @@ even when the prompt-only instruction is imperfectly followed.
 
 ---
 
+## ERR-058 — entity_consistency's exact-match check missed obvious entity variants (second occurrence of ERR-054's class)
+
+**Date:** 2026-09-14 · **Severity:** major (false-positive AMBER on nearly every scene) · **Status:** fixed · **Component:** `verification/diagnostics/entity_consistency.py`
+
+**Where:** the definitive final-verification run (`video-01-attention-final-verify/runs/v02`,
+launched after every other fix this session landed) still showed `entity_consistency` firing
+AMBER across 10 scenes. Inspecting the evidence: the plan locked `'entities_cat'` as a dict
+KEY (a prefixed name) and `"refers to the cat"` as a full descriptive phrase in `values()`,
+while scenes correctly quoted just `'cat'`. ERR-054's fix (lock both keys and values) still
+used exact-set membership, so neither the prefixed key nor the embedded phrase ever equalled
+the bare word a scene actually quotes -- even though a human glancing at either side would
+immediately see they're the same entity.
+
+**Fix:** `_matches_any()` -- substring containment in both directions, replacing exact-set
+membership. Deliberately more lenient: this diagnostic is explicitly AMBER-banded, never a
+hard gate, precisely because perfect entity resolution from prose isn't achievable by regex
+alone (the plan's own original design note). A slightly higher false-negative rate (missing a
+genuinely different short word that happens to be a substring) is a better tradeoff than the
+false-positive flood exact matching produced on two separate real runs now.
+
+**Tests:** a prefixed locked key matches the bare word; a locked descriptive phrase matches the
+bare word; the original confirmed bug (a genuinely different invented example) is still caught
+despite the more lenient matching. Full suite: 916 passed, 16 deselected.
+
+**Confirmed by the SAME run this fix responds to** (evidence gathered before the fix, from the
+actual live output): zero LaTeX, zero blank component boxes, healthy diagram_card/math_block
+usage (6+3, further undermining ERR-056's original causal claim -- see that entry), zero
+`render_issues`, `check_formula_stage_consistency` not triggered (this run's A2 registered no
+`formula_stages`). Only `entity_consistency` was still noisy, which this fix addresses.
+
+**Not yet live-verified**: needs one more fresh run to confirm the false-positive rate is
+actually reduced with the fix in place.
+
+---
+
 ## Open items (not yet bugs, flagged for future attention)
 
 - **A2b's per-beat expansion doesn't always self-track its own new concepts within one
