@@ -1996,6 +1996,46 @@ a level comparable with pre-regression runs, and that entity_consistency no long
 
 ---
 
+## ERR-057 — ERR-048's LaTeX fix was a real improvement but not a guarantee; added a deterministic backstop
+
+**Date:** 2026-09-14 · **Severity:** major (visibly broken text can still reach the screen) · **Status:** fixed · **Component:** `verification/hard/render.py`, `planning/story_planner.py`
+
+**Where:** re-verifying ERR-048 on a fresh gpt-4o run (`video-01-attention-phase-e2e-verify-fair/
+runs/v05`) showed the fix working MOSTLY -- but real `\sqrt`, `\cdot`, `\text`, `\sim` LaTeX
+commands were still present in the rendered `page.html`. The same run also usefully confirmed
+`check_formula_stage_consistency` (Phase 6 item 7) firing for real for the first time -- A2
+registered real `formula_stages` and the check correctly caught two genuine regressions -- but
+in the process revealed A2 had registered the stage's own `expression` USING LaTeX too
+(`'\( q \cdot k / \sqrt{d_k} \)'`), which would make that check permanently unable to match even
+a fully-compliant plain-notation render, since it compares the rendered content against the
+registered string verbatim.
+
+**Root cause:** a prompt instruction is a strong nudge to an LLM, never a hard guarantee --
+expected, not a logic bug, but still meant a real defect (broken text on screen) could still
+reach a promoted video with nothing to catch it.
+
+**Fix:** `verification/hard/render.py::check_no_raw_latex(beat_visuals)` -- deterministic Python
+check (a backslash followed by letters essentially never occurs in ordinary English prose, so
+this is a low-false-positive signal), wired into the existing `check_render_content()` H-repair
+path. Also extended `planning/story_planner.py`'s own `TASK_PROMPT` to require plain notation
+for `formula_stages[].expression`, matching the same instruction already given to A2b/H.
+
+**A related finding, not a code change**: the same run showed HEALTHY `diagram_card`/
+`math_block` usage (11 + 7), which complicates ERR-056's causal story -- that fix's wording
+change is still a real improvement (removing genuinely discouraging phrasing), but whether it
+was THE cause of the originally-observed suppression is now uncertain given this second,
+contradicting data point. Not re-investigated further; flagged here for honesty rather than
+re-asserting the original claim.
+
+**Tests:** plain notation clean; raw LaTeX flagged in both `screen_prose` and `component_data`;
+multiple commands all named in one issue; ordinary prose never false-flagged; prompt-content
+test for A2's own instruction. Full suite: 913 passed, 16 deselected.
+
+**Not yet live-verified**: needs a fresh run to confirm zero raw LaTeX reaches a promoted page
+even when the prompt-only instruction is imperfectly followed.
+
+---
+
 ## Open items (not yet bugs, flagged for future attention)
 
 - **A2b's per-beat expansion doesn't always self-track its own new concepts within one
