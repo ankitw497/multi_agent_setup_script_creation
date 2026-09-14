@@ -193,6 +193,12 @@ class ViewerLedger(BaseModel):
     viewer_knows: list[str] = Field(default_factory=list)  # concept labels already taught
     running_example: RunningExample = Field(default_factory=RunningExample)
     formula_stages: list[FormulaStage] = Field(default_factory=list)  # set once by A2, never mutated here
+    # STORY_IMPROVEMENT_PLAN.md Phase 7 #3 (mechanism scope): a mechanism whose applicability
+    # is conditional (e.g. causal masking only applies to autoregressive attention) rather than
+    # universal, keyed by a short descriptive flag (e.g. "causal_mask_required"). Empty until a
+    # beat's own expansion establishes one; accumulates beat-to-beat like viewer_knows, so a
+    # later beat's recap can be checked against the scope as of that point in the video.
+    mechanism_scope: dict[str, bool] = Field(default_factory=dict)
 
 
 class ScenePlan(BaseModel):
@@ -211,6 +217,9 @@ class ScenePlan(BaseModel):
     new_concepts: list[str] = Field(default_factory=list)  # concept labels this scene introduces for the first time
     must_not_repeat: list[str] = Field(default_factory=list)  # already-taught concepts this scene builds on, never re-derives
     formula_stage_id: str = ""  # which registered FormulaStage (if any) this scene's equation/diagram represents
+    # Phase 7 #3: the ViewerLedger.mechanism_scope snapshot as of this scene's own beat --
+    # empty until some earlier (or this) beat establishes a conditional mechanism's scope.
+    mechanism_scope: dict[str, bool] = Field(default_factory=dict)
 
 
 class RetentionDeadline(BaseModel):

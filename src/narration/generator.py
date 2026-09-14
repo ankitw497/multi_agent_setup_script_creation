@@ -50,7 +50,11 @@ scene as a standalone article. Each scene carries `scene_function`,
 - `scene_function=derivation`: this scene builds on concepts listed in
   `must_not_repeat`. Reference each in ONE short clause (e.g. "since we
   already have X from before,...") -- do not re-explain or re-derive it,
-  even briefly, as if for the first time.
+  even briefly, as if for the first time. If `must_not_repeat` names an
+  EXACT value (a specific number or outcome, not just a general concept)
+  the viewer already saw during an earlier preview, frame reaching it here
+  as CONFIRMING what was already shown ("that's the same 0.88 we already
+  saw -- here's why") rather than presenting it as a fresh discovery.
 - `scene_function=recap`: compress everything it touches into 1-2 bridging
   sentences on the way to what's new -- never restate it at full length.
 - `scene_function=preview`: keep it to a single short forward-looking line
@@ -60,6 +64,14 @@ the same running illustration, reuse its exact named objects and values
 verbatim -- never invent new numbers or a different example for the same
 underlying idea; the viewer should not have to rebuild their mental model
 from scratch every scene.
+
+Each scene also carries `mechanism_scope` -- the current known scope of
+any mechanism whose applicability is conditional rather than universal
+(e.g. a technique that only applies under one specific setup), as
+`{flag_name: true/false}`. A `recap`/summary scene must state such a
+mechanism using its actual recorded condition, never as an unconditional,
+universal fact -- if `mechanism_scope` says a technique only applies under
+a specific condition, say so, don't drop the qualifier for brevity.
 
 State a claim whose `verification_status` is VERIFIED as plain, direct fact
 -- never hedge a verified technical claim with "is believed to", "is
@@ -133,7 +145,7 @@ def generate_narration(plan: StoryPlan, claims: list[Claim], narration_lead: Age
             "narrative_beat": scene.narrative_beat, "visual_description": scene.visual_description,
             "word_budget": scene.word_budget,
             "scene_function": scene.scene_function, "new_concepts": scene.new_concepts,
-            "must_not_repeat": scene.must_not_repeat,
+            "must_not_repeat": scene.must_not_repeat, "mechanism_scope": scene.mechanism_scope,
             "available_claims": [_claim_payload(c) for c in beat_claims],
         })
 

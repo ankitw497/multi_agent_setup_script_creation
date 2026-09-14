@@ -103,6 +103,13 @@ Check, in order:
    - A motivation or limitation claim overstated as an absolute
      ("X can only ever do one thing") where the source's actual claim is
      narrower or conditional.
+   - `scene_plan` gives each scene's `mechanism_scope` -- the recorded
+     scope of any mechanism whose applicability is conditional rather than
+     universal. If a scene's narration states such a mechanism without its
+     recorded condition (e.g. as if it applies unconditionally, when
+     `mechanism_scope` says it only applies under a specific setup), that
+     is a CONFIRMED overclaim, not a suspected one -- the plan's own
+     record already settles it.
    Use `category: clarity`.
 
 Rate severity honestly: critical = the story doesn't work as this
@@ -124,6 +131,7 @@ def _scene_plan_payload(scene) -> dict:
     return {
         "scene_id": scene.scene_id, "beat_id": scene.beat_id, "scene_function": scene.scene_function,
         "must_not_repeat": scene.must_not_repeat, "new_concepts": scene.new_concepts,
+        "mechanism_scope": scene.mechanism_scope,
     }
 
 

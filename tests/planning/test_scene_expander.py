@@ -227,6 +227,63 @@ def test_formula_stages_pass_through_unchanged_in_the_returned_ledger():
     assert updated_ledger.formula_stages == stages
 
 
+def test_mechanism_scope_is_passed_to_the_model():
+    ledger = make_ledger(mechanism_scope={"causal_mask_required": True})
+    story_lead = FakeStoryLead(BeatSceneExpansion(scenes=[]))
+    expand_beat_scenes(make_beat(), 100, [], story_lead, make_budget(), ledger)
+
+    assert story_lead.calls[0]["payload"]["mechanism_scope"] == {"causal_mask_required": True}
+
+
+def test_mechanism_scope_updates_accumulate_into_the_returned_ledger():
+    story_lead = FakeStoryLead(BeatSceneExpansion(scenes=[
+        {"visual_description": "x", "mechanism_scope_updates": {"causal_mask_required": True}},
+    ]))
+    _scenes, updated_ledger = expand_beat_scenes(make_beat(), 100, [], story_lead, make_budget(), make_ledger())
+
+    assert updated_ledger.mechanism_scope == {"causal_mask_required": True}
+
+
+def test_a_scenes_own_mechanism_scope_is_a_snapshot_as_of_that_scene():
+    story_lead = FakeStoryLead(BeatSceneExpansion(scenes=[
+        {"visual_description": "before", "mechanism_scope_updates": {}},
+        {"visual_description": "establishes it", "mechanism_scope_updates": {"causal_mask_required": True}},
+        {"visual_description": "after", "mechanism_scope_updates": {}},
+    ]))
+    scenes, _ledger = expand_beat_scenes(make_beat(), 100, [], story_lead, make_budget(), make_ledger())
+
+    assert scenes[0].mechanism_scope == {}
+    assert scenes[1].mechanism_scope == {"causal_mask_required": True}
+    assert scenes[2].mechanism_scope == {"causal_mask_required": True}
+
+
+def test_mechanism_scope_from_an_earlier_beat_carries_forward_unchanged():
+    ledger = make_ledger(mechanism_scope={"causal_mask_required": True})
+    story_lead = FakeStoryLead(BeatSceneExpansion(scenes=[{"visual_description": "x"}]))
+    scenes, updated_ledger = expand_beat_scenes(make_beat(), 100, [], story_lead, make_budget(), ledger)
+
+    assert scenes[0].mechanism_scope == {"causal_mask_required": True}
+    assert updated_ledger.mechanism_scope == {"causal_mask_required": True}
+
+
+def test_prompt_instructs_naming_exact_values_a_preview_reveals():
+    """Phase 7 #2 (preview completeness): a preview scene that reveals an
+    exact concrete value must name that value specifically in
+    new_concepts, so a later derivation scene knows to confirm it rather
+    than discover it fresh."""
+    from planning.scene_expander import TASK_PROMPT
+
+    assert "EXACT concrete value" in TASK_PROMPT
+    assert "CONFIRMING" in TASK_PROMPT
+
+
+def test_prompt_instructs_recording_mechanism_scope_updates():
+    from planning.scene_expander import TASK_PROMPT
+
+    assert "mechanism_scope_updates" in TASK_PROMPT
+    assert "mechanism_scope" in TASK_PROMPT
+
+
 def test_prompt_has_no_hardcoded_topic_vocabulary():
     """Overfitting guard (user-flagged, STORY_IMPROVEMENT_PLAN.md): this
     prompt runs once per beat for EVERY future video regardless of topic --

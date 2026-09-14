@@ -128,6 +128,30 @@ def test_passes_scene_function_new_concepts_and_must_not_repeat_per_scene():
     assert scene_payload["must_not_repeat"] == ["Q/K/V roles"]
 
 
+def test_mechanism_scope_reaches_the_scene_payload():
+    """Phase 7 #3 (mechanism scope): a recap scene needs to know the
+    current recorded scope of a conditional mechanism so it doesn't state
+    it as an unconditional, universal fact."""
+    plan = make_plan(scene_plan=[
+        ScenePlan(scene_id="s1", beat_id="B01", word_budget=60, mechanism_scope={"causal_mask_required": True}),
+    ])
+    narration_lead = FakeNarrationLead(GeneratedNarration(scenes=[]))
+    generate_narration(plan, [], narration_lead)
+
+    scene_payload = narration_lead.calls[0]["payload"]["scenes"][0]
+    assert scene_payload["mechanism_scope"] == {"causal_mask_required": True}
+
+
+def test_prompt_instructs_confirming_already_previewed_exact_values():
+    from narration.generator import TASK_PROMPT
+    assert "CONFIRMING" in TASK_PROMPT
+
+
+def test_prompt_instructs_stating_mechanism_scope_correctly_in_a_recap():
+    from narration.generator import TASK_PROMPT
+    assert "mechanism_scope" in TASK_PROMPT
+
+
 def test_claim_importance_reaches_the_payload():
     """Real bug found 2026-09-11 (live e2e run): the grounding-policy hard
     gate (verification/hard/grounding.py) requires CORE/SUPPORTING claims

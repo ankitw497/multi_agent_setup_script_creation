@@ -180,7 +180,7 @@ def test_scene_plan_and_running_example_reach_the_payload():
     payload = review_lead.calls[0]["payload"]
     assert payload["scene_plan"] == [{
         "scene_id": "s1", "beat_id": "B01", "scene_function": "derivation",
-        "must_not_repeat": ["Q/K/V roles"], "new_concepts": [],
+        "must_not_repeat": ["Q/K/V roles"], "new_concepts": [], "mechanism_scope": {},
     }]
     assert payload["running_example"]["label"] == "trophy/suitcase"
 
@@ -191,6 +191,27 @@ def test_prompt_instructs_treating_a_must_not_repeat_violation_as_confirmed():
     assert "scene_plan" in TASK_PROMPT
     assert "must_not_repeat" in TASK_PROMPT
     assert "CONFIRMED" in TASK_PROMPT
+
+
+def test_mechanism_scope_reaches_the_payload():
+    from llm.budget import BudgetCounter, DEFAULT_TIERS
+    from planning.models import ScenePlan
+
+    plan = make_plan()
+    plan.scene_plan = [ScenePlan(scene_id="s1", beat_id="B01", mechanism_scope={"causal_mask_required": True})]
+    review_lead = FakeReviewLead(StoryCritique(issues=[]))
+
+    critique_story(plan, make_narration(), review_lead, BudgetCounter(tier=DEFAULT_TIERS["longform"]), source_units=[])
+
+    sent = review_lead.calls[0]["payload"]["scene_plan"][0]
+    assert sent["mechanism_scope"] == {"causal_mask_required": True}
+
+
+def test_prompt_instructs_treating_a_scoped_mechanism_stated_as_universal_as_confirmed_overclaim():
+    from review.story_critic import TASK_PROMPT
+
+    assert "mechanism_scope" in TASK_PROMPT
+    assert "CONFIRMED overclaim" in TASK_PROMPT
 
 
 def test_prompt_instructs_checking_running_example_fidelity():

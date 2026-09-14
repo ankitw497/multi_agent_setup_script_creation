@@ -77,6 +77,14 @@ source, "the balance invariant" for a tree-rotation source) so later beats
 know not to re-teach it -- do not list a concept that is already in the
 given `viewer_knows`.
 
+A `preview` scene can be too complete, not just present: if it reveals an
+EXACT concrete value (a specific number, a specific outcome), not just
+the general shape of the mechanism, name that exact value as its own
+entry in `new_concepts` (e.g. "the exact 0.88 weight for X", not just "the
+weights") -- so a later `derivation` scene that reaches the same value
+knows to frame it as CONFIRMING what the viewer already saw, not
+discovering it fresh.
+
 If `running_example` is set (label/description/values), and this beat's
 content is the same running illustration, reuse its exact named
 objects/values in `visual_description` rather than inventing a new
@@ -102,6 +110,17 @@ the registered expression later -- once a stage has been reached, a later
 scene representing the same computation must show that stage's form, not
 an earlier, already-superseded one. Leave `formula_stage_id` blank for
 every scene that isn't presenting one of these registered stages.
+
+You are also given `mechanism_scope` -- the current known scope of any
+mechanism whose applicability is conditional rather than universal (e.g.
+a technique that only applies under one specific setup, not every
+version of the underlying idea), as `{flag_name: true/false}`. If this
+beat's own content is what ESTABLISHES that a mechanism only applies
+under certain conditions, record that in `mechanism_scope_updates` with a
+short, descriptive flag name (e.g. `"causal_mask_required"`) and its
+value -- so a later beat's recap/summary can be checked against it. This
+will be empty for most scenes -- only set it when this scene is genuinely
+the one establishing or changing a mechanism's conditional scope.
 """
 
 
@@ -113,6 +132,7 @@ class ExpandedScene(BaseModel):
     new_concepts: list[str] = Field(default_factory=list)
     must_not_repeat: list[str] = Field(default_factory=list)
     formula_stage_id: str = ""
+    mechanism_scope_updates: dict[str, bool] = Field(default_factory=dict)
 
 
 class BeatSceneExpansion(BaseModel):
@@ -147,6 +167,7 @@ def expand_beat_scenes(
         "viewer_knows": ledger.viewer_knows,
         "running_example": ledger.running_example.model_dump(),
         "formula_stages": [s.model_dump() for s in ledger.formula_stages],
+        "mechanism_scope": ledger.mechanism_scope,
         "central_question": central_question,
         "neighbor_contract": {
             "previous_beat": _neighbor_payload(previous_beat),
@@ -157,17 +178,19 @@ def expand_beat_scenes(
         pass_id="A2b", mode="SCENE_EXPANSION", task_prompt=TASK_PROMPT,
         payload=payload, schema=BeatSceneExpansion, budget=budget, estimated_usd=0.03,
     )
-    scenes = [
-        ScenePlan(
+    scenes = []
+    running_scope = dict(ledger.mechanism_scope)
+    for i, s in enumerate(result.scenes, start=1):
+        running_scope.update(s.mechanism_scope_updates)
+        scenes.append(ScenePlan(
             scene_id=f"{beat.beat_id}_s{i:02d}", beat_id=beat.beat_id,
             archetype_role=beat.archetype_role, narrative_beat=s.narrative_beat,
             narrative_job=beat.purpose, visual_description=s.visual_description,
             word_budget=s.word_budget, scene_function=s.scene_function,
             new_concepts=s.new_concepts, must_not_repeat=s.must_not_repeat,
             formula_stage_id=s.formula_stage_id,
-        )
-        for i, s in enumerate(result.scenes, start=1)
-    ]
+            mechanism_scope=dict(running_scope),
+        ))
     new_viewer_knows = list(ledger.viewer_knows)
     for scene in scenes:
         for concept in scene.new_concepts:
@@ -175,6 +198,6 @@ def expand_beat_scenes(
                 new_viewer_knows.append(concept)
     updated_ledger = ViewerLedger(
         viewer_knows=new_viewer_knows, running_example=ledger.running_example,
-        formula_stages=ledger.formula_stages,
+        formula_stages=ledger.formula_stages, mechanism_scope=running_scope,
     )
     return scenes, updated_ledger
