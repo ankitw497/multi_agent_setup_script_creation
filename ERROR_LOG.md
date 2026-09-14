@@ -375,7 +375,7 @@ session to design deliberately, not patched reactively under time pressure.
 ---
 
 ## ERR-023 — Two full live re-runs, two FAILs: ERR-010 (word-budget under-generation) is still the primary blocker, not ERR-022
-**Date:** 2026-09-10 · **Severity:** open finding, not a code bug (yet) · **Status:** open · **Component:** `planning/story_planner.py` (A2)
+**Date:** 2026-09-10 · **Severity:** open finding, not a code bug (yet) · **Status:** fixed (corrected 2026-09-14 -- see ERR-024, the very next entry, which fixed exactly this) · **Component:** `planning/story_planner.py` (A2)
 
 Two live e2e runs against the real source (`runs/v05`, `runs/v06`, ~$0.28 + $0.26 = $0.54
 combined) after ERR-014/ERR-021's fixes, both attempting one clean PASS. Both FAILed, and

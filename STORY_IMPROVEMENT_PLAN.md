@@ -1076,3 +1076,35 @@ existing pattern.
 - [x] `ERROR_LOG.md` updated with the concrete before/after (the specific repeated phrase
       found vs. gone, hook-pacing seconds measured, the residual within-beat gap found) —
       not just "improved quality"
+
+---
+
+## Open ERROR_LOG.md findings not yet scheduled into a phase
+
+Carried over from `ERROR_LOG.md` so they aren't lost between sessions. All predate most of
+this file's own phases (2026-09-10) and are genuine open design questions, not live blockers.
+
+- [ ] **ERR-022 / ERR-025** (same finding, confirmed live 3x): C1's `critical`/`archetype`
+      critiques unconditionally force a replan, with no mechanism to weigh how well-supported
+      either side's evidence actually is. Three live runs showed C1 disputing a `build`
+      resolution that every other signal agreed was correct, and the forced replan made things
+      worse each time. **Partially mitigated**: `orchestration/pipeline.py::_legitimately_dismissed_issue_ids`
+      (ERR-026) lets A3 dismiss such a critique only when A2 already rejected that exact
+      alternative archetype in its own `rejected_archetypes` -- a bounded, code-enforced
+      override, not a general fix for the asymmetry. Real open design questions, not yet
+      decided: should A2 be allowed to push back with its own `source_evidence`? should a
+      critical archetype issue require a second independent opinion before forcing a replan?
+- [ ] **ERR-027** (partially addressed): two residual gaps found while fixing the stale-claims
+      noise that was the real dominant blocker at the time (now fixed). (a) The validation
+      harness script doesn't persist each revision round's intermediate review bundle, so some
+      historical dismissal decisions can't be fully audited after the fact -- an observability
+      gap in the harness, not the pipeline itself. (b) `_legitimately_dismissed_issue_ids`
+      verifies an alternative archetype is ALREADY a key in `rejected_archetypes`, but never
+      judges whether A2's original rejection REASON was itself sound -- a confidently-wrong A2
+      could still get a bad dismissal legitimized this way. Not yet built: any check that
+      evaluates rejection-reason quality itself (likely a C1-style judgment call, not a
+      deterministic one).
+- [ ] **ERR-023 status correction**: `ERROR_LOG.md` still labels this "open," but it was
+      actually fixed by the very next entry, ERR-024 (A2 split into structure + per-beat scene
+      expansion), live-verified twice. Tracked here only so a future pass fixes the stale label
+      in `ERROR_LOG.md` itself, not because the underlying issue is still open.
