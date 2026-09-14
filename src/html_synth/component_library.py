@@ -156,14 +156,42 @@ def render_component(component_id: str, data: dict) -> str:
     if spec is None:
         raise ValueError(f"unknown component_id {component_id!r} -- not in design_system.yaml")
 
+    if component_id == "card":
+        # Same real bug as step_list below, but reached a different way: a
+        # dict-shaped grid_2/grid_3 ITEM is rendered through this exact
+        # branch too (_render_grid_item), and the model returning a
+        # legitimate partial shape (e.g. title+desc, no value) used to
+        # still render an empty <div class="card-value"> box. A standalone
+        # top-level "card" missing a slot is ALSO caught as a real defect by
+        # verification/hard/render.py::check_component_slots_filled -- this
+        # is a second, independent layer (never render a visible empty box
+        # even before/without a repair cycle), not a replacement for it.
+        title = _esc(data.get("title", ""))
+        value = _esc(data.get("value", ""))
+        desc = _esc(data.get("desc", ""))
+        title_block = f'<div class="card-title">{title}</div>' if title else ""
+        value_block = f'<div class="card-value">{value}</div>' if value else ""
+        desc_block = f'<div class="card-desc">{desc}</div>' if desc else ""
+        return spec["skeleton"].format(title_block=title_block, value_block=value_block, desc_block=desc_block)
+
     if component_id == "step_list":
-        items_html = "".join(
-            spec["item_skeleton"].format(
-                index=i,
+        def _step_item_html(index: int, item: object) -> str:
+            desc = _esc(item.get("desc", "")) if isinstance(item, dict) else ""
+            # A title-only step (no desc at all, or a plain-string item) is a
+            # legitimate shape -- but the skeleton used to always emit a
+            # `<div class="step-desc">` regardless, rendering a visibly blank
+            # box on the page for every such step. Confirmed live: 36 empty
+            # step-desc/card-* boxes in one real run. Omit the div entirely
+            # when there's no real description rather than render it empty.
+            desc_block = f'<div class="step-desc">{desc}</div>' if desc else ""
+            return spec["item_skeleton"].format(
+                index=index,
                 title=_esc(item["title"]) if isinstance(item, dict) else _esc(item),
-                desc=_esc(item.get("desc", "")) if isinstance(item, dict) else "",
+                desc_block=desc_block,
             )
-            for i, item in enumerate(data.get("items", []), start=1)
+
+        items_html = "".join(
+            _step_item_html(i, item) for i, item in enumerate(data.get("items", []), start=1)
         )
         return spec["skeleton"].format(items=items_html)
 

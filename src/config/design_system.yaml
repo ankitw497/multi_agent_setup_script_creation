@@ -112,9 +112,7 @@ components:
     slots: [title, value, desc]
     skeleton: |
       <div class="card">
-        <div class="card-title">{title}</div>
-        <div class="card-value">{value}</div>
-        <div class="card-desc">{desc}</div>
+        {title_block}{value_block}{desc_block}
       </div>
 
   grid_2:
@@ -137,7 +135,7 @@ components:
     item_skeleton: |
       <div class="step-item"><div class="step-num">{index}</div><div>
         <div class="step-title">{title}</div>
-        <div class="step-desc">{desc}</div></div></div>
+        {desc_block}</div></div>
 
   defbox:
     description: "One term + definition (observations/framework beats)."

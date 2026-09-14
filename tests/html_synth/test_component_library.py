@@ -45,6 +45,52 @@ def test_slot_content_is_html_escaped():
     assert "&lt;img" in out
 
 
+def test_card_renders_all_slots_when_all_present():
+    out = render_component("card", {"title": "Speed", "value": "3.2x", "desc": "faster"})
+    assert '<div class="card-title">Speed</div>' in out
+    assert '<div class="card-value">3.2x</div>' in out
+    assert '<div class="card-desc">faster</div>' in out
+
+
+def test_card_omits_blank_slots_instead_of_rendering_an_empty_box():
+    """Real bug found live 2026-09-14: a partial card (e.g. title+desc, no
+    value -- a legitimate shape for a grid_2/grid_3 item) used to still
+    render a visibly empty <div class="card-value"></div> box. Confirmed
+    on a real run: 36 empty step-desc/card-* boxes in one page. Omit the
+    div entirely instead of rendering it blank."""
+    out = render_component("card", {"title": "Speed", "desc": "faster"})
+    assert '<div class="card-title">Speed</div>' in out
+    assert '<div class="card-desc">faster</div>' in out
+    assert "card-value" not in out
+
+
+def test_card_with_only_a_title_omits_both_other_blocks():
+    out = render_component("card", {"title": "Speed"})
+    assert '<div class="card-title">Speed</div>' in out
+    assert "card-value" not in out
+    assert "card-desc" not in out
+
+
+def test_step_list_item_with_no_desc_omits_the_desc_div():
+    out = render_component("step_list", {"items": [{"title": "Step one"}]})
+    assert '<div class="step-title">Step one</div>' in out
+    assert "step-desc" not in out
+
+
+def test_step_list_plain_string_item_omits_the_desc_div_too():
+    """A plain-string item's whole content becomes the title (per this
+    renderer's own existing contract) -- it has no desc at all, so no
+    step-desc div should appear."""
+    out = render_component("step_list", {"items": ["Just a step"]})
+    assert '<div class="step-title">Just a step</div>' in out
+    assert "step-desc" not in out
+
+
+def test_step_list_item_with_a_real_desc_still_renders_it():
+    out = render_component("step_list", {"items": [{"title": "Step one", "desc": "does the thing"}]})
+    assert '<div class="step-desc">does the thing</div>' in out
+
+
 def test_callout_variants_use_the_right_class():
     assert 'callout-danger' in render_component("callout_danger", {"text": "x"})
     assert 'callout-success' in render_component("callout_success", {"text": "x"})
