@@ -201,6 +201,19 @@ def test_timeout_defaults_to_300s_and_is_forwarded_to_litellm(monkeypatch):
     assert captured["timeout"] == 300.0
 
 
+def test_constructor_also_sets_litellms_own_global_default_timeout():
+    """Belt-and-suspenders (2026-09-14): a real Gemini/Vertex call raised
+    "litellm.Timeout: ... None seconds" despite our own per-call timeout=
+    kwarg being passed correctly -- setting litellm's own global default
+    too closes any gap in a code path that doesn't reflect the per-call
+    value in its own error message."""
+    import litellm
+
+    LiteLLMBackend(timeout_s=45.0)
+
+    assert litellm.request_timeout == 45.0
+
+
 def test_timeout_is_configurable_at_the_backend_level(monkeypatch):
     fake_response = FakeResponse("OK", "gemini-3.6-flash", 6, 1)
     captured = {}

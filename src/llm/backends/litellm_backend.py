@@ -66,6 +66,17 @@ class LiteLLMBackend:
         # genuinely slow call raises litellm.Timeout, which IS one of the
         # exception classes num_retries backs off and retries.
         self.timeout_s = timeout_s
+        # Also set litellm's own global default (2026-09-14): a real Gemini/
+        # Vertex call raised "litellm.Timeout: Connection timed out after
+        # None seconds" -- our own per-call `timeout=` kwarg is passed
+        # correctly (confirmed in litellm's source), but the exact code path
+        # that particular call took didn't reflect it in the exception's own
+        # message, and litellm's own global default is 6000s if never set.
+        # This is belt-and-suspenders, not a confirmed root-cause fix -- a
+        # concurrent run against the same source completed cleanly at the
+        # same time, so this may simply be transient network/API flakiness
+        # rather than a real gap in our own request. Harmless either way.
+        litellm.request_timeout = timeout_s
 
     def call(
         self,
