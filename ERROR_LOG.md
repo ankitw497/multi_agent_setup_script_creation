@@ -1835,6 +1835,38 @@ to confirm the retry now succeeds instead of crashing.
 
 ---
 
+## ERR-051 — B2's own 180s timeout was too short for a real rewrite payload
+
+**Date:** 2026-09-14 · **Severity:** critical (crashed two separate live-verify runs outright) · **Status:** fixed · **Component:** `editing/targeted_rewrite.py`
+
+**Where:** confirmed live TWICE, on two separate runs launched to verify other fixes (the fair
+gpt-4o comparison, then the gpt-5.6-sol LaTeX/blank-box verify) -- both crashed inside B2's
+targeted-rewrite call. The first crash predated ERR-050's fix (a raw, unretried
+`subprocess.TimeoutExpired`). The second happened AFTER ERR-050 landed -- the timeout was
+correctly converted to a retryable `ClaudeCliInvocationError` and retried up to 3 times, but
+every attempt hit the identical 180s ceiling and failed the same way, so the run still crashed
+once retries were exhausted.
+
+**Root cause:** `editing/targeted_rewrite.py`'s B2 call used `timeout_s=180`, chosen (no
+comment explaining why) presumably assuming a "targeted" rewrite's smaller scope would always
+finish faster than B1's full-narration call. Not true in practice -- a `rewrite_beats` payload
+still carries a whole beat's scenes and claims, and `narration/generator.py`'s own B1 call
+already uses `timeout_s=300` for the same class of Sonnet call.
+
+**Fix:** raised B2's timeout to `300` to match B1.
+
+**Tests:** confirms the call uses `timeout_s=300`. Full suite: 863 passed, 16 deselected.
+
+**Also observed, not a code bug:** the same gpt-4o run session separately hit
+`litellm.APIConnectionError: ... [Errno 8] nodename nor servname provided` (a DNS resolution
+failure) on a Gemini call -- a transient local network issue, not a pipeline defect. No fix
+applied; simply re-running is the correct response to this class of failure.
+
+**Not yet live-verified**: needs a fresh run that actually exercises a `rewrite_beats` cycle to
+confirm 300s is sufficient in practice.
+
+---
+
 ## Open items (not yet bugs, flagged for future attention)
 
 - **A2b's per-beat expansion doesn't always self-track its own new concepts within one
