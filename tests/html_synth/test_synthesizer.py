@@ -62,6 +62,21 @@ def test_prompt_instructs_filling_every_component_slot():
     assert "EVERY slot" in TASK_PROMPT
 
 
+def test_prompt_does_not_discourage_using_diagram_or_math_components():
+    """Real regression found live 2026-09-14: the original wording for the
+    fix above ("a component with even one slot left blank... is worse than
+    not choosing a component at all") measurably made H avoid diagram_card/
+    math_block altogether -- a real run went from 6 diagram-card + 3
+    math-block components to ZERO of either, comparing before/after this
+    session's prompt changes on the same real source. The requirement
+    (fill every slot) must not read as "the safe choice is no component"."""
+    from html_synth.synthesizer import TASK_PROMPT
+
+    lowered = TASK_PROMPT.lower()
+    assert "worse than not choosing a component" not in lowered
+    assert "math_block" in TASK_PROMPT or "diagram_card" in TASK_PROMPT
+
+
 def test_prompt_has_no_stray_control_characters_from_unescaped_backslashes():
     """Regression guard for a bug in THIS session's own fix: writing a raw
     LaTeX example like \\frac/\\right/\\top directly into a normal (non-raw)

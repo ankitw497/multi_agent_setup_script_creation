@@ -161,6 +161,28 @@ def test_grid_items_as_plain_strings_are_not_flagged():
     assert check_component_slots_filled(beats) == []
 
 
+def test_a_completely_empty_grid_item_is_flagged():
+    """Real bug found live 2026-09-14: a dict item with NO keys at all
+    (or every key blank) renders as a totally empty <div class="card">
+    wrapper with nothing inside -- the field-by-field scan above only
+    ever flags a key that's actually PRESENT, so a fully empty {} slipped
+    through untouched (confirmed on a real run: 6 empty card wrappers)."""
+    beats = [BeatVisual(beat_id="B01", heading="h", scenes=[SceneVisual(
+        scene_id="s1", screen_prose="x", component_id="grid_3",
+        component_data={"items": [{"title": "Real", "value": "1", "desc": "x"}, {}]},
+    )])]
+    issues = check_component_slots_filled(beats)
+    assert any("item_entirely_empty" in i.detail for i in issues)
+
+
+def test_a_grid_item_with_at_least_one_real_field_is_not_flagged_as_empty():
+    beats = [BeatVisual(beat_id="B01", heading="h", scenes=[SceneVisual(
+        scene_id="s1", screen_prose="x", component_id="grid_3",
+        component_data={"items": [{"desc": "just a description, no title or value"}]},
+    )])]
+    assert check_component_slots_filled(beats) == []
+
+
 def test_component_slot_issue_is_scene_scoped_for_the_h_repair_loop():
     beats = [BeatVisual(beat_id="B01", heading="h", scenes=[SceneVisual(
         scene_id="s1", screen_prose="x", component_id="card", component_data={"title": "x"},

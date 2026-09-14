@@ -38,11 +38,14 @@ For each scene in this beat:
   concrete comparison, a callout-worthy caveat, an equation, a labeled
   visual). Leave it null for scenes that are better served by prose alone
   -- do not force a component onto every scene.
-- `component_data`: if `component_id` is set, fill in EVERY slot listed
-  for it in `component_slots` -- a component with even one slot left
-  blank renders as a visibly broken empty box on the page, which is worse
-  than not choosing a component at all. Use real content grounded in
-  `available_claims` -- never invent a number or fact. For `diagram_card`
+- `component_data`: once you've chosen a component, fill in EVERY slot
+  listed for it in `component_slots` -- a slot left blank renders a
+  visibly broken empty box on the page. This means filling every slot in
+  completely, not avoiding components -- a scene whose content genuinely
+  calls for an equation or a mechanism diagram should still use
+  `math_block`/`diagram_card`, just with every slot properly filled. Use
+  real content grounded in `available_claims` -- never invent a number or
+  fact. For `diagram_card`
   specifically, `content` must be an actual compact ASCII-art diagram
   (arrows like -> or |, boxes, short labels) that concretely depicts this
   scene's mechanism step -- e.g. a labeled flow of a few short stages

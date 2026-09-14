@@ -236,6 +236,17 @@ def check_component_slots_filled(beat_visuals: list[BeatVisual]) -> list[RenderI
                 for item in items:
                     if isinstance(item, dict):
                         blank_fields.extend(sorted(k for k, v in item.items() if _is_blank_slot_value(v)))
+                        # Real bug found live 2026-09-14: a dict item can
+                        # have every one of its own present keys blank (or
+                        # have NO keys at all) -- the scan above only ever
+                        # flags a key that's actually present, so a
+                        # completely empty {} item (rendering as an empty
+                        # <div class="card"></div> with nothing inside)
+                        # slipped through untouched. A nested item backing a
+                        # "card"-shaped render (grid_2/grid_3's own items)
+                        # must have at least ONE non-blank card slot.
+                        if not any(not _is_blank_slot_value(item.get(slot)) for slot in component_slots("card")):
+                            blank_fields.append("item_entirely_empty")
             if blank_fields:
                 issues.append(RenderIssue(
                     "component_slot_blank",

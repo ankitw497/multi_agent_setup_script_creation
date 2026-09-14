@@ -60,7 +60,19 @@ def check_running_example_entity_consistency(
             evidence="no running_example set for this video -- nothing to check",
         )
 
+    # Real bug found live 2026-09-14: a plan can name its running_example's
+    # values with abstract slot labels ("pronoun", "noun_1") whose actual
+    # VALUES are the concrete quoted words ("'it'", "'cat'") that scenes
+    # really reuse -- locking only the dict KEYS flagged nearly every scene
+    # as inventing an entity, when they were correctly reusing the example.
+    # Both the keys and the (quote-stripped) values are legitimate locked
+    # entities, since either shape is plausible depending on how A2 filled
+    # this in.
     locked_entities = {k.lower() for k in plan.running_example.values}
+    locked_entities |= {
+        v.strip("'‘’\" ").lower()
+        for v in plan.running_example.values.values() if isinstance(v, str)
+    }
     locked_entities |= {w.lower() for w in re.split(r"[/,\s]+", plan.running_example.label) if w}
 
     beat_id_by_scene_id = {s.scene_id: s.beat_id for s in plan.scene_plan}

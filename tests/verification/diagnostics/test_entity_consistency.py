@@ -68,6 +68,23 @@ def test_an_entity_from_the_beats_own_claims_is_not_flagged():
     assert result.band == "GREEN"
 
 
+def test_abstract_value_keys_with_concrete_quoted_values_are_not_flagged():
+    """Real bug found live 2026-09-14: running_example.values can use
+    abstract slot labels ("pronoun", "noun_1") whose ACTUAL values are the
+    concrete quoted words scenes really reuse ("'it'", "'cat'") -- locking
+    only the dict keys flagged nearly every real scene as an invented
+    entity. Both the keys and the (quote-stripped) values must count as
+    locked."""
+    plan = make_plan(running_example=RunningExample(
+        label="Pronoun Reference", values={"pronoun": "'it'", "noun_1": "'cat'", "noun_2": "'stairs'"},
+    ))
+    beat_visuals = make_beat_visual([
+        SceneVisual(scene_id="s1", screen_prose="'it' refers back to 'cat', not 'stairs'"),
+    ])
+    result = check_running_example_entity_consistency(plan, beat_visuals, [])
+    assert result.band == "GREEN"
+
+
 def test_no_quoted_entities_at_all_is_clean():
     plan = make_plan(running_example=RunningExample(label="cat/stairs", values={"cat": "9.6"}))
     beat_visuals = make_beat_visual([SceneVisual(scene_id="s1", screen_prose="plain prose with no quotes")])
