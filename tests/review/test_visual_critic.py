@@ -89,6 +89,18 @@ def test_prompt_instructs_checking_screen_prose_for_repetition_and_overclaim():
     assert "must_not_repeat" in TASK_PROMPT
 
 
+def test_prompt_instructs_a_critical_carve_out_for_genuine_contradictions():
+    """STORY_IMPROVEMENT_PLAN.md Phase 8.6: a visual_mismatch that's a
+    genuine factual contradiction (not just a suboptimal choice) must be
+    allowed as severity=critical with repair_owner=narration_lead, so it
+    can be surfaced as a real, blocking finding downstream -- confirms
+    the prompt actually carves out this exception rather than universally
+    forbidding critical for narration_lead-owned findings."""
+    assert "CONTRADICTS" in TASK_PROMPT
+    assert "critical" in TASK_PROMPT
+    assert "repair_owner: narration_lead" in TASK_PROMPT
+
+
 def test_prompt_has_no_hardcoded_topic_vocabulary():
     """Overfitting guard (Phase 3's own precedent) -- this prompt runs on
     every future video regardless of topic."""

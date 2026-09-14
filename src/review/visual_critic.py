@@ -43,7 +43,18 @@ unrelated stat card)?
 Most findings here are ordinary content critique -- a visual choice that
 is technically fine but doesn't serve the scene as well as it could. Use
 `category: visual_mismatch`, `layer: VISUAL`, `repair_owner: narration_lead`
-for these; severity `major` or `minor`, never `critical`.
+for these; severity `major` or `minor`.
+
+Reserve `severity: critical` WITH `repair_owner: narration_lead` for a
+stronger case than a merely suboptimal choice: the screen doesn't just
+serve the scene poorly, it actively CONTRADICTS what the narration/prose
+claims -- a different concrete example than the one described, a number
+that flatly disagrees with what's stated, a mechanism shown working in a
+way that contradicts the claim. No HTML repair can fix this (H only
+regenerates screen prose/component data, never the underlying facts it's
+asked to represent) -- it gets surfaced as a real, blocking finding
+rather than routed to a repair, so use this combination only for a
+genuine factual contradiction, never a style or quality judgment.
 
 Reserve `severity: critical`, `layer: RENDERER`, `repair_owner: html_author`
 ONLY for a genuinely structural rendering problem you can see directly in

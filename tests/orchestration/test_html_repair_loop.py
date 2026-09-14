@@ -323,6 +323,58 @@ def test_non_structural_c3_findings_are_captured_not_silently_dropped(monkeypatc
     assert result.render_issues == []
 
 
+def test_a_critical_narration_owned_visual_mismatch_blocks_promotion(monkeypatch):
+    """STORY_IMPROVEMENT_PLAN.md Phase 8.6: a CRITICAL visual_mismatch
+    whose own repair_owner is narration_lead means C3 judged this a
+    genuine factual contradiction, not a rendering break -- H-repair
+    cannot fix it (it only ever regenerates screen prose/component data,
+    never the underlying facts), so it must surface as a real, blocking
+    render_issue instead of being silently absorbed into
+    visual_critique_issues with no consequence."""
+    _patch_static_clean(monkeypatch)
+    monkeypatch.setattr("verification.hard.render_rendered.run_rendered_checks", lambda *a, **k: [])
+    monkeypatch.setattr(
+        "verification.hard.render_rendered.capture_scene_screenshots",
+        lambda *a, **k: {"s1": "data:image/jpeg;base64,AAAA"},
+    )
+    agent = make_agent()
+    contradiction_issue = {
+        "issue_id": "V1", "severity": "critical", "category": "visual_mismatch", "layer": "VISUAL",
+        "scene_ids": ["s1"], "problem": "screen shows a different example than the narration describes",
+        "why_it_matters": "y", "recommended_intent": "fix the narration to match", "repair_owner": "narration_lead",
+    }
+    visual_auditor = FakeAgent({VisualCritique: [VisualCritique(issues=[contradiction_issue])]})
+
+    result = synthesize_and_repair_video_html(make_plan(), make_narration(), [], agent, visual_auditor, make_budget())
+
+    assert result.repairs_used == 0  # never attempted -- H-repair cannot fix a narration-owned finding
+    assert any(i.code == "c3_narration_level_finding" for i in result.render_issues)
+    assert len(result.visual_critique_issues) == 1  # still visible in the full list too
+
+
+def test_a_major_narration_owned_visual_mismatch_does_not_block_promotion(monkeypatch):
+    """Only CRITICAL narration-owned findings block -- the ordinary
+    major/minor content-critique case (the common one) must keep behaving
+    exactly as before this fix."""
+    _patch_static_clean(monkeypatch)
+    monkeypatch.setattr("verification.hard.render_rendered.run_rendered_checks", lambda *a, **k: [])
+    monkeypatch.setattr(
+        "verification.hard.render_rendered.capture_scene_screenshots",
+        lambda *a, **k: {"s1": "data:image/jpeg;base64,AAAA"},
+    )
+    agent = make_agent()
+    ordinary_issue = {
+        "issue_id": "V1", "severity": "major", "category": "visual_mismatch", "layer": "VISUAL",
+        "scene_ids": ["s1"], "problem": "visual weight is off", "why_it_matters": "y",
+        "recommended_intent": "reconsider the component choice", "repair_owner": "narration_lead",
+    }
+    visual_auditor = FakeAgent({VisualCritique: [VisualCritique(issues=[ordinary_issue])]})
+
+    result = synthesize_and_repair_video_html(make_plan(), make_narration(), [], agent, visual_auditor, make_budget())
+
+    assert result.render_issues == []
+
+
 def test_enable_rendered_checks_false_is_an_explicit_opt_out_not_a_degradation(monkeypatch):
     """Turning rendered checks off on purpose is not the same as them
     being unavailable -- only a genuinely missing capability degrades."""

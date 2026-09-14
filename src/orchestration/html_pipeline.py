@@ -81,6 +81,25 @@ def _visual_critique_to_render_issues(issues: list[CritiqueIssue]) -> list[Rende
     ]
 
 
+def _visual_critique_to_narration_level_issues(issues: list[CritiqueIssue]) -> list[RenderIssue]:
+    """STORY_IMPROVEMENT_PLAN.md Phase 8.6: a CRITICAL C3 finding whose own
+    `repair_owner` is `narration_lead` means C3 itself judged the fix
+    belongs in the spoken narration, not the HTML -- something H-repair
+    (which only ever regenerates screen prose/component data, never
+    narration) structurally cannot fix. By the time C3 runs, the
+    story+narration loop has already finished, so there is no way to feed
+    this back into a fresh B1/B2 cycle within this same run -- but it must
+    still block promotion rather than being silently absorbed into
+    `visual_critique_issues` with no consequence, which is what happened
+    before this fix (only `repair_owner == "html_author"` ever became a
+    real `RenderIssue`)."""
+    return [
+        RenderIssue("c3_narration_level_finding", issue.problem, scene_id=issue.scene_ids[0])
+        for issue in issues
+        if issue.severity == "critical" and issue.repair_owner == "narration_lead" and issue.scene_ids
+    ]
+
+
 def synthesize_and_repair_video_html(
     plan: StoryPlan, narration: list[SceneNarration], claims: list[Claim],
     narration_lead: Agent, visual_auditor: Agent, budget: BudgetCounter,
@@ -199,6 +218,10 @@ def synthesize_and_repair_video_html(
                 )
             elif structural:
                 render_issues = render_issues + structural
+            # Phase 8.6: a critical narration-owned finding is never
+            # repairable by H, so it's never passed to apply_repairs -- it
+            # goes straight to the blocking render_issues list.
+            render_issues = render_issues + _visual_critique_to_narration_level_issues(visual_issues)
     elif enable_rendered_checks and not playwright_available:
         degraded_capabilities.append("c3_visual_audit: skipped, playwright not installed")
 
