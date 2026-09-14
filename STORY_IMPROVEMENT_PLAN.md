@@ -69,7 +69,7 @@ certain first:
 | 6 | ~~C3 also reviews H's screen prose~~ [x] code+tests done, live-verify pending | 6 | A whole artifact currently has zero critique coverage |
 | 7 | ~~Typed formula/numeric state validators~~ [x] code+tests done, live-verify pending | 6 | Fixes the confirmed raw-vs-scaled and dropped-`√d_k` class of bug |
 | 8 | ~~A2b neighbor contract~~ [x] code+tests done, live-verify pending | 5 | Improves transitions; larger change than the above |
-| 9 | ~~Airtime by narrative role, not source volume~~ [x] sub-item #1 done, #2/#3 still open | 7 | Real fix for section bloat, but touches allocation for every run |
+| 9 | ~~Airtime by narrative role, not source volume~~ [x] all 3 sub-items code-complete, live-verify pending | 7 | Real fix for section bloat, but touches allocation for every run |
 | 10 | ~~Build C4c mid-video cold viewer~~ [x] code+tests done, live-verify pending | 8.2 | New module; do after the cheap retention wins land |
 
 Everything above item 5 is small and low-risk. Items 6-10 are real work. Item 8.6 (story
@@ -741,16 +741,27 @@ knowing the video's own current mode:
 - [x] `.venv/bin/python3 -m pytest -q` green (820 passed, up from 809) -- for sub-item #1 only
 - [ ] **Live-verify** (sub-item #1 only): re-run against the same real source; confirm
       per-section outlier detection fires on a deliberately-bloated section -- not yet run
-- [ ] Sub-item #2 (preview completeness) -- not started: `planning/scene_expander.py` extend
-      `scene_function=preview`'s guidance to be explicit about which exact values (if any) it
-      reveals; `narration/generator.py` require derivation scenes to frame an already-previewed
-      exact value as confirming/explaining, never as a fresh reveal
-- [ ] Sub-item #3 (mechanism scope) -- not started: `planning/models.py` add a lightweight
-      `mechanism_scope` concept to `ViewerLedger` (or a sibling), e.g.
-      `{"causal_mask_required": bool}`, set once a beat like B10 establishes it;
-      `narration/generator.py`/`review/story_critic.py` flag a recap/summary stating a scoped
-      mechanism as if unconditional, using the ledger's own recorded scope
-- [ ] Unit tests + live-verify for sub-items #2 and #3, once built
+- [x] **Sub-item #2 (preview completeness) -- implemented 2026-09-14.** Pure prompt fix,
+      reusing existing fields: `planning/scene_expander.py` (A2b) instructs naming an EXACT
+      value a preview reveals as its own `new_concepts` entry, not just the general concept;
+      `narration/generator.py` (B1) instructs framing a `derivation` scene that reaches an
+      already-previewed exact value as CONFIRMING it, never as a fresh discovery.
+- [x] **Sub-item #3 (mechanism scope) -- implemented.** `ViewerLedger.mechanism_scope:
+      dict[str, bool]` accumulates beat-to-beat like `viewer_knows` (no new LLM call --
+      `scene_expander.py`'s existing per-beat loop); `ScenePlan.mechanism_scope` stores the
+      scope AS OF that scene (a per-scene snapshot, set scene-by-scene). A2b's `TASK_PROMPT`
+      lets it record a scope-establishing scene's own `mechanism_scope_updates`.
+      `narration/generator.py` requires a recap to honor the recorded condition rather than
+      state it as unconditional. `review/story_critic.py`'s OVERCLAIM check (C1 already
+      receives `scene_plan` from Phase 5) treats a scene contradicting its own recorded
+      `mechanism_scope` as a CONFIRMED overclaim, not a suspected one.
+- [x] Unit tests for sub-items #2/#3: `tests/planning/test_scene_expander.py` (payload
+      threading, accumulation, per-scene snapshot, carries forward from an earlier beat
+      unchanged, prompt-content); `tests/narration/test_generator.py` and
+      `tests/review/test_story_critic.py` (payload threading, prompt-content). Full suite:
+      893 passed, 16 deselected -- **Phase 7 is now fully code-complete** (sub-item #1's own
+      live-verify below is still the only open item).
+- [ ] Live-verify for sub-items #2 and #3 (sub-item #1's own live-verify tracked above)
 
 ---
 
