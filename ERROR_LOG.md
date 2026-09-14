@@ -1867,6 +1867,82 @@ confirm 300s is sufficient in practice.
 
 ---
 
+## ERR-052 — ERR-049's fix didn't actually resolve the blank-box bug; the real defect was one level deeper
+
+**Date:** 2026-09-14 · **Severity:** major (live-verify of a claimed fix found the count got WORSE, not better) · **Status:** fixed · **Component:** `src/config/design_system.yaml`, `html_synth/component_library.py`
+
+**Where:** live-verifying ERR-048/049's fixes on a real gpt-5.6-sol run
+(`video-01-attention-latex-blankbox-verify/runs/v02`) confirmed ERR-048 (LaTeX) worked -- zero
+LaTeX in the output. ERR-049 (blank component boxes) did NOT: the same run had **36** empty
+`step-desc`/`card-title`/`card-value`/`card-desc` boxes, MORE than the 14 seen before that fix.
+
+**Root cause, confirmed by reading the actual template:** `card` and `step_list`'s own
+skeletons in `design_system.yaml` unconditionally emit every slot's wrapper div (`<div
+class="card-value">`, `<div class="step-desc">`) regardless of whether that slot has real
+content. A partial shape -- a `grid_2`/`grid_3` item with only `title`+`desc`, no `value`; a
+`step_list` item with only a `title`, or a plain string -- is a LEGITIMATE, already-supported
+shape (`render_component()`'s own docstring: "the exact SHAPE of that data varies... handled
+for both rather than assuming one"), but the skeleton still rendered a visibly empty box for
+the missing piece every time.
+`verification/hard/render.py::check_component_slots_filled` (ERR-049's fix) only scans
+present-but-BLANK keys on nested dict items, never keys missing entirely -- so it never had a
+chance to catch this. Tightening the check would only have forced the model to always supply
+every field, fighting the renderer's own accepted flexibility instead of fixing the renderer's
+actual bug.
+
+**Fix:** fixed at the source. `card`'s skeleton and `component_library.py`'s `card`/`step_list`
+rendering branches now build each slot's div conditionally, omitting it entirely when there's
+no real content, instead of rendering it empty. `check_component_slots_filled` is unchanged
+and still independently catches a genuinely incomplete STANDALONE `card` (where all three
+slots are meant to be meaningful) -- a second, defense-in-depth layer, not replaced.
+
+**Lesson**: a hard check that returns clean on a real run is not proof the underlying bug is
+fixed -- it can mean the check itself is looking in the wrong place. Always inspect the actual
+rendered output, not just whether the new check fires.
+
+**Tests:** `tests/html_synth/test_component_library.py` -- card/step_list render all slots when
+present; omit a blank value/desc individually and together; a step_list item with no desc at
+all (or a plain-string item) never emits an empty `step-desc` div; a real desc still renders.
+Full suite: 899 passed, 16 deselected.
+
+**Not yet live-verified**: needs a fresh run to confirm zero empty boxes in real output.
+
+---
+
+## ERR-053 — A Gemini/Vertex call raised "Timeout: ... None seconds" (likely transient, not confirmed as a code bug)
+
+**Date:** 2026-09-14 · **Severity:** major (crashed a real run) but **unconfirmed root cause** · **Status:** defensive mitigation applied, not a confirmed fix · **Component:** `llm/backends/litellm_backend.py`
+
+**Where:** during the same end-to-end verification session, a separate gpt-4o comparison run
+(`video-01-attention-phase-e2e-verify-fair/runs/v04`) crashed with `litellm.Timeout: Connection
+timed out after None seconds` on a Gemini/Vertex call -- despite ERR-047's `timeout_s=300`
+per-call kwarg being in place and confirmed (by reading litellm's own source) to be a real,
+respected parameter for `litellm.completion()`.
+
+**Investigation:** traced the exception through litellm's own Vertex AI Gemini code path
+(`_complete_vertex_ai_beta` -> `vertex_and_google_ai_studio_gemini.py`) -- the local `timeout`
+variable IS threaded through multiple call sites in that file, so there is no obvious, confirmed
+bug in litellm's own handling for this provider. The "None seconds" in the exception message may
+just be a cosmetic formatting gap in litellm's own error path, not proof no timeout was applied.
+**Notably**: a CONCURRENT run against the same source, same models, same time window
+(`video-01-attention-latex-blankbox-verify/runs/v02`) completed cleanly with no timeout issue at
+all -- this points toward transient network/API flakiness at that moment rather than a
+systemic, reproducible defect in our request.
+
+**Mitigation applied (defensive, not a confirmed fix):** `LiteLLMBackend.__init__` now also sets
+`litellm.request_timeout` (litellm's own global default, otherwise 6000s) to the same
+`timeout_s` value, closing any gap in a code path that might not reflect the per-call value.
+Harmless either way.
+
+**Tests:** confirms the global is set to the configured value. Full suite: 900 passed, 16
+deselected.
+
+**Not yet resolved**: if this recurs on a future run with the defensive fix in place, the root
+cause is NOT what was guessed here and needs further investigation (possibly a genuine litellm/
+Vertex integration gap, or real API-side rate limiting/instability).
+
+---
+
 ## Open items (not yet bugs, flagged for future attention)
 
 - **A2b's per-beat expansion doesn't always self-track its own new concepts within one
