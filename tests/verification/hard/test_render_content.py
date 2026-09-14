@@ -6,8 +6,8 @@ from planning.models import (
 )
 from verification.hard.render import (
     check_component_slots_filled, check_deictic_resolution, check_every_scene_has_prose,
-    check_hero_states_problem, check_payoff_closes, check_reader_standalone_word_count,
-    check_renderer_compat,
+    check_hero_states_problem, check_no_raw_latex, check_payoff_closes,
+    check_reader_standalone_word_count, check_renderer_compat,
 )
 from narration.models import SceneNarration, SentenceNarration
 
@@ -181,6 +181,53 @@ def test_a_grid_item_with_at_least_one_real_field_is_not_flagged_as_empty():
         component_data={"items": [{"desc": "just a description, no title or value"}]},
     )])]
     assert check_component_slots_filled(beats) == []
+
+
+# ---- no raw LaTeX (deterministic backstop for ERR-048's prompt-only fix) ----
+
+def test_plain_notation_screen_prose_is_clean():
+    beats = [BeatVisual(beat_id="B01", heading="h", scenes=[
+        SceneVisual(scene_id="s1", screen_prose="the score is a / sqrt(b), then softmax(x)"),
+    ])]
+    assert check_no_raw_latex(beats) == []
+
+
+def test_raw_latex_in_screen_prose_is_flagged():
+    """Real bug found live 2026-09-14: ERR-048's prompt-only fix reduced
+    but did not eliminate raw LaTeX reaching the screen -- a live
+    re-verification run still showed \\sqrt, \\cdot, \\text, \\sim in real
+    rendered content. This is the deterministic backstop."""
+    beats = [BeatVisual(beat_id="B01", heading="h", scenes=[
+        SceneVisual(scene_id="s1", screen_prose="dividing by \\sqrt{d_k} keeps values stable"),
+    ])]
+    issues = check_no_raw_latex(beats)
+    assert any(i.code == "raw_latex_in_content" and i.scene_id == "s1" for i in issues)
+    assert "\\sqrt" in issues[0].detail
+
+
+def test_raw_latex_in_component_data_is_flagged():
+    beats = [BeatVisual(beat_id="B01", heading="h", scenes=[SceneVisual(
+        scene_id="s1", screen_prose="x", component_id="math_block",
+        component_data={"content": "\\operatorname{softmax}\\left(x\\right)"},
+    )])]
+    issues = check_no_raw_latex(beats)
+    assert any(i.code == "raw_latex_in_content" for i in issues)
+
+
+def test_multiple_latex_commands_are_all_named_in_the_detail():
+    beats = [BeatVisual(beat_id="B01", heading="h", scenes=[
+        SceneVisual(scene_id="s1", screen_prose="\\frac{a}{b} and \\sqrt{c}"),
+    ])]
+    issues = check_no_raw_latex(beats)
+    assert "\\frac" in issues[0].detail
+    assert "\\sqrt" in issues[0].detail
+
+
+def test_ordinary_prose_with_a_literal_backslash_free_sentence_is_never_flagged():
+    beats = [BeatVisual(beat_id="B01", heading="h", scenes=[
+        SceneVisual(scene_id="s1", screen_prose="it's a straightforward, plain-English sentence"),
+    ])]
+    assert check_no_raw_latex(beats) == []
 
 
 def test_component_slot_issue_is_scene_scoped_for_the_h_repair_loop():

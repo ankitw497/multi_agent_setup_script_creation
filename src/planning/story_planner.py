@@ -123,8 +123,14 @@ expression progressively across multiple beats -- a raw form that later
 gets refined, scaled, normalized, or combined into a final form -- register
 each distinct stage ONCE in `formula_stages`, in the order the source
 derives them, each with a short `stage_id` (e.g. "raw_score",
-"scaled_score", "output") and its exact symbolic `expression` as the
-source states it. If the source works a running numeric example through
+"scaled_score", "output") and its exact symbolic `expression` in plain,
+readable notation only -- e.g. "a / sqrt(b)" -- never LaTeX escape syntax
+(`\\frac{}{}`, `\\sqrt{}`, `\\operatorname{}`, `\\left`/`\\right`,
+`\\cdot`, even if the source itself is typeset in LaTeX). This page
+renders no LaTeX engine, and this exact string is later checked verbatim
+against what the video actually shows on screen -- registering it in
+LaTeX guarantees that check can never match. If the source works a
+running numeric example through
 these stages, also give each stage its OWN `values` dict for that stage's
 actual worked numbers (e.g. `{"item_a": "4.8"}` for an early stage, a
 DIFFERENT number for the same named quantity at a later stage once the

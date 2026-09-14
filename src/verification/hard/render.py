@@ -256,6 +256,48 @@ def check_component_slots_filled(beat_visuals: list[BeatVisual]) -> list[RenderI
     return issues
 
 
+_LATEX_COMMAND_RE = re.compile(r"\\[a-zA-Z]+")
+
+
+def _flatten_component_data_strings(value: object) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [s for v in value.values() for s in _flatten_component_data_strings(v)]
+    if isinstance(value, list):
+        return [s for v in value for s in _flatten_component_data_strings(v)]
+    return []
+
+
+def check_no_raw_latex(beat_visuals: list[BeatVisual]) -> list[RenderIssue]:
+    """The page renders no LaTeX engine (no MathJax/KaTeX) -- ERR-048's
+    prompt-only fix (plain notation, never `\\frac{}{}`/`\\sqrt{}`/etc.)
+    measurably reduced but did not eliminate raw LaTeX reaching the
+    screen: a live re-verification run still showed `\\sqrt`, `\\cdot`,
+    `\\text`, `\\sim` in real rendered content. An LLM instruction is a
+    strong nudge, never a guarantee -- this is the deterministic backstop,
+    matching this module's own established principle (Python pattern-
+    matching, not model compliance alone) already used for
+    `check_formula_stage_consistency`. A backslash followed by letters is
+    not a pattern that occurs in ordinary English prose, so this has a low
+    false-positive rate. Routes to the same H-repair path as any other
+    content-level issue -- unlike a narration-level factual contradiction,
+    a repair pass CAN actually fix this by rewriting the notation."""
+    issues: list[RenderIssue] = []
+    for beat in beat_visuals:
+        for scene in beat.scenes:
+            text = " ".join([scene.screen_prose, *_flatten_component_data_strings(scene.component_data)])
+            found = sorted(set(_LATEX_COMMAND_RE.findall(text)))
+            if found:
+                issues.append(RenderIssue(
+                    "raw_latex_in_content",
+                    f"{scene.scene_id} contains raw LaTeX command(s) {found} -- this page renders no "
+                    "LaTeX engine, use plain notation instead",
+                    scene_id=scene.scene_id,
+                ))
+    return issues
+
+
 def check_hero_states_problem(hero: HeroContent, plan: StoryPlan, threshold: float = 0.1) -> list[RenderIssue]:
     """plan §12.0: "the hero states the problem." Checked against the
     plan's own hook (what the hero's badge/title/subtitle are meant to
@@ -348,6 +390,7 @@ def check_render_content(
         + check_reader_standalone_word_count(page_html)
         + check_every_scene_has_prose(beat_visuals)
         + check_component_slots_filled(beat_visuals)
+        + check_no_raw_latex(beat_visuals)
         + check_hero_states_problem(hero, plan)
         + check_deictic_resolution(plan, narration)
     )

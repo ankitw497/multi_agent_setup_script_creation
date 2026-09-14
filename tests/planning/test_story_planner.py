@@ -467,6 +467,19 @@ def test_prompt_instructs_registering_formula_stages_when_the_source_has_an_evol
     assert "stage_id" in TASK_PROMPT
 
 
+def test_prompt_instructs_registering_formula_stage_expressions_in_plain_notation():
+    """Real bug found live 2026-09-14: A2 itself registered a
+    formula_stages expression using LaTeX (e.g. '\\( q \\cdot k /
+    \\sqrt{d_k} \\)') -- since check_formula_stage_consistency compares
+    rendered content against this registered string VERBATIM, a LaTeX
+    registration guarantees that check can never match even when H
+    correctly uses plain notation."""
+    from planning.story_planner import TASK_PROMPT
+
+    assert "LaTeX" in TASK_PROMPT
+    assert "plain" in TASK_PROMPT.lower()
+
+
 def test_prompt_has_no_hardcoded_topic_vocabulary():
     """Overfitting guard (user-flagged, STORY_IMPROVEMENT_PLAN.md): A2 plans
     every future video regardless of topic -- the `running_example`
