@@ -533,24 +533,34 @@ whatever they were told, while diverging from each other and from the plan's own
 example. This is exactly feedback item #20's *"narration entities vs. HTML entities vs.
 diagram entities... a render should fail validation if these diverge materially."*
 
-- [ ] **See BUG-5 above** (`plan` is already a parameter, so `running_example` needs no
-      signature change; the narration text does). `html_synth/synthesizer.py` — thread
-      `plan.running_example` into `synthesize_beat_visual()`
-      and `synthesize_hero()`'s payloads; extend `TASK_PROMPT`/`HERO_TASK_PROMPT`: if
-      `running_example` is set and a `diagram_card`/component illustrates it, reuse its exact
-      named objects/values -- never invent a different one for the same underlying idea (same
-      instruction pattern already used in `scene_expander.py`/`narration/generator.py`)
-- [ ] `html_synth/synthesizer.py` — also thread the scene's own actual narration text (not just
-      `visual_description`) into `synthesize_beat_visual()`'s payload, so H illustrates what was
-      actually narrated, not a stale pre-narration description that may have drifted
-- [ ] New deterministic-leaning check: given `running_example.values`' named entities, scan a
-      beat's generated `diagram_card`/component content for named entities that don't overlap
-      with either the locked example or the beat's `available_claims` -- flag as a candidate
-      cross-artifact mismatch. Entity extraction for arbitrary technical prose is not perfectly
-      reliable by regex alone, so treat this as a diagnostic signal (AMBER-banded), not a hard
-      gate that blocks promotion on its own -- pair it with a C1-style judgment check for the
-      cases the heuristic can't resolve confidently
-
+- [x] **See BUG-5 above -- implemented 2026-09-14.** `html_synth/synthesizer.py` --
+      `plan.running_example` threaded into both `synthesize_beat_visual()` and
+      `synthesize_hero()`'s payloads; `TASK_PROMPT`/`HERO_TASK_PROMPT` instruct reusing its
+      exact named objects/values, never inventing a different one for the same underlying
+      idea. Mirrored into the H-repair path too (`editing/html_repair.py`'s
+      `repair_beat_visual()`/`repair_hero()`), so a repair pass can't reintroduce the exact
+      drift a first pass avoided.
+- [x] `html_synth/synthesizer.py` -- `synthesize_beat_visual()` gained an optional `narration`
+      param threading each scene's actual narrated text into its own payload entry
+      (`narration_text`), so H illustrates what was actually narrated, not a stale
+      pre-narration `visual_description` that may have drifted. Same threading mirrored into
+      `repair_beat_visual()`.
+- [x] **Implemented 2026-09-14.** `verification/diagnostics/entity_consistency.py` (new):
+      `check_running_example_entity_consistency(plan, beat_visuals, claims) -> DiagnosticResult`
+      -- scans H's generated `screen_prose`/`component_data` for quoted entities (this
+      project's own observed convention for concrete examples: `'cat'`, `'stairs'`, `'it'`)
+      matching neither the locked `running_example` nor the beat's own claim text; AMBER-banded
+      (never a hard gate, exactly as originally scoped -- entity extraction from prose isn't
+      reliable enough to promote further). Wired into `HtmlSynthesisResult.entity_consistency`,
+      computed by both `synthesize_video_html()` and `synthesize_and_repair_video_html()`,
+      written to `render_report.json` by `reporting/emit_html.py`.
+- [x] Unit tests: `tests/html_synth/test_synthesizer.py`/`tests/editing/test_html_repair.py`
+      (running_example/narration_text threading, both first-pass and repair paths, prompt-
+      content tests); `tests/verification/diagnostics/test_entity_consistency.py` (8 tests:
+      no-op/clean-reuse/invented-entity/claim-backed/no-quotes/component_data/label-words/
+      never-RED); `tests/orchestration/test_html_repair_loop.py` and
+      `tests/reporting/test_emit_html.py` (wiring + report serialization). Full suite: 882
+      passed, 16 deselected -- **Phase 6 is now fully code-complete.**
 ### Confirmed by a second, independent visual audit (2026-09-11, `video-01-attention-model-c-gpt56sol-tuned/runs/v01`)
 
 Rendered and read the `gpt-5.6-sol` (tuned) run's real HTML/narration directly, verifying an
@@ -582,11 +592,10 @@ built. This is a bigger, more concrete version of this phase's "cross-artifact" 
       route. Code+tests done (full suite 786 passed); live-verify against a real source still
       `[ ]`. Coverage is limited to C3's sampled scenes, not every scene -- an accepted
       limitation, not a bug.
-- [ ] **Do not** reach for "add more critic passes" or "escalate to a stronger model" as the
-      first response to a missed on-screen overclaim -- the honest cause here is zero coverage,
-      not weak coverage. Only consider giving C1 an escalation tier (matching the existing
-      `A3/A4/C3/C4b/C5` pattern in `config/models.yaml`) as a later, separately-tested
-      hypothesis if misses persist after C1 actually has the content in scope
+- [x] **Followed throughout.** Every Phase 6 fix folded into an EXISTING mechanism (C3's own
+      prompt, the existing H-repair route, a new deterministic diagnostic) rather than adding a
+      new critic pass or escalating a model tier -- no case has arisen yet where this guidance
+      needed revisiting.
 - [ ] **Technical invariants** (item #10), sharpened into a typed formula-state object rather
       than a loose "invariants" bag, per the review's own concrete proposal:
       ```yaml
