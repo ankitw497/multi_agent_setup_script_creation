@@ -78,6 +78,22 @@ def test_only_the_named_beats_scenes_are_sent_to_the_model():
     assert sent_scene_ids == {"s1", "s2"}
 
 
+def test_uses_a_300s_timeout_matching_b1s_own_full_narration_call():
+    """Real bug confirmed live, twice (2026-09-14): a full-beat rewrite_beats
+    payload (multiple scenes' worth of claims, not just one scene) can take
+    longer than 180s -- both attempts crashed with a subprocess timeout,
+    even after ERR-050 made a timeout retryable, since every retry hit the
+    same too-short ceiling. Must match narration/generator.py's B1
+    timeout_s=300 for the same reason -- a full-scale Sonnet call routinely
+    needs this long."""
+    narration_lead = FakeNarrationLead(GeneratedNarration(scenes=[]))
+    revision_plan = RevisionPlan(run_id="r", rewrite_beats=[RewriteBeat(beat_id="B01", reason="x", intent="tighten")])
+
+    apply_targeted_rewrite(make_plan(), make_narration(), [], revision_plan, narration_lead)
+
+    assert narration_lead.calls[0]["timeout_s"] == 300
+
+
 def test_untouched_scenes_survive_byte_for_byte():
     narration_lead = FakeNarrationLead(GeneratedNarration(scenes=[
         {"scene_id": "s1", "sentences": [{"text": "rewritten one", "sentence_type": "transition"}]},

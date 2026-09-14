@@ -141,8 +141,16 @@ def apply_targeted_rewrite(
         "running_example": plan.running_example.model_dump(),
     }
     rewritten = narration_lead.run(
+        # timeout_s=300 (2026-09-14, was 180): a real "targeted" rewrite can
+        # still carry multiple scenes' full claim payloads (a whole-beat
+        # rewrite_beats call, not just a single scene) -- confirmed live,
+        # twice, on two separate runs: the 180s ceiling was too tight even
+        # after ERR-050's fix made a timeout retryable, since every retry
+        # hit the exact same too-short limit and still failed. Matches B1's
+        # own timeout_s=300 (narration/generator.py) for the same reason --
+        # a full-scale Sonnet narration call routinely needs this long.
         pass_id="B2", mode="TARGETED_REWRITE", task_prompt=TASK_PROMPT,
-        payload=payload, schema=GeneratedNarration, timeout_s=180,
+        payload=payload, schema=GeneratedNarration, timeout_s=300,
     )
     rewritten_by_id = {s.scene_id: s for s in rewritten.scenes}
 
