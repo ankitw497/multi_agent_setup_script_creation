@@ -37,6 +37,20 @@ def _quoted_entities(text: str) -> set[str]:
     return {m.lower() for m in _QUOTED_ENTITY_RE.findall(text)}
 
 
+def _matches_any(entity: str, locked_entities: set[str]) -> bool:
+    """Substring match, not exact-set membership (real bug found live
+    2026-09-14, second occurrence): a plan can lock an entity as
+    "entities_cat" (a prefixed key) or as a full descriptive phrase
+    ("refers to the cat") rather than the bare word a scene actually
+    quotes ('cat') -- exact-set matching missed both, even though a human
+    reading either side would immediately see they're the same thing.
+    A short bare word (like "cat") is virtually always a substring of a
+    longer locked phrase that legitimately mentions it, and this heuristic
+    is explicitly AMBER-banded, never a hard gate, precisely because
+    perfect entity resolution from prose isn't achievable by regex alone."""
+    return any(entity in locked or locked in entity for locked in locked_entities)
+
+
 def _flatten_strings(value: object) -> list[str]:
     if isinstance(value, str):
         return [value]
@@ -87,7 +101,7 @@ def check_running_example_entity_consistency(
         allowed = locked_entities | claims_by_beat_id.get(bv.beat_id, set())
         for scene in bv.scenes:
             quoted = _quoted_entities(_scene_content(scene))
-            invented = quoted - allowed
+            invented = {q for q in quoted if not _matches_any(q, allowed)}
             if invented:
                 mismatches.append(f"{scene.scene_id}: {sorted(invented)}")
 

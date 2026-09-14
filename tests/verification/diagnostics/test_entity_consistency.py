@@ -85,6 +85,38 @@ def test_abstract_value_keys_with_concrete_quoted_values_are_not_flagged():
     assert result.band == "GREEN"
 
 
+def test_a_prefixed_locked_key_matches_the_bare_word_a_scene_quotes():
+    """Real bug found live 2026-09-14, second occurrence: a plan locked
+    'entities_cat' as a dict key, but the scene correctly quoted just
+    'cat' -- exact-set matching missed this even though it's obviously
+    the same entity. Substring matching resolves it."""
+    plan = make_plan(running_example=RunningExample(label="x", values={"entities_cat": "irrelevant"}))
+    beat_visuals = make_beat_visual([SceneVisual(scene_id="s1", screen_prose="the 'cat' example")])
+    result = check_running_example_entity_consistency(plan, beat_visuals, [])
+    assert result.band == "GREEN"
+
+
+def test_a_locked_descriptive_phrase_matches_the_bare_word_a_scene_quotes():
+    """Real bug found live 2026-09-14: a plan locked a full descriptive
+    phrase ("refers to the cat") as a values() entry rather than a bare
+    quoted word -- exact-set matching missed this too."""
+    plan = make_plan(running_example=RunningExample(
+        label="x", values={"reference": "refers to the cat"},
+    ))
+    beat_visuals = make_beat_visual([SceneVisual(scene_id="s1", screen_prose="the 'cat' example")])
+    result = check_running_example_entity_consistency(plan, beat_visuals, [])
+    assert result.band == "GREEN"
+
+
+def test_a_genuinely_unrelated_entity_is_still_flagged_despite_substring_matching():
+    """Substring matching must not become so permissive it stops catching
+    the original confirmed bug (an entirely different invented example)."""
+    plan = make_plan(running_example=RunningExample(label="x", values={"cat": "9.6"}))
+    beat_visuals = make_beat_visual([SceneVisual(scene_id="s1", screen_prose="here 'dog' and 'bone' appear")])
+    result = check_running_example_entity_consistency(plan, beat_visuals, [])
+    assert result.band == "AMBER"
+
+
 def test_no_quoted_entities_at_all_is_clean():
     plan = make_plan(running_example=RunningExample(label="cat/stairs", values={"cat": "9.6"}))
     beat_visuals = make_beat_visual([SceneVisual(scene_id="s1", screen_prose="plain prose with no quotes")])
