@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 
 from agents.base import Agent
 from facts.models import Claim
+from narration.models import SceneNarration
 from planning.models import StoryBeat, StoryPlan
 
 from .component_library import component_slots, components_for_story_role
@@ -65,6 +66,17 @@ For each scene in this beat:
 Also write this beat's own `heading` (a real `<h2>`, specific to what this
 beat teaches, never generic like "Section 3") and a one-sentence
 `subheading` framing what a reader is about to learn.
+
+Each scene is also given `narration_text` -- the actual spoken narration
+already written for it. Illustrate what was ACTUALLY narrated, not just
+the earlier `visual_description` (written before narration existed, and
+may have drifted from what the scene ended up saying). If `running_example`
+is set (non-empty `label`), and this scene's content is the same running
+illustration, reuse its exact named objects/values verbatim in
+`screen_prose` and any component -- never invent a different example, a
+different number, or a different named entity for the same underlying
+idea. This is the one running illustration the whole video (narration
+included) is built around.
 """
 
 HERO_TASK_PROMPT = """\
@@ -73,6 +85,9 @@ Write the page's hero section: `badge` (a short series/part label, e.g.
 related to the hook's promise but written as an article headline, not
 read aloud), and `subtitle` (1-2 sentences setting up the problem, in
 written article voice). Never reuse the spoken hook narration verbatim.
+If `running_example` is set (non-empty `label`) and the subtitle touches
+it, reuse its exact named objects/values -- never invent a different one
+for the same underlying idea.
 """
 
 
@@ -110,6 +125,7 @@ def synthesize_hero(plan: StoryPlan, narration_lead: Agent) -> HeroContent:
     payload = {
         "story_promise": plan.story_promise, "hook_promise": plan.hook.promise,
         "hook_tension": plan.hook.tension, "title_promise": plan.title.promise,
+        "running_example": plan.running_example.model_dump(),
     }
     return narration_lead.run(
         pass_id="H", mode="HERO", task_prompt=HERO_TASK_PROMPT,
@@ -119,19 +135,28 @@ def synthesize_hero(plan: StoryPlan, narration_lead: Agent) -> HeroContent:
 
 def synthesize_beat_visual(
     beat: StoryBeat, plan: StoryPlan, claims: list[Claim], narration_lead: Agent,
+    narration: list[SceneNarration] = (),
 ) -> BeatVisual:
     scenes = [s for s in plan.scene_plan if s.beat_id == beat.beat_id]
     beat_claims = [c for c in claims if c.source_unit in set(beat.source_unit_ids)]
     story_role = beat.archetype_role or "observations"
     allowed_components = components_for_story_role(story_role) or components_for_story_role("observations")
+    narration_text_by_scene = {n.scene_id: " ".join(s.text for s in n.sentences) for n in narration}
 
     payload = {
         "beat_purpose": beat.purpose, "forward_driver": beat.forward_driver,
         "learning_objective": beat.learning_objective,
-        "scenes": [{"scene_id": s.scene_id, "visual_description": s.visual_description} for s in scenes],
+        "scenes": [
+            {
+                "scene_id": s.scene_id, "visual_description": s.visual_description,
+                "narration_text": narration_text_by_scene.get(s.scene_id, ""),
+            }
+            for s in scenes
+        ],
         "allowed_components": allowed_components,
         "component_slots": {cid: component_slots(cid) for cid in allowed_components},
         "available_claims": [_claim_payload(c) for c in beat_claims],
+        "running_example": plan.running_example.model_dump(),
     }
     result = narration_lead.run(
         pass_id="H", mode="BEAT_VISUAL", task_prompt=TASK_PROMPT,

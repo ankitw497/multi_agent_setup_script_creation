@@ -2,8 +2,9 @@
 from editing.html_repair import beats_to_repair, repair_beat_visual, repair_hero
 from facts.models import Claim
 from html_synth.synthesizer import BeatVisual, HeroContent
+from narration.models import SceneNarration, SentenceNarration
 from planning.models import (
-    CTAContract, EndingContract, HookContract, ScenePlan, StoryBeat, StoryPlan, TitleContract,
+    CTAContract, EndingContract, HookContract, RunningExample, ScenePlan, StoryBeat, StoryPlan, TitleContract,
 )
 from verification.hard.render import RenderIssue
 
@@ -104,6 +105,25 @@ def test_repair_beat_visual_only_offers_claims_from_this_beats_own_source_units(
     assert sent_claim_ids == {"C1"}
 
 
+def test_repair_beat_visual_carries_running_example_and_narration_text():
+    """Phase 6 (BUG-5): a repair pass must have the same running_example/
+    narration_text context as a first H pass, or it could reintroduce the
+    exact drift a first pass was fixed to avoid."""
+    narration_lead = FakeNarrationLead(BeatVisual(beat_id="B01", heading="h", subheading="s", scenes=[]))
+    plan = make_plan()
+    plan.running_example = RunningExample(label="trophy/suitcase", values={"trophy": "9.6"})
+    narration = [SceneNarration(scene_id="s1", sentences=[
+        SentenceNarration(text="actual spoken line", sentence_type="technical_assertion"),
+    ])]
+
+    repair_beat_visual(plan.beats[0], plan, [], narration_lead, [], narration)
+
+    payload = narration_lead.calls[0]["payload"]
+    assert payload["running_example"]["label"] == "trophy/suitcase"
+    sent_scene = next(s for s in payload["scenes"] if s["scene_id"] == "s1")
+    assert sent_scene["narration_text"] == "actual spoken line"
+
+
 # ---- repair_hero ----
 
 def test_repair_hero_passes_render_failures_and_uses_repair_mode():
@@ -118,3 +138,13 @@ def test_repair_hero_passes_render_failures_and_uses_repair_mode():
     assert narration_lead.calls[0]["payload"]["render_failures"] == [
         {"scene_id": "hero", "code": "rendered_invisible_required_content", "detail": "hero title invisible"}
     ]
+
+
+def test_repair_hero_carries_running_example():
+    narration_lead = FakeNarrationLead(HeroContent(badge="b", title="t", subtitle="s"))
+    plan = make_plan()
+    plan.running_example = RunningExample(label="trophy/suitcase")
+
+    repair_hero(plan, narration_lead, [])
+
+    assert narration_lead.calls[0]["payload"]["running_example"]["label"] == "trophy/suitcase"

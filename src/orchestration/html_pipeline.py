@@ -48,7 +48,7 @@ def synthesize_video_html(
     plan: StoryPlan, narration: list[SceneNarration], claims: list[Claim], narration_lead: Agent,
 ) -> HtmlSynthesisResult:
     hero = synthesize_hero(plan, narration_lead)
-    beat_visuals = [synthesize_beat_visual(beat, plan, claims, narration_lead) for beat in plan.beats]
+    beat_visuals = [synthesize_beat_visual(beat, plan, claims, narration_lead, narration) for beat in plan.beats]
     video_script_html, page_html = synthesize_page(plan, hero, beat_visuals, narration)
     render_issues = (
         check_render_static(video_script_html, page_html, narration, claims)
@@ -79,7 +79,7 @@ def synthesize_and_repair_video_html(
     *, enable_rendered_checks: bool = True,
 ) -> HtmlSynthesisResult:
     hero = synthesize_hero(plan, narration_lead)
-    beat_visuals = [synthesize_beat_visual(beat, plan, claims, narration_lead) for beat in plan.beats]
+    beat_visuals = [synthesize_beat_visual(beat, plan, claims, narration_lead, narration) for beat in plan.beats]
     repairs_used = 0
     degraded_capabilities: list[str] = []
 
@@ -110,7 +110,9 @@ def synthesize_and_repair_video_html(
                 if beat is None:
                     continue
                 beat_failures = [i for i in failures if i.scene_id in scene_ids]
-                beat_visual_by_id[beat_id] = repair_beat_visual(beat, plan, claims, narration_lead, beat_failures)
+                beat_visual_by_id[beat_id] = repair_beat_visual(
+                    beat, plan, claims, narration_lead, beat_failures, narration,
+                )
                 applied = True
             beat_visuals = [beat_visual_by_id[b.beat_id] for b in plan.beats]
 

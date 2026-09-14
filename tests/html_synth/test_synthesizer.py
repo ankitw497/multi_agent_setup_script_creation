@@ -1,8 +1,9 @@
 """Tests for html_synth/synthesizer.py -- H (plan §12)."""
 from facts.models import Claim
 from html_synth.synthesizer import BeatVisual, HeroContent, synthesize_beat_visual, synthesize_hero
+from narration.models import SceneNarration, SentenceNarration
 from planning.models import (
-    CTAContract, EndingContract, HookContract, ScenePlan, StoryBeat, StoryPlan, TitleContract,
+    CTAContract, EndingContract, HookContract, RunningExample, ScenePlan, StoryBeat, StoryPlan, TitleContract,
 )
 
 
@@ -78,7 +79,65 @@ def test_synthesize_beat_visual_scopes_scenes_to_the_beat():
     agent = FakeAgent(BeatVisual(beat_id="B01", heading="h", scenes=[{"scene_id": "s1"}]))
     synthesize_beat_visual(make_plan().beats[0], make_plan(), [], agent)
     payload = agent.calls[0]["payload"]
-    assert payload["scenes"] == [{"scene_id": "s1", "visual_description": "score distribution widening"}]
+    assert payload["scenes"] == [{
+        "scene_id": "s1", "visual_description": "score distribution widening", "narration_text": "",
+    }]
+
+
+def test_running_example_reaches_the_hero_payload():
+    plan = make_plan()
+    plan.running_example = RunningExample(label="trophy/suitcase", values={"trophy": "9.6"})
+    agent = FakeAgent(HeroContent(badge="b", title="t", subtitle="s"))
+
+    synthesize_hero(plan, agent)
+
+    payload = agent.calls[0]["payload"]
+    assert payload["running_example"]["label"] == "trophy/suitcase"
+    assert payload["running_example"]["values"] == {"trophy": "9.6"}
+
+
+def test_running_example_reaches_the_beat_visual_payload():
+    plan = make_plan()
+    plan.running_example = RunningExample(label="trophy/suitcase", values={"trophy": "9.6"})
+    agent = FakeAgent(BeatVisual(beat_id="B01", heading="h", scenes=[{"scene_id": "s1"}]))
+
+    synthesize_beat_visual(plan.beats[0], plan, [], agent)
+
+    payload = agent.calls[0]["payload"]
+    assert payload["running_example"]["label"] == "trophy/suitcase"
+
+
+def test_scenes_own_actual_narration_text_reaches_the_beat_visual_payload():
+    """Phase 6 (BUG-5): H used to only see visual_description (written
+    before narration existed) -- confirms it now sees what was ACTUALLY
+    narrated for each scene."""
+    plan = make_plan()
+    narration = [SceneNarration(scene_id="s1", sentences=[
+        SentenceNarration(text="the score gap narrows here", sentence_type="technical_assertion"),
+    ])]
+    agent = FakeAgent(BeatVisual(beat_id="B01", heading="h", scenes=[{"scene_id": "s1"}]))
+
+    synthesize_beat_visual(plan.beats[0], plan, [], agent, narration)
+
+    sent_scene = agent.calls[0]["payload"]["scenes"][0]
+    assert sent_scene["narration_text"] == "the score gap narrows here"
+
+
+def test_no_narration_given_defaults_to_an_empty_narration_text():
+    agent = FakeAgent(BeatVisual(beat_id="B01", heading="h", scenes=[{"scene_id": "s1"}]))
+    synthesize_beat_visual(make_plan().beats[0], make_plan(), [], agent)
+    assert agent.calls[0]["payload"]["scenes"][0]["narration_text"] == ""
+
+
+def test_prompt_instructs_illustrating_what_was_actually_narrated():
+    from html_synth.synthesizer import TASK_PROMPT
+    assert "narration_text" in TASK_PROMPT
+    assert "running_example" in TASK_PROMPT
+
+
+def test_hero_prompt_instructs_reusing_the_running_example():
+    from html_synth.synthesizer import HERO_TASK_PROMPT
+    assert "running_example" in HERO_TASK_PROMPT
 
 
 def test_only_claims_from_the_beats_source_units_are_offered():

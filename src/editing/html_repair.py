@@ -18,6 +18,7 @@ from agents.base import Agent
 from facts.models import Claim
 from html_synth.synthesizer import BeatVisual, HeroContent
 from html_synth.component_library import component_slots, components_for_story_role
+from narration.models import SceneNarration
 from planning.models import StoryBeat, StoryPlan
 from verification.hard.render import RenderIssue
 
@@ -46,6 +47,12 @@ For each scene in this beat:
 
 Also write this beat's own `heading` and `subheading`, matching a first
 H pass's own rules (a real, specific `<h2>`, never generic).
+
+Each scene is also given `narration_text` (the actual spoken narration
+already written for it) and `running_example` -- reuse the same rules as
+a first H pass: illustrate what was actually narrated, and if this
+scene's content is the same running illustration, reuse its exact named
+objects/values verbatim rather than inventing a different one.
 """
 
 HERO_REPAIR_TASK_PROMPT = """\
@@ -54,7 +61,8 @@ The page's hero section failed one or more real rendered checks, listed in
 those specific failures (typically clipping or invisible content from an
 overlong title/subtitle) -- same rules as a first hero pass: related to
 the hook's promise, written as an article headline, never the spoken hook
-narration verbatim.
+narration verbatim. If `running_example` is set and the subtitle touches
+it, reuse its exact named objects/values.
 """
 
 
@@ -89,21 +97,29 @@ def beats_to_repair(plan: StoryPlan, flagged_scene_ids: set[str]) -> dict[str, l
 
 def repair_beat_visual(
     beat: StoryBeat, plan: StoryPlan, claims: list[Claim], narration_lead: Agent,
-    render_failures: list[RenderIssue],
+    render_failures: list[RenderIssue], narration: list[SceneNarration] = (),
 ) -> BeatVisual:
     scenes = [s for s in plan.scene_plan if s.beat_id == beat.beat_id]
     beat_claims = [c for c in claims if c.source_unit in set(beat.source_unit_ids)]
     story_role = beat.archetype_role or "observations"
     allowed_components = components_for_story_role(story_role) or components_for_story_role("observations")
+    narration_text_by_scene = {n.scene_id: " ".join(s.text for s in n.sentences) for n in narration}
 
     payload = {
         "beat_purpose": beat.purpose, "forward_driver": beat.forward_driver,
         "learning_objective": beat.learning_objective,
-        "scenes": [{"scene_id": s.scene_id, "visual_description": s.visual_description} for s in scenes],
+        "scenes": [
+            {
+                "scene_id": s.scene_id, "visual_description": s.visual_description,
+                "narration_text": narration_text_by_scene.get(s.scene_id, ""),
+            }
+            for s in scenes
+        ],
         "allowed_components": allowed_components,
         "component_slots": {cid: component_slots(cid) for cid in allowed_components},
         "available_claims": [_claim_payload(c) for c in beat_claims],
         "render_failures": [_render_failure_payload(i) for i in render_failures],
+        "running_example": plan.running_example.model_dump(),
     }
     return narration_lead.run(
         pass_id="H", mode="BEAT_VISUAL_REPAIR", task_prompt=REPAIR_TASK_PROMPT,
@@ -116,6 +132,7 @@ def repair_hero(plan: StoryPlan, narration_lead: Agent, render_failures: list[Re
         "story_promise": plan.story_promise, "hook_promise": plan.hook.promise,
         "hook_tension": plan.hook.tension, "title_promise": plan.title.promise,
         "render_failures": [_render_failure_payload(i) for i in render_failures],
+        "running_example": plan.running_example.model_dump(),
     }
     return narration_lead.run(
         pass_id="H", mode="HERO_REPAIR", task_prompt=HERO_REPAIR_TASK_PROMPT,
