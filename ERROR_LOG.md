@@ -1943,6 +1943,59 @@ Vertex integration gap, or real API-side rate limiting/instability).
 
 ---
 
+## ERR-054/055/056 — Three real bugs found live-verifying today's Phase 6/7 work on a fresh run
+
+**Date:** 2026-09-14 · **Status:** all fixed · **Component:** `verification/diagnostics/entity_consistency.py`, `verification/hard/render.py`, `html_synth/synthesizer.py`
+
+A freshly-launched gpt-4o run (`video-01-attention-phase6-7-verify/runs/v02`, launched only
+after all Phase 6/7 commits landed, to avoid the stale-process artifact noted separately)
+surfaced three real, distinct issues in the SAME diagnostic/repair machinery this session had
+just built or fixed.
+
+**ERR-054 -- entity_consistency false-positive flood.** The real plan's `running_example.values`
+used abstract slot labels as dict keys (`"pronoun"`, `"noun_1"`, `"noun_2"`) whose VALUES were
+the actual concrete quoted words every scene correctly reused (`"'it'"`, `"'cat'"`,
+`"'stairs'"`). `check_running_example_entity_consistency` only ever locked the dict KEYS as
+allowed entities, so it flagged 17 of the video's scenes as inventing content -- when they were
+all correctly reusing the locked example, just via its values rather than its keys. Fixed: both
+the keys and the (quote-stripped) values now count as locked entities.
+
+**ERR-055 -- `check_component_slots_filled` missed entirely-empty nested items.** ERR-052's
+template-level fix (blank slots render nothing instead of an empty div) exposed a different
+shape of the same underlying problem: a `grid_2`/`grid_3` item that is a completely empty dict
+(or has every key blank) now renders as a totally empty `<div class="card"></div>` wrapper with
+nothing inside at all. The hard check's field-by-field scan only ever flagged a key that was
+actually PRESENT in the item, so a fully empty `{}` slipped through untouched -- confirmed on
+the same real run: 6 empty card wrappers. Fixed: flags an item with zero non-blank `card` slots
+as `item_entirely_empty`.
+
+**ERR-056 -- H's own prompt wording discouraged using components at all.** User-reported after
+comparing runs: the new run had noticeably fewer computation/diagram blocks than an earlier
+one. Confirmed by direct component-count comparison on the same real source: **6 diagram-card +
+3 math-block -> 0 of either**, while simpler components (`card`, `step_list`) were unaffected.
+Root cause: ERR-049's own fix phrased the completeness requirement as *"a component with even
+one slot left blank... is worse than not choosing a component at all"* -- language that reads
+as "the safe default is skip it," and Sonnet (H) responded exactly as instructed, avoiding the
+more effortful multi-slot components (`diagram_card`, `math_block`) it would otherwise have
+used for this source's obviously diagrammatic/mathematical content. Fixed: reworded to require
+completeness ("fill in EVERY slot... this means filling every slot in completely, not avoiding
+components") without implying components themselves are risky.
+
+**Lesson (adds to ERR-052's own):** a prompt instruction's SIDE EFFECTS on unrelated behavior
+(here: overall component richness, not just slot completeness) need the same live-verify
+scrutiny as the defect it was meant to fix -- comparing before/after content on the same real
+source caught this in a way no unit test could have.
+
+**Tests:** locked entities include `running_example` VALUES not just keys; a completely-empty
+grid item is flagged, a partial-but-non-empty one isn't; a regression guard asserting the
+discouraging phrase is gone and `math_block`/`diagram_card` are still named as valid choices.
+Full suite: 904 passed, 16 deselected.
+
+**Not yet live-verified**: needs a fresh run to confirm diagram/math component usage returns to
+a level comparable with pre-regression runs, and that entity_consistency no longer over-fires.
+
+---
+
 ## Open items (not yet bugs, flagged for future attention)
 
 - **A2b's per-beat expansion doesn't always self-track its own new concepts within one
