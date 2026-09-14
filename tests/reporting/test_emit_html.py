@@ -3,7 +3,7 @@ import json
 
 from orchestration.html_pipeline import HtmlSynthesisResult
 from reporting.emit_html import emit_html_deliverables
-from review.models import CritiqueIssue
+from review.models import CritiqueIssue, DiagnosticResult
 from verification.hard.render import RenderIssue
 
 
@@ -46,3 +46,26 @@ def test_visual_critique_issues_are_captured_in_the_report(tmp_path):
     report = json.loads((out / "render_report.json").read_text())
     assert report["visual_critique_issues"][0]["category"] == "repetition"
     assert report["visual_critique_issues"][0]["scene_ids"] == ["s1"]
+
+
+def test_entity_consistency_diagnostic_is_captured_in_the_report(tmp_path):
+    """Phase 6 item #20: the cross-artifact entity-consistency diagnostic
+    must reach a real, visible home too, same as visual_critique_issues."""
+    diagnostic = DiagnosticResult(
+        dimension="cross_artifact.running_example_entities", band="AMBER",
+        evidence="scene s1 quotes 'dog' which matches neither the locked example nor any claim",
+    )
+    result = HtmlSynthesisResult(
+        video_script_html="<html></html>", page_html="<html></html>", hero=None, beat_visuals=[],
+        entity_consistency=diagnostic,
+    )
+    out = emit_html_deliverables(result, tmp_path / "html")
+    report = json.loads((out / "render_report.json").read_text())
+    assert report["entity_consistency"]["band"] == "AMBER"
+
+
+def test_entity_consistency_defaults_to_none_when_not_set(tmp_path):
+    result = HtmlSynthesisResult(video_script_html="<html></html>", page_html="<html></html>", hero=None, beat_visuals=[])
+    out = emit_html_deliverables(result, tmp_path / "html")
+    report = json.loads((out / "render_report.json").read_text())
+    assert report["entity_consistency"] is None

@@ -24,6 +24,10 @@ def emit_html_deliverables(result: HtmlSynthesisResult, target_dir: str | Path) 
         # used to be silently discarded once the structural ones were
         # pulled out (never surfaced anywhere, not even here).
         "visual_critique_issues": [i.model_dump() for i in result.visual_critique_issues],
+        # AMBER-banded diagnostic, never a hard gate (Phase 6 item #20) --
+        # None only if a caller constructed HtmlSynthesisResult without going
+        # through synthesize_video_html()/synthesize_and_repair_video_html().
+        "entity_consistency": result.entity_consistency.model_dump() if result.entity_consistency else None,
     }, indent=2))
 
     return target_dir

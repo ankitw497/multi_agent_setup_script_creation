@@ -207,6 +207,27 @@ def test_playwright_unavailable_is_recorded_as_a_visible_degradation_and_skips_c
     assert not any(c["mode"] == "VISUAL_AUDITOR" for c in visual_auditor.calls)
 
 
+def test_entity_consistency_diagnostic_is_populated_on_the_result(monkeypatch):
+    """STORY_IMPROVEMENT_PLAN.md Phase 6 item #20: confirms
+    synthesize_and_repair_video_html() actually computes and attaches the
+    entity-consistency diagnostic, not just that the check function works
+    in isolation (already covered by test_entity_consistency.py)."""
+    from planning.models import RunningExample
+
+    _patch_static_clean(monkeypatch)
+    _block_playwright(monkeypatch)
+    agent = make_agent()
+    visual_auditor = FakeAgent({VisualCritique: []})
+
+    plan = make_plan()
+    plan.running_example = RunningExample(label="cat/stairs", values={"cat": "9.6"})
+
+    result = synthesize_and_repair_video_html(plan, make_narration(), [], agent, visual_auditor, make_budget())
+
+    assert result.entity_consistency is not None
+    assert result.entity_consistency.band == "GREEN"  # make_agent()'s screen_prose has no quoted entities at all
+
+
 def test_formula_stage_regression_is_a_real_static_issue_that_drives_a_repair(monkeypatch):
     """STORY_IMPROVEMENT_PLAN.md Phase 6 item 7: a scene claiming a
     registered formula stage whose rendered content is missing that

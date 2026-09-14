@@ -19,9 +19,10 @@ from html_synth.synthesizer import BeatVisual, HeroContent, synthesize_beat_visu
 from llm.budget import BudgetCounter
 from narration.models import SceneNarration
 from planning.models import StoryPlan
-from review.models import CritiqueIssue
+from review.models import CritiqueIssue, DiagnosticResult
 from review.visual_critic import critique_visuals, scene_payload
 from review.visual_sample import select_scenes_for_visual_audit
+from verification.diagnostics.entity_consistency import check_running_example_entity_consistency
 from verification.hard.formula_consistency import check_formula_stage_consistency
 from verification.hard.render import RenderIssue, check_render_content, check_render_static
 
@@ -42,6 +43,12 @@ class HtmlSynthesisResult:
     # computed and then silently discarded (never returned, never
     # reported anywhere) once the structural ones were pulled out.
     visual_critique_issues: list[CritiqueIssue] = field(default_factory=list)
+    # AMBER-banded, never a hard gate (Phase 6 item #20) -- a scene quoting an
+    # entity that matches neither the plan's locked running_example nor the
+    # beat's own claims is a candidate invented example (confirmed live: the
+    # dog/park/bone regression), not a confirmed defect -- regex entity
+    # extraction from prose isn't reliable enough to promote to a hard gate.
+    entity_consistency: DiagnosticResult | None = None
 
 
 def synthesize_video_html(
@@ -58,6 +65,7 @@ def synthesize_video_html(
     return HtmlSynthesisResult(
         video_script_html=video_script_html, page_html=page_html,
         hero=hero, beat_visuals=beat_visuals, render_issues=render_issues,
+        entity_consistency=check_running_example_entity_consistency(plan, beat_visuals, claims),
     )
 
 
@@ -200,4 +208,5 @@ def synthesize_and_repair_video_html(
         hero=hero, beat_visuals=beat_visuals, render_issues=render_issues,
         repairs_used=repairs_used, degraded_capabilities=degraded_capabilities,
         visual_critique_issues=visual_critique_issues,
+        entity_consistency=check_running_example_entity_consistency(plan, beat_visuals, claims),
     )
