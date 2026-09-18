@@ -3,10 +3,14 @@
 # target guides tiering/escalation, the warning logs and caps status at
 # PASS_WARN, the hard cap aborts (pre-flight) or stops-and-checkpoints (mid-run).
 
+# longform raised 2x (2026-09-15, matches llm/budget.py::DEFAULT_TIERS -- see that
+# module's own comment for the full reasoning): Phase 10's dense per-sentence C2b
+# verdicts + Phase 13's C4d cascade pushed a normal gpt-4o loop's real cost to
+# $1.0-$1.6, well past the original $1.00 hard cap.
 longform:
-  target_usd: 0.40
-  warning_usd: 0.60
-  hard_cap_usd: 1.00
+  target_usd: 0.80
+  warning_usd: 1.20
+  hard_cap_usd: 2.00
 
 short:
   target_usd: 0.08

@@ -60,15 +60,31 @@ tokens:
 # story role here; the H pass (html_synth/synthesizer.py) then picks a
 # specific component from that role's list per scene, matching visual_importance.
 story_roles:
-  hook: [hero, card]
+  # PIPELINE_AUDIT_2026-09-17.md finding #2: "hero" is declared below as "One per page,
+  # always the first section" and html_synth/assembler.py already renders exactly one,
+  # unconditionally, before any beat content -- offering it here let the H pass pick it
+  # AGAIN for an ordinary hook-beat scene, producing a real duplicate id="hero-story"
+  # that verification/hard/render.py::check_unique_ids catches but can never attribute to
+  # a scene_id, making it permanently unrepairable. A page-singleton component must never
+  # also be a per-scene choice -- "card" alone covers the hook role correctly.
+  hook: [card]
   contradiction: [callout_danger, grid_2]
   investigation: [step_list, grid_3]
   problem_fix: [step_list, callout_warn]
   mechanism: [card, diagram_card, math_block]
-  comparison: [grid_2, metric_table, card]
-  derivation: [math_block, card]
+  # STORY_IMPROVEMENT_PLAN.md Phase 27 item 1: diagram_card added to comparison/derivation/
+  # payoff -- confirmed live (v05) that H picks diagram_card 83% of the time where it's
+  # actually offered (5/6 mechanism-role scenes), so the real gap was never H avoiding it;
+  # most mechanism-SHAPED content in a real video gets tagged one of these other roles
+  # (e.g. a beat landing the assembled equation is legitimately "payoff", not "mechanism",
+  # but a multi-stage pipeline is still exactly what diagram_card is for) and had no access
+  # to it at all. Real missed example: a payoff-role scene narrating "QK^T matches... divide
+  # by sqrt(d_k)... softmax... multiply by V" rendered as a plain card solely because
+  # payoff's allowlist excluded diagrams.
+  comparison: [grid_2, metric_table, card, diagram_card]
+  derivation: [math_block, card, diagram_card]
   observations: [grid_3, defbox]
-  payoff: [callout_success, card]
+  payoff: [callout_success, card, diagram_card]
 
 components:
   hero:

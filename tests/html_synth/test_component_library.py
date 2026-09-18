@@ -208,13 +208,32 @@ def test_unknown_component_id_raises():
 
 
 def test_components_for_story_role_matches_the_plan_table():
-    assert set(components_for_story_role("hook")) == {"hero", "card"}
     assert "math_block" in components_for_story_role("mechanism")
     assert "math_block" in components_for_story_role("derivation")
 
 
+def test_hero_is_never_offered_as_a_per_scene_choice():
+    """PIPELINE_AUDIT_2026-09-17.md finding #2: "hero" is page-singleton (assembler.py
+    already renders exactly one, unconditionally, before any beat content) -- offering it
+    as a per-scene "hook" role choice let H pick it again, producing a real duplicate
+    id="hero-story" that check_unique_ids can never attribute to a repairable scene_id."""
+    assert "hero" not in components_for_story_role("hook")
+    assert "card" in components_for_story_role("hook")
+
+
 def test_unknown_story_role_returns_empty_not_a_crash():
     assert components_for_story_role("not_a_real_role") == []
+
+
+def test_diagram_card_is_available_to_comparison_derivation_and_payoff_too():
+    """STORY_IMPROVEMENT_PLAN.md Phase 27 item 1, confirmed live (v05): H picks diagram_card
+    83% of the time where it's actually offered (mechanism role), but most mechanism-shaped
+    content in a real video gets tagged payoff/comparison/derivation instead of mechanism,
+    and those roles never had diagram_card in their allowlist at all -- a real payoff-role
+    scene narrating a 4-stage pipeline rendered as a plain card purely because of this."""
+    for role in ("comparison", "derivation", "payoff"):
+        assert "diagram_card" in components_for_story_role(role), f"{role!r} still excludes diagram_card"
+        assert "card" in components_for_story_role(role)  # the plain option must still remain available
 
 
 def test_all_component_ids_covers_every_role_in_the_plan_table():

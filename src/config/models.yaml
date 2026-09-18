@@ -20,6 +20,9 @@ subscription_lane:
 
 paid_api_lane:
   openai_story_strong:
+    # 2026-09-16: no longer the DEFAULT `story_lead` "strong" tier alias (that's now
+    # openai_story_strong_gpt56 below) -- kept fully configured here as the rollback
+    # option (`--story-lead-alias openai_story_strong`), not removed.
     resolved: "gpt-4o"
     max_tokens: 4000        # moved here from story_planner.py's own hardcoded A2 override
                             # (2026-09-11) so a different story_lead alias (e.g. the
@@ -61,14 +64,22 @@ paid_api_lane:
                             # implicit default" discipline (plan Appendix E #8).
     max_tokens: 10000       # raised from the inherited 4000 (see reasoning_effort comment
                             # above) specifically so reasoning + the actual StoryStructure
-                            # JSON can both fit -- not yet confirmed sufficient by a live
-                            # run; if this alias is adopted, revisit whether 10000 is
-                            # enough headroom or still needs raising further.
+                            # JSON can both fit -- confirmed sufficient across the two real
+                            # comparison runs on record (model-b/model-c, $0.39-$0.67 total
+                            # story_lead spend, well under the longform loop's own $2.00 hard
+                            # cap), but still worth watching on the next live run now that
+                            # it's the default rather than an opt-in comparison.
     verified: true          # confirmed 2026-09-11: reasoning-capable (litellm.supports_
-                            # reasoning() is True, unlike gpt-4o). Still NOT yet the
-                            # default openai_story_strong alias -- a live A/B comparison
-                            # (STORY_IMPROVEMENT_PLAN.md Phase 4), not adopted pipeline-wide
-                            # until it demonstrably helps.
+                            # reasoning() is True, unlike gpt-4o).
+                            # 2026-09-16 (explicit user decision): now the DEFAULT `story_lead`
+                            # "strong" tier alias (agents/story_lead.py::make_story_lead). This
+                            # OVERRIDES Phase 4's own completed comparison (STORY_IMPROVEMENT_
+                            # PLAN.md), which found gpt-5.6-sol produced a structurally LESS
+                            # coherent plan (2 genuine coherence hard failures gpt-4o didn't
+                            # have) for 65% MORE cost, and explicitly said not to promote it.
+                            # The user was shown that finding directly and chose to proceed.
+                            # `openai_story_strong` (gpt-4o) remains fully configured below for
+                            # rollback via `--story-lead-alias openai_story_strong`.
   gemini_review_strong:
     resolved: "gemini/gemini-3.1-pro-preview"
     verified: true            # confirmed 2026-09-10, $0.001128 for a 6 in/93 out call
@@ -82,6 +93,19 @@ paid_api_lane:
                               # every C1/C2a/C2b call in the live e2e run ($0.22 for 11
                               # calls). "low" keeps judgement quality for adversarial
                               # review while capping reasoning-token spend.
+    max_tokens: 12000         # PIPELINE_AUDIT_2026-09-17.md finding #9: ERR-079/ERR-081
+                              # found this alias's own C2a call truncating mid-response at
+                              # the backend's bare 4096 default once web search made each
+                              # verdict far more verbose, and patched it with a per-call
+                              # override scoped ONLY to that one call site (facts/verify.py).
+                              # C1 (review/story_critic.py) and C2b's own escalation calls
+                              # go through this SAME alias with no override at all -- still
+                              # exposed to the identical truncation risk. Set here instead,
+                              # at the alias level, so every call through this tier gets the
+                              # same protection (matches openai_story_strong_gpt56's own
+                              # precedent: a reasoning-capable model's max_tokens is a
+                              # combined budget over hidden reasoning + visible output, not
+                              # just the JSON, so 4096 was never a safe default for it).
   gemini_review_flash:
     resolved: "gemini/gemini-3.6-flash"
     verified: true            # confirmed 2026-09-10, $0.00000825 for a 6 in/1 out call

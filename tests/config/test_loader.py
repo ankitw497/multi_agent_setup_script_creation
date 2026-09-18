@@ -30,3 +30,15 @@ def test_resolve_model_for_the_reasoning_capable_gpt56_alias():
     assert resolved == "gpt-5.6-sol"
     assert reasoning_effort == "medium"
     assert max_tokens == 10000
+
+
+def test_resolve_model_for_gemini_review_strong_has_a_max_tokens_floor():
+    """PIPELINE_AUDIT_2026-09-17.md finding #9: ERR-079/ERR-081 found this alias's own C2a
+    call truncating at the backend's bare 4096 default once web search made verdicts more
+    verbose, and patched it with a per-call override scoped ONLY to that call site
+    (facts/verify.py). C1 and C2b's own escalation calls go through this SAME alias with no
+    override at all -- every call through this tier now gets the same protection instead."""
+    resolved, reasoning_effort, max_tokens = resolve_model("paid_api_lane", "gemini_review_strong")
+    assert resolved == "gemini/gemini-3.1-pro-preview"
+    assert reasoning_effort == "low"
+    assert max_tokens == 12000
