@@ -62,6 +62,17 @@ def test_calls_hero_once_and_one_beat_visual_per_beat():
     assert len(beat_calls) == 2
 
 
+def test_visual_variety_diagnostic_reaches_the_result():
+    """PIPELINE_AUDIT_2026-09-17.md (visual monotony): confirms the wiring, not the
+    diagnostic's own logic (covered in tests/verification/diagnostics/test_visual_variety.py)
+    -- this fixture's own 2 different components (implicit no-component scenes) must not
+    crash, and the field must actually be populated, not left at its default None."""
+    agent = make_agent()
+    result = synthesize_video_html(make_plan(), make_narration(), [], agent)
+    assert result.visual_variety is not None
+    assert result.visual_variety.dimension == "render.consecutive_component_repetition"
+
+
 def test_produces_a_structurally_clean_result_on_well_formed_input():
     """This fixture is deliberately minimal (2 tiny scenes) -- it proves
     wiring correctness (valid DOM, hash matches, traceability), not the

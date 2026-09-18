@@ -9,5 +9,5 @@ from __future__ import annotations
 from llm.usage import CostReport, UsageLedger
 
 
-def build_cost_report(run_id: str, ledger: UsageLedger) -> CostReport:
-    return CostReport.from_ledger(run_id, ledger)
+def build_cost_report(run_id: str, ledger: UsageLedger, carried_over_microusd: int = 0) -> CostReport:
+    return CostReport.from_ledger(run_id, ledger, carried_over_microusd=carried_over_microusd)

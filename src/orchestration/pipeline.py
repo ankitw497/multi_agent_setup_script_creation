@@ -11,6 +11,7 @@ where the bounded revision cycle actually lives.
 from __future__ import annotations
 
 import json
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -23,19 +24,25 @@ from llm.budget import BudgetCounter
 from narration.generator import generate_narration
 from narration.models import SceneNarration
 from planning.archetypes import ALL_ARCHETYPES
+from verification.hard.text_overlap import DEFAULT_OVERLAP_THRESHOLD
+from verification.hard.text_overlap import overlap as _text_overlap
 from planning.models import ReplanFeedback, SourceBrief, StoryPlan
 from planning.story_planner import plan_story
 from review.aggregator import aggregate_review
 from review.claim_mapper import map_claims
 from review.cold_hook_critic import critique_cold_hook
-from review.cold_viewer_critic import critique_cold_viewer
-from review.grounding_verifier import verify_grounding
+from review.cold_viewer_critic import critique_cold_viewer, critique_continuing_viewer
+from review.grounding_verifier import apply_grounding_metadata_repairs, grounding_verdicts_to_issues, verify_grounding
 from review.models import CritiqueIssue, ReviewBundle
 from review.story_critic import critique_story
 from review.style_critic import critique_style
+from verification.diagnostics.compactness import check_sentence_density
 from verification.diagnostics.cta import check_cta_position
-from verification.diagnostics.pacing import check_beat_airtime_outliers, check_hook_tension_pacing
-from verification.diagnostics.retention import check_novelty_coverage, check_retention
+from verification.diagnostics.pacing import (
+    check_beat_airtime_outliers, check_hook_tension_pacing, check_payoff_beat_ratio,
+    check_recap_bloat, check_time_to_primary_payoff,
+)
+from verification.diagnostics.retention import check_novelty_coverage, check_retention, check_title_scope_coverage
 from verification.diagnostics.voice import check_voice
 from verification.hard.grounding import check_grounding_policy, check_numeric_fidelity
 from verification.hard.structure import check_structure
@@ -43,7 +50,16 @@ from verification.hard.structure import check_structure
 from .policy_gate import FinalStatus, compute_final_status
 from .routing import RevisionAction, decide_action
 
-MAX_STORY_REPLANS = 1
+# MAX_STORY_REPLANS raised 1 -> 2 (2026-09-15): confirmed live -- a real run's ONE replan
+# attempt also failed to fully fix a structural coverage gap (`required_source_unit_uncovered`
+# can ONLY be fixed by a replan; targeted_rewrite only rewrites existing scenes, never adds
+# one), and with no second chance the pipeline fell through to FAIL and still rendered/spent
+# on H/HV and shorts for a video missing whole sections of its source (STORY_IMPROVEMENT_PLAN.md).
+# One extra attempt doesn't guarantee success against a systematically bad A2, but it's a real,
+# cheap second chance against what's likely ordinary LLM stochasticity, not a structural flaw
+# in A2 itself (17/18 runs since this project's Sep-11 baseline had complete coverage on the
+# very first plan).
+MAX_STORY_REPLANS = 2
 MAX_MAJOR_REVISIONS = 2
 
 
@@ -51,8 +67,11 @@ MAX_MAJOR_REVISIONS = 2
 class PipelineAgents:
     story_lead: Agent
     narration_lead: Agent
-    review_lead: Agent  # strong tier: C1, C2b -- correctness-critical, no cheap tier (plan §2.2)
-    cm_agent: Agent  # flash tier: CM is mechanical/cheap by design (plan §2.2)
+    # strong tier: C1 (unconditional, plan §2.2) -- C2b's own unconditional-strong default was
+    # replaced 2026-09-16 (STORY_IMPROVEMENT_PLAN.md Phase 22) with flash-first + escalate-on-
+    # flag; `review_lead` is now C2b's ESCALATION partner, not its primary pass.
+    review_lead: Agent
+    cm_agent: Agent  # flash tier: CM is mechanical/cheap by design (plan §2.2); also C2b's new primary pass
     worker: Agent  # Haiku, subscription/free -- first tier of the C4a/C4s cold-hook cascade
 
 
@@ -96,8 +115,22 @@ def _run_review_block(
     structural = check_structure(plan, target_duration_seconds, all_source_unit_ids, source_brief)
 
     narration = map_claims(narration, claims, agents.cm_agent, budget)
+    # C2b's dense per-sentence verdicts (STORY_IMPROVEMENT_PLAN.md Phase 10) run BEFORE the
+    # deterministic grounding checks below, so a CM false negative C2b itself disproves
+    # (apply_grounding_metadata_repairs) is corrected in the narration first -- not left to
+    # trip check_grounding_policy as a false "ungrounded_factual_sentence" hard failure.
+    #
+    # 2026-09-16, STORY_IMPROVEMENT_PLAN.md Phase 22 (Gemini cost reduction, escalation-gate
+    # step 1 of 6): flash (`cm_agent`) is now the primary pass over every sentence, escalating
+    # only a flagged verdict (unsupported / qualifier dropped / scope broadened / a named
+    # violation code -- see `_needs_escalation`) to the strong tier for a second opinion.
+    # Confirmed live (this session's own cost audit) that C2b's unconditional strong-tier
+    # default was 83% of all Gemini spend project-wide -- this keeps the strong tier as a real
+    # second opinion on exactly the sentences that need one, never removing it outright.
+    c2b_verdicts = verify_grounding(narration, claims, agents.cm_agent, budget, escalate_to=agents.review_lead)
+    narration = apply_grounding_metadata_repairs(narration, c2b_verdicts)
     grounding_violations = check_grounding_policy(narration, claims) + check_numeric_fidelity(narration, claims)
-    grounding_issues = verify_grounding(narration, claims, agents.review_lead, budget)
+    grounding_issues = grounding_verdicts_to_issues(narration, c2b_verdicts)
     story_issues = critique_story(plan, narration, agents.review_lead, budget, source_units)
 
     # C4 cold-hook critic (plan §8/§20.7): built for shorts only until now
@@ -120,12 +153,23 @@ def _run_review_block(
     narration_text_by_scene_id = {n.scene_id: " ".join(s.text for s in n.sentences) for n in narration}
     cold_viewer_issues = critique_cold_viewer(plan, narration_text_by_scene_id, agents.worker, agents.review_lead, budget)
 
+    # C4d continuing viewer (STORY_IMPROVEMENT_PLAN.md Phase 13): alongside, never replacing,
+    # C4c above -- a different, complementary question at the same checkpoints (does this
+    # feel caused by what came before, given the viewer HAS been following continuously,
+    # rather than pretending they just landed here).
+    continuing_viewer_issues = critique_continuing_viewer(
+        plan, narration_text_by_scene_id, agents.worker, agents.review_lead, budget,
+    )
+
     diagnostics = check_retention(plan) + [
         check_cta_position(plan), check_hook_tension_pacing(plan), check_novelty_coverage(plan, source_brief),
-        check_beat_airtime_outliers(plan, claims),
+        check_title_scope_coverage(plan),
+        check_beat_airtime_outliers(plan, claims), check_time_to_primary_payoff(plan, target_duration_seconds),
+        check_payoff_beat_ratio(plan), check_recap_bloat(plan),
     ]
     voice_diagnostic = check_voice(narration)
     diagnostics.append(voice_diagnostic)
+    diagnostics.append(check_sentence_density(narration))
 
     style_issues: list = []
     if voice_diagnostic.band in ("AMBER", "RED"):
@@ -138,7 +182,10 @@ def _run_review_block(
         run_id="pipeline",
         structural_issues=structural,
         grounding_violations=grounding_violations,
-        critique_issues=grounding_issues + story_issues + cold_hook_issues + cold_viewer_issues + style_issues,
+        critique_issues=(
+            grounding_issues + story_issues + cold_hook_issues + cold_viewer_issues
+            + continuing_viewer_issues + style_issues
+        ),
         diagnostics=diagnostics,
     )
     return narration, bundle
@@ -155,16 +202,30 @@ def _legitimately_dismissed_issue_ids(
     would make that independence decorative.
 
     A dismissal is only honored when: the issue is a `critical`/`archetype`
-    finding, its `problem` text names a specific archetype, AND that
-    archetype is already a key in `plan.rejected_archetypes` (i.e. A2's own
-    reasoning already explicitly considered and gave a real reason to rule
-    it out). This is a narrow, mechanical, imperfect proxy (word matching,
-    not real semantic judgement) for "this isn't new evidence" -- any
-    archetype named that ISN'T already in `rejected_archetypes` fails this
-    check, so a genuinely novel critique can never be waved away this way.
+    finding, its `problem` text names a specific archetype, that archetype
+    is already a key in `plan.rejected_archetypes` (i.e. A2's own reasoning
+    already explicitly considered and gave a real reason to rule it out),
+    AND (STORY_IMPROVEMENT_PLAN.md Phase 13) A3's own dismissal `reason`
+    substantively engages with what A2 actually said about it.
+
+    This last condition is Phase 13's tightening of ERR-022/025's open
+    question. The original version treated ANY critique naming an
+    already-rejected archetype as automatically dismissable, with no check
+    on whether A3's dismissal was a real engagement with A2's own
+    reasoning or just a rubber stamp ("no new evidence") -- too blunt per
+    the doc's own framing: a different, well-argued INTERPRETATION of the
+    same cited evidence is a legitimate disagreement, not noise, and a
+    crude archetype-name keyword match can't tell the two apart. The
+    word-overlap check (same mechanism `verification/hard/text_overlap.py`
+    already uses for the promise-chain gate) is still a mechanical proxy,
+    not real semantic judgement -- but it now requires A3's `reason` to
+    actually reference the substance of what A2 said, not just the
+    archetype's name, before honoring a dismissal. A genuinely new
+    alternative (never in `rejected_archetypes` at all) is still never
+    dismissable this way, regardless of what A3's reason says.
     """
     issues_by_id = {i.issue_id: i for i in issues}
-    considered = {a.lower() for a in plan.rejected_archetypes}
+    rejection_reason_by_archetype = {a.lower(): reason for a, reason in plan.rejected_archetypes.items()}
     legitimate: set[str] = set()
     for dismissed in revision_plan.dismissed_issues:
         issue = issues_by_id.get(dismissed.issue_id)
@@ -174,7 +235,12 @@ def _legitimately_dismissed_issue_ids(
         # ("not a build arc") -- exclude it so only a proposed ALTERNATIVE
         # has to already be in rejected_archetypes to count as "not new".
         mentioned = {a for a in ALL_ARCHETYPES if a in issue.problem.lower()} - {plan.archetype}
-        if mentioned and mentioned.issubset(considered):
+        if not mentioned or not mentioned.issubset(rejection_reason_by_archetype):
+            continue
+        if any(
+            _text_overlap(dismissed.reason, rejection_reason_by_archetype[alt]) >= DEFAULT_OVERLAP_THRESHOLD
+            for alt in mentioned
+        ):
             legitimate.add(dismissed.issue_id)
     return legitimate
 
@@ -183,11 +249,39 @@ def _remove_dismissed_hard_failures(hard_failures: list[str], dismissed_issue_id
     return [f for f in hard_failures if not any(f"[{iid}]" in f for iid in dismissed_issue_ids)]
 
 
-def _badness(bundle: ReviewBundle) -> tuple[int, int]:
-    """Lower is better. Hard failures dominate the comparison (a rewrite
-    that clears one hard failure but adds two minor issues is still real
-    progress) -- STORY_IMPROVEMENT_PLAN.md Phase 8.5."""
-    return (len(bundle.hard_failures), len(bundle.issues))
+def _badness(bundle: ReviewBundle) -> tuple[int, int, int, int, int, int]:
+    """Lower is better, compared lexicographically. Hard failures dominate the comparison
+    (a rewrite that clears one hard failure but adds two minor issues is still real
+    progress) -- STORY_IMPROVEMENT_PLAN.md Phase 8.5. Phase 13 extends the original bare
+    (hard_failures, issue_count) pair with a full severity/diagnostic-band ordering: that
+    pair already handled a critical-vs-minor tradeoff correctly (`aggregate_review` promotes
+    every critical issue into `hard_failures` too), but couldn't tell a real improvement --
+    3 major issues becoming 0 major + 5 minor -- from a regression, since a flat issue count
+    reads 5 as worse than 3."""
+    severity_counts = Counter(i.severity for i in bundle.issues)
+    band_counts = Counter(d.band for d in bundle.diagnostics)
+    return (
+        len(bundle.hard_failures),
+        severity_counts["critical"], severity_counts["major"], severity_counts["minor"],
+        band_counts["RED"], band_counts["AMBER"],
+    )
+
+
+def _red_dimensions(bundle: ReviewBundle) -> set[str]:
+    return {d.dimension for d in bundle.diagnostics if d.band == "RED"}
+
+
+def _major_issue_count(bundle: ReviewBundle) -> int:
+    """STORY_IMPROVEMENT_PLAN.md Phase 27 item 3: `compute_final_status` never reads
+    `bundle.issues` at all -- confirmed by direct code read. A `major`-severity issue
+    (repetition, pacing, anything C1/C5 find) can never force a fix on its own, no matter
+    how many exist; it's recorded and the run passes clean regardless. Measurement only,
+    matching this project's own "measure before gate" precedent (`check_bridge_selection_
+    defaulted`, `check_payoff_beat_ratio`, etc.) -- NOT wired into the escalation policy
+    itself. A real policy change (should N+ majors also force REVISE, mirroring the
+    existing "3+ REDs" rule) is a genuine behavior/cost tradeoff that needs more evidence
+    than one run's own count before deciding, not a number this function should act on."""
+    return sum(1 for i in bundle.issues if i.severity == "major")
 
 
 def run_story_and_narration_loop(
@@ -233,6 +327,18 @@ def run_story_and_narration_loop(
     # reason, so "reverting" to the pre-replan state would just
     # reintroduce the defect that motivated it.
     pending_rewrite_baseline: tuple[list[SceneNarration], ReviewBundle] | None = None
+    # PIPELINE_AUDIT_2026-09-17.md finding #6: `compute_final_status`'s own `red_survived_
+    # a_round` parameter (plan §10: "3+ REDs, OR a RED that survived a prior revision
+    # round") was fully implemented but never populated from any real call site -- half the
+    # documented escalation policy was dead in production. Design decision: "survived a
+    # round" means the SAME diagnostic dimension was RED immediately before a
+    # TARGETED_REWRITE attempt and is STILL RED once that attempt's review completes
+    # (whether the rewrite was kept or reverted for being worse -- a reverted rewrite
+    # trivially still carries the baseline's own REDs, which is the correct read: nothing
+    # was actually fixed). Deliberately scoped to one rewrite cycle at a time, same
+    # lifecycle as `pending_rewrite_baseline` right above -- a REPLAN starts the story over,
+    # so a RED from before it is a different plan's problem, not a "survived" one.
+    red_dimensions_before_rewrite: set[str] | None = None
 
     while True:
         narration, bundle = _run_review_block(
@@ -252,17 +358,23 @@ def run_story_and_narration_loop(
                 narration, bundle = baseline_narration, baseline_bundle
             pending_rewrite_baseline = None
 
+        survived = (red_dimensions_before_rewrite or set()) & _red_dimensions(bundle)
+        red_survived_a_round = bool(survived)
+        if red_survived_a_round:
+            log.append(f"a RED diagnostic survived a targeted-rewrite round unchanged: {sorted(survived)}")
+        red_dimensions_before_rewrite = None
+
         replan_budget_remaining = story_replans_used < MAX_STORY_REPLANS
         revision_budget_remaining = major_revisions_used < MAX_MAJOR_REVISIONS
         any_budget_remaining = replan_budget_remaining or revision_budget_remaining
 
         status = compute_final_status(
             hard_failures=bundle.hard_failures, diagnostics=bundle.diagnostics,
-            revision_budget_remaining=any_budget_remaining,
+            revision_budget_remaining=any_budget_remaining, red_survived_a_round=red_survived_a_round,
         )
 
         if status not in ("REVISE",):
-            log.append(f"final status: {status}")
+            log.append(f"final status: {status} ({_major_issue_count(bundle)} major issue(s) uncorrected)")
             return PipelineResult(plan, narration, bundle, status, story_replans_used, major_revisions_used, log)
 
         # status == REVISE: ask A3 what to do about it.
@@ -289,10 +401,10 @@ def run_story_and_narration_loop(
                 )
                 status = compute_final_status(
                     hard_failures=bundle.hard_failures, diagnostics=bundle.diagnostics,
-                    revision_budget_remaining=any_budget_remaining,
+                    revision_budget_remaining=any_budget_remaining, red_survived_a_round=red_survived_a_round,
                 )
                 if status not in ("REVISE",):
-                    log.append(f"final status after dismissal: {status}")
+                    log.append(f"final status after dismissal: {status} ({_major_issue_count(bundle)} major issue(s) uncorrected)")
                     return PipelineResult(
                         plan, narration, bundle, status, story_replans_used, major_revisions_used, log,
                     )
@@ -302,7 +414,7 @@ def run_story_and_narration_loop(
 
         if action == RevisionAction.REPLAN:
             if not replan_budget_remaining:
-                log.append("replan budget exhausted -> FAIL")
+                log.append(f"replan budget exhausted -> FAIL ({_major_issue_count(bundle)} major issue(s) uncorrected)")
                 return PipelineResult(plan, narration, bundle, "FAIL", story_replans_used, major_revisions_used, log)
             story_replans_used += 1
             feedback = ReplanFeedback(
@@ -321,15 +433,20 @@ def run_story_and_narration_loop(
             )
             narration = generate_narration(plan, claims, agents.narration_lead)
             log.append(f"A2 replan #{story_replans_used}: archetype={plan.archetype}")
+            red_dimensions_before_rewrite = None  # a new plan -- any prior RED is a different plan's problem
             continue
 
         if action == RevisionAction.TARGETED_REWRITE:
             if not revision_budget_remaining:
-                log.append("revision budget exhausted -> emit best candidate")
-                final = compute_final_status(bundle.hard_failures, bundle.diagnostics, revision_budget_remaining=False)
+                log.append(f"revision budget exhausted -> emit best candidate ({_major_issue_count(bundle)} major issue(s) uncorrected)")
+                final = compute_final_status(
+                    bundle.hard_failures, bundle.diagnostics, revision_budget_remaining=False,
+                    red_survived_a_round=red_survived_a_round,
+                )
                 return PipelineResult(plan, narration, bundle, final, story_replans_used, major_revisions_used, log)
             major_revisions_used += 1
             pending_rewrite_baseline = (narration, bundle)
+            red_dimensions_before_rewrite = _red_dimensions(bundle)
             narration = apply_targeted_rewrite(plan, narration, claims, revision_plan, agents.narration_lead)
             log.append(
                 f"targeted rewrite #{major_revisions_used}: {len(revision_plan.rewrite_beats)} beat(s), "
@@ -340,8 +457,11 @@ def run_story_and_narration_loop(
 
         # action == NONE but status was REVISE (diagnostics-only escalation, no
         # structural/grounding fix available) -- nothing more this loop can do.
-        log.append("no revision action available for a diagnostics-only escalation -> emit best candidate")
-        final = compute_final_status(bundle.hard_failures, bundle.diagnostics, revision_budget_remaining=False)
+        log.append(f"no revision action available for a diagnostics-only escalation -> emit best candidate ({_major_issue_count(bundle)} major issue(s) uncorrected)")
+        final = compute_final_status(
+            bundle.hard_failures, bundle.diagnostics, revision_budget_remaining=False,
+            red_survived_a_round=red_survived_a_round,
+        )
         return PipelineResult(plan, narration, bundle, final, story_replans_used, major_revisions_used, log)
 
 

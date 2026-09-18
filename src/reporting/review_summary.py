@@ -62,6 +62,11 @@ def render_review_summary(
     if cost_report is not None:
         lines.append("## Cost")
         lines.append(f"**Total billed:** ${cost_report.billed_usd:.4f}")
+        # PIPELINE_AUDIT_2026-09-17.md finding #5: `billed_usd` only ever reflects THIS run's
+        # own ledger -- a --resume'd run's earlier-attempt spend is carried separately.
+        if cost_report.carried_over_usd:
+            lines.append(f"**Carried over from a resumed run:** ${cost_report.carried_over_usd:.4f}")
+            lines.append(f"**True total (this run + carried over):** ${cost_report.billed_usd + cost_report.carried_over_usd:.4f}")
         if cost_report.by_agent:
             lines.append("")
             lines.append("| Agent | Calls | Billed USD |")

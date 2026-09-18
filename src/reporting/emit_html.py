@@ -24,10 +24,25 @@ def emit_html_deliverables(result: HtmlSynthesisResult, target_dir: str | Path) 
         # used to be silently discarded once the structural ones were
         # pulled out (never surfaced anywhere, not even here).
         "visual_critique_issues": [i.model_dump() for i in result.visual_critique_issues],
+        # 2026-09-17 fix: computed by critique_visual_sequence() (Phase 15,
+        # compositional-monotony check) but never actually written anywhere --
+        # the same "computed, never surfaced" gap already fixed twice for
+        # entity_consistency/visual_variety, confirmed live to have recurred a
+        # third time on this exact field.
+        "sequence_critique_issues": [i.model_dump() for i in result.sequence_critique_issues],
+        "late_narration_repairs_used": result.late_narration_repairs_used,
+        # 2026-09-17 (Round 2 sweep): previously reached only the console log line
+        # (run_pipeline.py), with no on-disk trace at all -- unlike every sibling repair
+        # count next to it here.
+        "repairs_used": result.repairs_used,
         # AMBER-banded diagnostic, never a hard gate (Phase 6 item #20) --
         # None only if a caller constructed HtmlSynthesisResult without going
         # through synthesize_video_html()/synthesize_and_repair_video_html().
         "entity_consistency": result.entity_consistency.model_dump() if result.entity_consistency else None,
+        # AMBER-banded diagnostic, never a hard gate (PIPELINE_AUDIT_2026-09-17.md, visual
+        # monotony) -- None only if a caller constructed HtmlSynthesisResult without going
+        # through synthesize_video_html()/synthesize_and_repair_video_html().
+        "visual_variety": result.visual_variety.model_dump() if result.visual_variety else None,
     }, indent=2))
 
     return target_dir

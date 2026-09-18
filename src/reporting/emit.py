@@ -31,13 +31,13 @@ from .script_md import render_script_md
 
 def emit_final_deliverables(
     result: PipelineResult, run_dir: str | Path, run_id: str, usage_ledger: UsageLedger,
-    degraded_capabilities: list[str] | None = None,
+    degraded_capabilities: list[str] | None = None, carried_over_microusd: int = 0,
 ) -> Path:
     final_dir = Path(run_dir) / "final"
     final_dir.mkdir(parents=True, exist_ok=True)
     degraded_capabilities = degraded_capabilities or []
 
-    cost_report = build_cost_report(run_id, usage_ledger)
+    cost_report = build_cost_report(run_id, usage_ledger, carried_over_microusd=carried_over_microusd)
     quality_report = build_quality_report(run_id, result)
     run_manifest = build_run_manifest(run_id, degraded_capabilities)
 

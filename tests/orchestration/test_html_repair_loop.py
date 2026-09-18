@@ -295,6 +295,31 @@ def test_c3_payload_carries_scene_function_must_not_repeat_and_running_example(m
     assert sent["running_example"]["label"] == "trophy/suitcase"
 
 
+def test_c3_payload_carries_required_qualifiers_from_the_scenes_own_beat(monkeypatch):
+    """STORY_IMPROVEMENT_PLAN.md Phase 10 follow-up: confirmed live gap (2026-09-15) -- a
+    qualifier C2b flags as dropped from spoken narration was independently, silently
+    reproduced in H's own screen prose too, and nothing checked that side at all. C3 now
+    gets the same beat-scoped required_qualifiers H itself receives."""
+    _patch_static_clean(monkeypatch)
+    monkeypatch.setattr("verification.hard.render_rendered.run_rendered_checks", lambda *a, **k: [])
+    monkeypatch.setattr(
+        "verification.hard.render_rendered.capture_scene_screenshots",
+        lambda *a, **k: {"s1": "data:image/jpeg;base64,AAAA"},
+    )
+    agent = make_agent()
+    visual_auditor = FakeAgent({VisualCritique: [VisualCritique(issues=[])]})
+    claims = [Claim(
+        claim_id="C1", source_unit="u1", claim="reaching forward works", type="mechanism",
+        required_qualifiers=["only for unmasked/bidirectional attention"],
+    )]
+
+    synthesize_and_repair_video_html(make_plan(), make_narration(), claims, agent, visual_auditor, make_budget())
+
+    c3_call = next(c for c in visual_auditor.calls if c["mode"] == "VISUAL_AUDITOR")
+    sent = next(s for s in c3_call["payload"]["scenes"] if s["scene_id"] == "s1")
+    assert sent["required_qualifiers"] == ["only for unmasked/bidirectional attention"]
+
+
 def test_non_structural_c3_findings_are_captured_not_silently_dropped(monkeypatch):
     """Real gap found 2026-09-11: C3's ordinary content critique (anything
     not critical+RENDERER+html_author) used to be computed and then
@@ -408,3 +433,161 @@ def test_claims_are_still_scoped_per_beat_during_a_repair(monkeypatch):
 
     repair_call = next(c for c in agent.calls if c["mode"] == "BEAT_VISUAL_REPAIR")
     assert {c["claim_id"] for c in repair_call["payload"]["available_claims"]} == {"C002"}
+
+
+# ---- Phase 15: sequence-level visual review -------------------------------------------
+
+def test_sequence_critique_receives_scenes_in_true_video_order_with_component_ids(monkeypatch):
+    """STORY_IMPROVEMENT_PLAN.md Phase 15: the contact sheet must be built in the video's
+    real scene order, not `select_scenes_for_visual_audit`'s flagged-first order."""
+    from review.visual_sequence_critic import VisualSequenceCritique
+
+    _patch_static_clean(monkeypatch)
+    monkeypatch.setattr("verification.hard.render_rendered.run_rendered_checks", lambda *a, **k: [])
+    monkeypatch.setattr(
+        "verification.hard.render_rendered.capture_scene_screenshots",
+        lambda *a, **k: {"s1": "data:image/jpeg;base64,AAAA", "s2": "data:image/jpeg;base64,BBBB"},
+    )
+    agent = make_agent()
+    visual_auditor = FakeAgent({
+        VisualCritique: [VisualCritique(issues=[])],
+        VisualSequenceCritique: [VisualSequenceCritique(issues=[])],
+    })
+
+    synthesize_and_repair_video_html(make_plan(), make_narration(), [], agent, visual_auditor, make_budget())
+
+    seq_call = next(c for c in visual_auditor.calls if c["mode"] == "VISUAL_SEQUENCE_AUDITOR")
+    sent = seq_call["payload"]["scenes"]
+    assert [s["scene_id"] for s in sent] == ["s1", "s2"]
+    assert sent[0]["component_id"] is None  # make_agent()'s BeatVisual scenes carry no component_id
+
+
+def test_sequence_critique_is_never_a_hard_gate(monkeypatch):
+    """Purely reported, never routed into repairs or render_issues -- a compositional
+    judgement call, same principle as the ordinary (non-narration-owned) C3 findings."""
+    from review.visual_sequence_critic import VisualSequenceCritique
+
+    _patch_static_clean(monkeypatch)
+    monkeypatch.setattr("verification.hard.render_rendered.run_rendered_checks", lambda *a, **k: [])
+    monkeypatch.setattr(
+        "verification.hard.render_rendered.capture_scene_screenshots",
+        lambda *a, **k: {"s1": "data:image/jpeg;base64,AAAA", "s2": "data:image/jpeg;base64,BBBB"},
+    )
+    agent = make_agent()
+    layout_issue = {
+        "issue_id": "V1", "severity": "major", "category": "visual_mismatch", "layer": "VISUAL",
+        "scene_ids": ["s1", "s2"], "problem": "both scenes use card", "why_it_matters": "y",
+        "recommended_intent": "vary the layout", "repair_owner": "html_author",
+    }
+    visual_auditor = FakeAgent({
+        VisualCritique: [VisualCritique(issues=[])],
+        VisualSequenceCritique: [VisualSequenceCritique(issues=[layout_issue])],
+    })
+
+    result = synthesize_and_repair_video_html(make_plan(), make_narration(), [], agent, visual_auditor, make_budget())
+
+    assert len(result.sequence_critique_issues) == 1
+    assert result.repairs_used == 0
+    assert result.render_issues == []
+
+
+# ---- Phase 15: bounded late narration repair -------------------------------------------
+
+def _rewritten_narration_response():
+    from narration.generator import GeneratedNarration
+
+    return GeneratedNarration(scenes=[{
+        "scene_id": "s1", "sentences": [{"text": "the corrected fact", "sentence_type": "technical_assertion"}],
+    }])
+
+
+def test_a_resolved_late_repair_no_longer_blocks_promotion(monkeypatch):
+    """STORY_IMPROVEMENT_PLAN.md Phase 15: the one case nothing else in this architecture
+    could otherwise fix -- a genuine screen/narration contradiction. When the bounded
+    B2 -> C2b -> H-repair -> C3-recheck cycle actually resolves it (the recheck comes back
+    clean), the finding must stop blocking promotion."""
+    from narration.generator import GeneratedNarration
+    from review.grounding_verifier import GroundingReview
+
+    _patch_static_clean(monkeypatch)
+    monkeypatch.setattr("verification.hard.render_rendered.run_rendered_checks", lambda *a, **k: [])
+    monkeypatch.setattr(
+        "verification.hard.render_rendered.capture_scene_screenshots",
+        lambda *a, **k: {"s1": "data:image/jpeg;base64,AAAA"},
+    )
+    agent = make_agent()
+    narration_lead = FakeAgent({GeneratedNarration: [_rewritten_narration_response()]})
+    contradiction_issue = {
+        "issue_id": "V1", "severity": "critical", "category": "visual_mismatch", "layer": "VISUAL",
+        "scene_ids": ["s1"], "problem": "screen shows a different example than the narration describes",
+        "why_it_matters": "y", "recommended_intent": "correct the fact", "repair_owner": "narration_lead",
+    }
+    visual_auditor = FakeAgent({
+        VisualCritique: [VisualCritique(issues=[contradiction_issue]), VisualCritique(issues=[])],
+        GroundingReview: [GroundingReview(verdicts=[{"sentence_id": "s1:0", "factual": False}])],
+    })
+
+    result = synthesize_and_repair_video_html(
+        make_plan(), make_narration(), [], agent, visual_auditor, make_budget(), narration_lead=narration_lead,
+    )
+
+    assert result.late_narration_repairs_used == 1
+    assert not any(i.code == "c3_narration_level_finding" for i in result.render_issues)
+    assert "the corrected fact" in result.video_script_html
+
+
+def test_an_unresolved_late_repair_still_blocks_promotion(monkeypatch):
+    """The recheck still finds the same contradiction -- the finding must still block,
+    exactly as it did before this bounded attempt existed."""
+    from narration.generator import GeneratedNarration
+    from review.grounding_verifier import GroundingReview
+
+    _patch_static_clean(monkeypatch)
+    monkeypatch.setattr("verification.hard.render_rendered.run_rendered_checks", lambda *a, **k: [])
+    monkeypatch.setattr(
+        "verification.hard.render_rendered.capture_scene_screenshots",
+        lambda *a, **k: {"s1": "data:image/jpeg;base64,AAAA"},
+    )
+    agent = make_agent()
+    narration_lead = FakeAgent({GeneratedNarration: [_rewritten_narration_response()]})
+    contradiction_issue = {
+        "issue_id": "V1", "severity": "critical", "category": "visual_mismatch", "layer": "VISUAL",
+        "scene_ids": ["s1"], "problem": "screen shows a different example than the narration describes",
+        "why_it_matters": "y", "recommended_intent": "correct the fact", "repair_owner": "narration_lead",
+    }
+    still_contradicts_issue = {**contradiction_issue, "issue_id": "V2", "problem": "still doesn't match"}
+    visual_auditor = FakeAgent({
+        VisualCritique: [VisualCritique(issues=[contradiction_issue]), VisualCritique(issues=[still_contradicts_issue])],
+        GroundingReview: [GroundingReview(verdicts=[{"sentence_id": "s1:0", "factual": False}])],
+    })
+
+    result = synthesize_and_repair_video_html(
+        make_plan(), make_narration(), [], agent, visual_auditor, make_budget(), narration_lead=narration_lead,
+    )
+
+    assert result.late_narration_repairs_used == 1
+    assert any(i.code == "c3_narration_level_finding" for i in result.render_issues)
+
+
+def test_without_narration_lead_the_old_blocking_behavior_is_unchanged(monkeypatch):
+    """Backward compatibility: narration_lead defaults to None, so every existing caller
+    (and test) keeps the pre-Phase-15 behavior -- a narration-owned critical finding blocks,
+    with no repair attempt at all."""
+    _patch_static_clean(monkeypatch)
+    monkeypatch.setattr("verification.hard.render_rendered.run_rendered_checks", lambda *a, **k: [])
+    monkeypatch.setattr(
+        "verification.hard.render_rendered.capture_scene_screenshots",
+        lambda *a, **k: {"s1": "data:image/jpeg;base64,AAAA"},
+    )
+    agent = make_agent()
+    contradiction_issue = {
+        "issue_id": "V1", "severity": "critical", "category": "visual_mismatch", "layer": "VISUAL",
+        "scene_ids": ["s1"], "problem": "screen shows a different example than the narration describes",
+        "why_it_matters": "y", "recommended_intent": "correct the fact", "repair_owner": "narration_lead",
+    }
+    visual_auditor = FakeAgent({VisualCritique: [VisualCritique(issues=[contradiction_issue])]})
+
+    result = synthesize_and_repair_video_html(make_plan(), make_narration(), [], agent, visual_auditor, make_budget())
+
+    assert result.late_narration_repairs_used == 0
+    assert any(i.code == "c3_narration_level_finding" for i in result.render_issues)

@@ -8,12 +8,15 @@ from facts.models import AssumptionLedger, Claim
 from narration.generator import GeneratedNarration
 from orchestration.pipeline import PipelineAgents, run_story_and_narration_loop
 from planning.models import (
-    CTAContract, EndingContract, HookContract, StoryBeat, StoryPlan, StoryStructure, TitleContract,
+    CTAContract, EndingContract, HookContract, SourceCoverageDecision, StoryBeat, StoryPlan, StoryStructure,
+    TitleContract,
 )
 from planning.scene_expander import BeatSceneExpansion
 from review.claim_mapper import ClaimMapperOutput
 from review.cold_hook_critic import ColdHookCritique, ColdHookVerdict
-from review.cold_viewer_critic import ColdViewerCritique, ColdViewerVerdict
+from review.cold_viewer_critic import (
+    ColdViewerCritique, ColdViewerVerdict, ContinuingViewerCritique, ContinuingViewerVerdict,
+)
 from review.grounding_verifier import GroundingReview
 from review.story_critic import StoryCritique
 
@@ -80,6 +83,9 @@ def make_plan(scene_words=70, n_scenes=24, source_units=None, archetype="build")
                           archetype_stage="assembled_system", forward_driver="z", new_information=True,
                           learning_objective="assemble the complete attention mechanism from its parts")],
         scene_plan=scene_plan,
+        source_coverage=[
+            SourceCoverageDecision(source_unit_id=uid, disposition="MUST_COVER", reason="x") for uid in source_units
+        ],
     )
 
 
@@ -111,6 +117,7 @@ def make_structure(archetype="build") -> StoryStructure:
                StoryBeat(beat_id="B03", purpose="x", source_unit_ids=["u1"],
                           archetype_stage="assembled_system", forward_driver="z", new_information=True,
                           learning_objective="assemble the complete attention mechanism from its parts")],
+        source_coverage=[SourceCoverageDecision(source_unit_id="u1", disposition="MUST_COVER", reason="x")],
     )
 
 
@@ -153,7 +160,8 @@ def make_bad_expansions() -> list[BeatSceneExpansion]:
 
 
 def make_agents(story_lead_responses=None, narration_responses=None, review_responses=None,
-                 worker_responses=None, cold_viewer_responses=None) -> PipelineAgents:
+                 worker_responses=None, cold_viewer_responses=None,
+                 continuing_viewer_responses=None) -> PipelineAgents:
     story_lead = FakeAgent({
         StoryPlan: (story_lead_responses or {}).get(StoryPlan, []),
         StoryStructure: (story_lead_responses or {}).get(StoryStructure, []),
@@ -163,11 +171,19 @@ def make_agents(story_lead_responses=None, narration_responses=None, review_resp
     narration_lead = FakeAgent({GeneratedNarration: narration_responses or []})
     review_lead = FakeAgent({
         StoryCritique: (review_responses or {}).get("c1", []),
-        GroundingReview: (review_responses or {}).get("c2b", []),
+        # 2026-09-16, Phase 22: `review_lead` is now C2b's ESCALATION partner, not its primary
+        # pass -- most tests use a clean (non-flagged) c2b response, which never escalates, so
+        # this queue only needs entries for tests deliberately exercising escalation.
+        GroundingReview: (review_responses or {}).get("c2b_escalation", []),
         ColdHookCritique: (review_responses or {}).get("cold_hook", []),
         ColdViewerCritique: (review_responses or {}).get("cold_viewer", []),
+        ContinuingViewerCritique: (review_responses or {}).get("continuing_viewer", []),
     })
-    cm_agent = FakeAgent({ClaimMapperOutput: (review_responses or {}).get("cm", [])})
+    cm_agent = FakeAgent({
+        ClaimMapperOutput: (review_responses or {}).get("cm", []),
+        # 2026-09-16, Phase 22: flash (`cm_agent`) is now C2b's primary pass.
+        GroundingReview: (review_responses or {}).get("c2b", []),
+    })
     # A clean, non-flagged verdict every time -- the cold-hook/cold-viewer
     # cascades (Phase 8.2) then never escalate to review_lead, so existing
     # tests don't need to know about them unless testing directly. Queued
@@ -178,6 +194,7 @@ def make_agents(story_lead_responses=None, narration_responses=None, review_resp
     worker = FakeAgent({
         ColdHookVerdict: worker_responses or [ColdHookVerdict() for _ in range(20)],
         ColdViewerVerdict: cold_viewer_responses or [ColdViewerVerdict() for _ in range(60)],
+        ContinuingViewerVerdict: continuing_viewer_responses or [ContinuingViewerVerdict() for _ in range(60)],
     })
     return PipelineAgents(story_lead=story_lead, narration_lead=narration_lead,
                            review_lead=review_lead, cm_agent=cm_agent, worker=worker)
@@ -195,7 +212,7 @@ def test_a_clean_plan_passes_with_no_revision_calls():
         review_responses={
             "cm": [ClaimMapperOutput(sentences=[])],
             "c1": [StoryCritique(issues=[])],
-            "c2b": [GroundingReview(issues=[])],
+            "c2b": [GroundingReview(verdicts=[])],
         },
     )
     result = run_story_and_narration_loop(
@@ -230,7 +247,7 @@ def test_a_bad_plan_gets_replanned_and_then_passes():
         review_responses={
             "cm": [ClaimMapperOutput(sentences=[]), ClaimMapperOutput(sentences=[])],
             "c1": [StoryCritique(issues=[]), StoryCritique(issues=[])],
-            "c2b": [GroundingReview(issues=[]), GroundingReview(issues=[])],
+            "c2b": [GroundingReview(verdicts=[]), GroundingReview(verdicts=[])],
         },
     )
     from planning.models import SourceBrief
@@ -247,22 +264,29 @@ def test_a_bad_plan_gets_replanned_and_then_passes():
 
 
 def test_replan_budget_exhaustion_fails_rather_than_looping_forever():
-    """MAX_STORY_REPLANS=1 -- a second consecutive bad plan must FAIL, not
-    keep replanning indefinitely."""
+    """MAX_STORY_REPLANS=2 -- a third consecutive bad plan must FAIL, not
+    keep replanning indefinitely. Raised from 1 (STORY_IMPROVEMENT_PLAN.md,
+    2026-09-15): a real live run's ONE replan attempt also failed to fix a
+    structural source-coverage gap, and with no second chance the pipeline
+    emitted a video missing whole sections of the source. One extra replan
+    doesn't fix a systematically bad A2 -- this test's own bad-expansions
+    fixture still exhausts the (now larger) budget and still FAILs -- but it
+    does give a single unlucky replan a real second chance."""
     from editing.models import RevisionPlan
 
     bad_plan_1 = make_plan(scene_words=30, n_scenes=2)
 
     agents = make_agents(
         story_lead_responses={
-            StoryStructure: [make_structure()], BeatSceneExpansion: make_bad_expansions(),
-            "RevisionPlan": [RevisionPlan(run_id="r", story_replan_required=True)] * 2,
+            StoryStructure: [make_structure(), make_structure()],
+            BeatSceneExpansion: make_bad_expansions() + make_bad_expansions(),
+            "RevisionPlan": [RevisionPlan(run_id="r", story_replan_required=True)] * 3,
         },
-        narration_responses=[make_empty_narration_response(), make_empty_narration_response()],
+        narration_responses=[make_empty_narration_response() for _ in range(3)],
         review_responses={
-            "cm": [ClaimMapperOutput(sentences=[])] * 2,
-            "c1": [StoryCritique(issues=[])] * 2,
-            "c2b": [GroundingReview(issues=[])] * 2,
+            "cm": [ClaimMapperOutput(sentences=[])] * 3,
+            "c1": [StoryCritique(issues=[])] * 3,
+            "c2b": [GroundingReview(verdicts=[])] * 3,
         },
     )
     from planning.models import SourceBrief
@@ -273,7 +297,7 @@ def test_replan_budget_exhaustion_fails_rather_than_looping_forever():
         target_duration_seconds=600.0, agents=agents, budget=make_budget(), initial_plan=bad_plan_1,
     )
     assert result.final_status == "FAIL"
-    assert result.story_replans_used == 1  # never exceeds the bound
+    assert result.story_replans_used == 2  # never exceeds the bound
     assert any("replan budget exhausted" in line for line in result.log)
 
 
@@ -301,7 +325,7 @@ def test_a2_replan_receives_the_prior_rejection_reason_not_a_blind_retry():
         review_responses={
             "cm": [ClaimMapperOutput(sentences=[]), ClaimMapperOutput(sentences=[])],
             "c1": [StoryCritique(issues=[archetype_issue]), StoryCritique(issues=[])],
-            "c2b": [GroundingReview(issues=[]), GroundingReview(issues=[])],
+            "c2b": [GroundingReview(verdicts=[]), GroundingReview(verdicts=[])],
         },
     )
     from planning.models import SourceBrief
@@ -340,7 +364,7 @@ def test_source_units_reach_both_a2_replan_and_c1_critique():
         review_responses={
             "cm": [ClaimMapperOutput(sentences=[]), ClaimMapperOutput(sentences=[])],
             "c1": [StoryCritique(issues=[]), StoryCritique(issues=[])],
-            "c2b": [GroundingReview(issues=[]), GroundingReview(issues=[])],
+            "c2b": [GroundingReview(verdicts=[]), GroundingReview(verdicts=[])],
         },
     )
     from planning.models import SourceBrief
@@ -388,7 +412,7 @@ def test_legitimate_dismissal_clears_the_only_hard_failure_to_pass():
         review_responses={
             "cm": [ClaimMapperOutput(sentences=[])],
             "c1": [StoryCritique(issues=[archetype_issue])],
-            "c2b": [GroundingReview(issues=[])],
+            "c2b": [GroundingReview(verdicts=[])],
         },
     )
     from planning.models import SourceBrief
@@ -434,7 +458,7 @@ def test_illegitimate_dismissal_naming_an_unconsidered_archetype_is_ignored():
         review_responses={
             "cm": [ClaimMapperOutput(sentences=[]), ClaimMapperOutput(sentences=[])],
             "c1": [StoryCritique(issues=[archetype_issue]), StoryCritique(issues=[])],
-            "c2b": [GroundingReview(issues=[]), GroundingReview(issues=[])],
+            "c2b": [GroundingReview(verdicts=[]), GroundingReview(verdicts=[])],
         },
     )
     from planning.models import SourceBrief
@@ -475,7 +499,7 @@ def test_dismissal_leaves_other_hard_failures_intact():
         review_responses={
             "cm": [ClaimMapperOutput(sentences=[]), ClaimMapperOutput(sentences=[])],
             "c1": [StoryCritique(issues=[archetype_issue]), StoryCritique(issues=[])],
-            "c2b": [GroundingReview(issues=[]), GroundingReview(issues=[])],
+            "c2b": [GroundingReview(verdicts=[]), GroundingReview(verdicts=[])],
         },
     )
     from planning.models import SourceBrief
@@ -513,7 +537,7 @@ def test_a_critical_non_archetype_issue_routes_to_targeted_rewrite_not_replan():
         review_responses={
             "cm": [ClaimMapperOutput(sentences=[]), ClaimMapperOutput(sentences=[])],
             "c1": [StoryCritique(issues=[critical_issue]), StoryCritique(issues=[])],
-            "c2b": [GroundingReview(issues=[]), GroundingReview(issues=[])],
+            "c2b": [GroundingReview(verdicts=[]), GroundingReview(verdicts=[])],
         },
     )
     from planning.models import SourceBrief
@@ -550,7 +574,7 @@ def test_targeted_rewrite_actually_calls_b2_with_the_named_beat_not_a_no_op():
         review_responses={
             "cm": [ClaimMapperOutput(sentences=[]), ClaimMapperOutput(sentences=[])],
             "c1": [StoryCritique(issues=[critical_issue]), StoryCritique(issues=[])],
-            "c2b": [GroundingReview(issues=[]), GroundingReview(issues=[])],
+            "c2b": [GroundingReview(verdicts=[]), GroundingReview(verdicts=[])],
         },
     )
     from planning.models import SourceBrief
@@ -597,13 +621,27 @@ def test_a_regressing_targeted_rewrite_is_reverted_to_the_pre_rewrite_state():
             GeneratedNarration(scenes=[{"scene_id": "s0", "sentences": [{"text": "fixed", "sentence_type": "transition"}]}]),  # rewrite #2 -- fixes it
         ],
         review_responses={
-            "cm": [ClaimMapperOutput(sentences=[])] * 3,
+            # cycle 1's narration has 0 sentences (make_empty_narration_response) -- both CM
+            # and C2b skip the call entirely when there's nothing to check (Phase 10), so
+            # their queues only need an entry for cycles 2/3, which each introduce one real
+            # sentence on s0 via the rewrite.
+            "cm": [
+                ClaimMapperOutput(sentences=[
+                    {"sentence_id": "s0:0", "scene_id": "s0", "sentence_index": 0, "factual_status": "NON_FACTUAL"},
+                ]),
+                ClaimMapperOutput(sentences=[
+                    {"sentence_id": "s0:0", "scene_id": "s0", "sentence_index": 0, "factual_status": "NON_FACTUAL"},
+                ]),
+            ],
             "c1": [
                 StoryCritique(issues=[issue_a]),          # cycle 1: 1 critical issue
                 StoryCritique(issues=[issue_a, issue_b]), # cycle 2 (post rewrite #1): WORSE -- 2 critical issues
                 StoryCritique(issues=[]),                 # cycle 3 (post rewrite #2): clean
             ],
-            "c2b": [GroundingReview(issues=[])] * 3,
+            "c2b": [
+                GroundingReview(verdicts=[{"sentence_id": "s0:0", "factual": False}]),
+                GroundingReview(verdicts=[{"sentence_id": "s0:0", "factual": False}]),
+            ],
         },
     )
     result = run_story_and_narration_loop(
@@ -643,9 +681,17 @@ def test_an_improving_targeted_rewrite_is_accepted_not_reverted():
             GeneratedNarration(scenes=[{"scene_id": "s0", "sentences": [{"text": "fixed", "sentence_type": "transition"}]}]),
         ],
         review_responses={
-            "cm": [ClaimMapperOutput(sentences=[])] * 2,
+            # cycle 1 has 0 sentences on s0 -- CM/C2b skip the call entirely (Phase 10);
+            # cycle 2 (post rewrite) has one real sentence.
+            "cm": [
+                ClaimMapperOutput(sentences=[
+                    {"sentence_id": "s0:0", "scene_id": "s0", "sentence_index": 0, "factual_status": "NON_FACTUAL"},
+                ]),
+            ],
             "c1": [StoryCritique(issues=[critical_issue]), StoryCritique(issues=[])],
-            "c2b": [GroundingReview(issues=[])] * 2,
+            "c2b": [
+                GroundingReview(verdicts=[{"sentence_id": "s0:0", "factual": False}]),
+            ],
         },
     )
     result = run_story_and_narration_loop(
@@ -671,7 +717,13 @@ def test_cold_hook_critic_receives_the_plans_title_and_first_beats_narration():
         narration_responses=[GeneratedNarration(scenes=[
             {"scene_id": "s0", "sentences": [{"text": "opening line", "sentence_type": "transition"}]},
         ])],
-        review_responses={"c1": [StoryCritique(issues=[])], "c2b": [GroundingReview(issues=[])], "cm": [ClaimMapperOutput(sentences=[])]},
+        review_responses={
+            "c1": [StoryCritique(issues=[])],
+            "c2b": [GroundingReview(verdicts=[{"sentence_id": "s0:0", "factual": False}])],
+            "cm": [ClaimMapperOutput(sentences=[
+                {"sentence_id": "s0:0", "scene_id": "s0", "sentence_index": 0, "factual_status": "NON_FACTUAL"},
+            ])],
+        },
     )
     run_story_and_narration_loop(
         source_brief=__import__("planning.models", fromlist=["SourceBrief"]).SourceBrief(
@@ -692,7 +744,7 @@ def test_cold_hook_uses_c4a_c4b_pass_ids_not_the_shorts_c4s_default():
     agents = make_agents(
         narration_responses=[make_empty_narration_response()],
         review_responses={
-            "c1": [StoryCritique(issues=[])], "c2b": [GroundingReview(issues=[])],
+            "c1": [StoryCritique(issues=[])], "c2b": [GroundingReview(verdicts=[])],
             "cold_hook": [ColdHookCritique(issues=[])], "cm": [ClaimMapperOutput(sentences=[])],
         },
         worker_responses=[flagged],
@@ -721,7 +773,7 @@ def test_a_flagged_cold_hook_verdict_produces_a_real_issue_in_the_bundle():
         narration_responses=[make_empty_narration_response(), GeneratedNarration(scenes=[])],
         review_responses={
             "c1": [StoryCritique(issues=[]), StoryCritique(issues=[])],
-            "c2b": [GroundingReview(issues=[]), GroundingReview(issues=[])],
+            "c2b": [GroundingReview(verdicts=[]), GroundingReview(verdicts=[])],
             "cold_hook": [ColdHookCritique(issues=[cold_hook_issue])],
             "cm": [ClaimMapperOutput(sentences=[]), ClaimMapperOutput(sentences=[])],
         },
@@ -748,7 +800,7 @@ def test_c4c_mid_video_cold_viewer_actually_runs_once_per_review_cycle():
         narration_responses=[make_empty_narration_response(), GeneratedNarration(scenes=[])],
         review_responses={
             "c1": [StoryCritique(issues=[]), StoryCritique(issues=[])],
-            "c2b": [GroundingReview(issues=[]), GroundingReview(issues=[])],
+            "c2b": [GroundingReview(verdicts=[]), GroundingReview(verdicts=[])],
             "cm": [ClaimMapperOutput(sentences=[]), ClaimMapperOutput(sentences=[])],
         },
     )
@@ -776,7 +828,7 @@ def test_a_flagged_cold_viewer_verdict_produces_a_real_issue_in_the_bundle():
         narration_responses=[make_empty_narration_response(), GeneratedNarration(scenes=[])],
         review_responses={
             "c1": [StoryCritique(issues=[]), StoryCritique(issues=[])],
-            "c2b": [GroundingReview(issues=[]), GroundingReview(issues=[])],
+            "c2b": [GroundingReview(verdicts=[]), GroundingReview(verdicts=[])],
             "cold_viewer": [ColdViewerCritique(issues=[cold_viewer_issue])],
             "cm": [ClaimMapperOutput(sentences=[]), ClaimMapperOutput(sentences=[])],
         },
@@ -792,3 +844,237 @@ def test_a_flagged_cold_viewer_verdict_produces_a_real_issue_in_the_bundle():
     cognitive_load_issues = [i for i in result.review_bundle.issues if i.category == "cognitive_load"]
     assert len(cognitive_load_issues) == 1
     assert cognitive_load_issues[0].problem == "viewer lost mid-video"
+
+
+def _issue(severity, **overrides):
+    from review.models import CritiqueIssue
+
+    base = dict(
+        issue_id="I", severity=severity, category="clarity", layer="TECHNICAL",
+        scene_ids=[], problem="x", why_it_matters="y", recommended_intent="z",
+        repair_owner="narration_lead",
+    )
+    base.update(overrides)
+    return CritiqueIssue(**base)
+
+
+def test_badness_treats_major_to_minor_as_an_improvement_not_a_regression():
+    """STORY_IMPROVEMENT_PLAN.md Phase 13: a flat issue count used to read 3 major -> 0
+    major + 5 minor as WORSE (5 > 3) even though severity clearly improved. The
+    severity-ordered tuple must compare this the other way."""
+    from orchestration.pipeline import _badness
+    from review.models import ReviewBundle
+
+    before = ReviewBundle(run_id="r", issues=[_issue("major") for _ in range(3)])
+    after = ReviewBundle(run_id="r", issues=[_issue("minor") for _ in range(5)])
+
+    assert _badness(after) < _badness(before)
+
+
+def test_badness_still_treats_more_hard_failures_as_worse_regardless_of_issues():
+    from orchestration.pipeline import _badness
+    from review.models import ReviewBundle
+
+    before = ReviewBundle(run_id="r", hard_failures=["f1"], issues=[_issue("minor")] * 10)
+    after = ReviewBundle(run_id="r", hard_failures=["f1", "f2"], issues=[])
+
+    assert _badness(after) > _badness(before)
+
+
+def test_a_rubber_stamp_dismissal_reason_with_no_real_engagement_is_rejected():
+    """STORY_IMPROVEMENT_PLAN.md Phase 13 (ERR-022/025's open question, partially resolved):
+    naming an already-rejected archetype is no longer enough on its own -- A3's OWN dismissal
+    reason must substantively engage with what A2 actually said about it, not just wave the
+    critique off with a generic non-answer."""
+    from editing.models import DismissedIssue, RevisionPlan
+    from orchestration.pipeline import _legitimately_dismissed_issue_ids
+
+    plan = _make_plan_with_rejected_archetypes({"derivation": "no justified equation found in the source"})
+    issues = [_issue("critical", issue_id="I1", category="archetype",
+                      problem="the source actually shows a derivation, not a build arc")]
+    revision_plan = RevisionPlan(
+        run_id="r",
+        dismissed_issues=[DismissedIssue(issue_id="I1", reason="not persuasive, moving on")],
+    )
+
+    legitimate = _legitimately_dismissed_issue_ids(revision_plan, issues, plan)
+    assert legitimate == set()
+
+
+def test_a_dismissal_reason_that_actually_engages_with_the_rejection_is_honored():
+    """The other half: a well-argued interpretation that genuinely references A2's own
+    stated evidence is a legitimate disagreement, not noise -- confirms the tightened check
+    doesn't just reject everything."""
+    from editing.models import DismissedIssue, RevisionPlan
+    from orchestration.pipeline import _legitimately_dismissed_issue_ids
+
+    plan = _make_plan_with_rejected_archetypes({"derivation": "no justified equation found in the source"})
+    issues = [_issue("critical", issue_id="I1", category="archetype",
+                      problem="the source actually shows a derivation, not a build arc")]
+    revision_plan = RevisionPlan(
+        run_id="r",
+        dismissed_issues=[DismissedIssue(
+            issue_id="I1",
+            reason="C1 is re-raising derivation, but A2 already established no justified equation was found",
+        )],
+    )
+
+    legitimate = _legitimately_dismissed_issue_ids(revision_plan, issues, plan)
+    assert legitimate == {"I1"}
+
+
+def test_a_genuinely_new_alternative_is_never_dismissable_regardless_of_reason_wording():
+    """A dismissal reason can't manufacture legitimacy for an archetype A2 never actually
+    addressed -- overlap with nothing in rejected_archetypes must still fail closed."""
+    from editing.models import DismissedIssue, RevisionPlan
+    from orchestration.pipeline import _legitimately_dismissed_issue_ids
+
+    plan = _make_plan_with_rejected_archetypes({})  # A2 never rejected anything
+    issues = [_issue("critical", issue_id="I1", category="archetype",
+                      problem="the source actually shows a mystery, not a build arc")]
+    revision_plan = RevisionPlan(
+        run_id="r",
+        dismissed_issues=[DismissedIssue(issue_id="I1", reason="mystery doesn't fit, no violated expectation here")],
+    )
+
+    legitimate = _legitimately_dismissed_issue_ids(revision_plan, issues, plan)
+    assert legitimate == set()
+
+
+def test_badness_tie_on_hard_failures_falls_through_to_diagnostic_bands():
+    from orchestration.pipeline import _badness
+    from review.models import DiagnosticResult, ReviewBundle
+
+    before = ReviewBundle(run_id="r", diagnostics=[DiagnosticResult(dimension="d", band="RED", evidence="x")])
+    after = ReviewBundle(run_id="r", diagnostics=[DiagnosticResult(dimension="d", band="AMBER", evidence="x")])
+
+    assert _badness(after) < _badness(before)
+
+
+# ---- _red_dimensions / red_survived_a_round wiring (PIPELINE_AUDIT_2026-09-17.md #6) ------
+
+def test_major_issue_count_counts_only_major_severity():
+    from orchestration.pipeline import _major_issue_count
+    from review.models import CritiqueIssue, ReviewBundle
+
+    def issue(severity, issue_id):
+        return CritiqueIssue(
+            issue_id=issue_id, severity=severity, category="repetition", layer="VOICE",
+            problem="x", why_it_matters="y", recommended_intent="z", repair_owner="narration_lead",
+        )
+
+    bundle = ReviewBundle(run_id="r", issues=[
+        issue("major", "i1"), issue("minor", "i2"), issue("major", "i3"), issue("critical", "i4"),
+    ])
+    assert _major_issue_count(bundle) == 2
+
+
+def test_a_real_major_issue_reaches_the_final_log_line_uncorrected():
+    """STORY_IMPROVEMENT_PLAN.md Phase 27 item 3: `compute_final_status` never reads
+    `bundle.issues` at all -- a real major issue (repetition, pacing, anything C1/C5 find)
+    can pass clean with no visibility into the fact it was never fixed. Measurement only,
+    surfaced in the log -- this test confirms the count actually reaches it, not that it
+    changes the outcome (it must not: `final_status` still PASSes)."""
+    plan = make_plan()
+    major_issue = {
+        "issue_id": "M1", "severity": "major", "category": "repetition", "layer": "VOICE",
+        "problem": "repeated rhetorical device", "why_it_matters": "reads as formulaic",
+        "recommended_intent": "vary the construction", "repair_owner": "narration_lead",
+    }
+    agents = make_agents(
+        narration_responses=[make_empty_narration_response()],
+        review_responses={
+            "cm": [ClaimMapperOutput(sentences=[])],
+            "c1": [StoryCritique(issues=[major_issue])],
+            "c2b": [GroundingReview(verdicts=[])],
+        },
+    )
+    result = run_story_and_narration_loop(
+        source_brief=__import__("planning.models", fromlist=["SourceBrief"]).SourceBrief(
+            topic="t", core_question="q", viewer_problem="p", central_insight="i"),
+        claims=[], ledger=AssumptionLedger(), all_source_unit_ids=["u1"],
+        target_duration_seconds=600.0, agents=agents, budget=make_budget(), initial_plan=plan,
+    )
+
+    assert result.final_status == "PASS"  # a major issue alone must never change the outcome
+    assert any("1 major issue(s) uncorrected" in line for line in result.log)
+
+
+def test_red_dimensions_returns_only_red_banded_dimensions():
+    from orchestration.pipeline import _red_dimensions
+    from review.models import DiagnosticResult, ReviewBundle
+
+    bundle = ReviewBundle(run_id="r", diagnostics=[
+        DiagnosticResult(dimension="a", band="RED", evidence="x"),
+        DiagnosticResult(dimension="b", band="AMBER", evidence="x"),
+        DiagnosticResult(dimension="c", band="RED", evidence="x"),
+        DiagnosticResult(dimension="d", band="GREEN", evidence="x"),
+    ])
+    assert _red_dimensions(bundle) == {"a", "c"}
+
+
+def test_a_red_diagnostic_surviving_a_targeted_rewrite_forces_a_second_a3_consultation(monkeypatch):
+    """PIPELINE_AUDIT_2026-09-17.md finding #6: `compute_final_status`'s own
+    `red_survived_a_round` parameter was fully implemented but never populated from any
+    real call site -- half the documented plan §10 escalation policy (">=3 REDs, OR a RED
+    that survived a prior revision round") was dead in production. Monkeypatches
+    `_run_review_block` directly -- real diagnostic thresholds are already covered by
+    verification/diagnostics' own tests; this isolates the LOOP's own cross-iteration
+    tracking, which nothing else exercises.
+
+    Bundle 1: a critical issue (forces the first REVISE via a hard-failure-free critical
+    CritiqueIssue path is awkward to construct for real, so a real hard_failure is used
+    instead purely to reach A3 the first time) plus one RED diagnostic. A3 issues a
+    TARGETED_REWRITE. Bundle 2 (post-rewrite): the hard failure is gone and the SAME
+    dimension is still RED, with red_count=1 (alone, insufficient to escalate without the
+    fix) -- this must still force a SECOND A3 consultation, which would never happen if
+    `red_survived_a_round` stayed hardcoded False."""
+    from editing.models import RevisionPlan, RewriteScene
+    from review.models import DiagnosticResult, ReviewBundle
+
+    plan = make_plan()
+    bundles = [
+        ReviewBundle(
+            run_id="r", hard_failures=["some_hard_gate"],
+            diagnostics=[DiagnosticResult(dimension="voice", band="RED", evidence="x")],
+        ),
+        ReviewBundle(
+            run_id="r", hard_failures=[],
+            diagnostics=[DiagnosticResult(dimension="voice", band="RED", evidence="x")],
+        ),
+        ReviewBundle(run_id="r", hard_failures=[], diagnostics=[]),  # 3rd pass: clean, ends the loop
+    ]
+    calls = {"n": 0}
+
+    def fake_review_block(*args, **kwargs):
+        narration = args[1]
+        bundle = bundles[calls["n"]]
+        calls["n"] += 1
+        return narration, bundle
+
+    monkeypatch.setattr("orchestration.pipeline._run_review_block", fake_review_block)
+
+    revision_plan_responses = [
+        RevisionPlan(run_id="r", story_replan_required=False,
+                     rewrite_scenes=[RewriteScene(scene_id=plan.scene_plan[0].scene_id, reason="x", intent="fix it")]),
+        RevisionPlan(run_id="r", story_replan_required=False),  # no actionable field -> RevisionAction.NONE
+    ]
+    agents = make_agents(
+        story_lead_responses={"RevisionPlan": revision_plan_responses},
+        narration_responses=[make_empty_narration_response(), GeneratedNarration(scenes=[])],
+    )
+    from planning.models import SourceBrief
+
+    result = run_story_and_narration_loop(
+        source_brief=SourceBrief(topic="t", core_question="q", viewer_problem="p", central_insight="i"),
+        claims=[], ledger=AssumptionLedger(), all_source_unit_ids=["u1"],
+        target_duration_seconds=600.0, agents=agents, budget=make_budget(), initial_plan=plan,
+    )
+
+    # A3 (RevisionPlan) was consulted TWICE -- once for the initial hard failure, and a
+    # SECOND time purely because the surviving RED forced REVISE again on a clean,
+    # hard-failure-free bundle. Without the fix, bundle 2 alone (red_count=1, no hard
+    # failures) would never re-trigger REVISE, and only one RevisionPlan call would happen.
+    revision_plan_calls = [c for c in agents.story_lead.calls if c["schema"] == RevisionPlan]
+    assert len(revision_plan_calls) == 2
+    assert result.final_status in ("PASS", "PASS_WARN")  # the 3rd, clean bundle ends the loop
