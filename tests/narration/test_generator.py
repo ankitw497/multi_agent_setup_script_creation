@@ -97,16 +97,45 @@ def test_passes_hook_cta_and_ending_context_to_the_writer():
     payload = narration_lead.calls[0]["payload"]
     assert payload["hook"]["tension"] == "y"
     assert payload["cta"]["primary_after_beat"] == "B01"
+    assert payload["cta"]["final_enabled"] is True  # default
     assert payload["ending"]["viewer_can_now"] == "do x"
+
+
+def test_final_enabled_false_reaches_the_payload():
+    """STORY_IMPROVEMENT_PLAN.md Phase 12: the planner's own CTA ownership
+    decision must reach the writer -- a video that wants a clean ending
+    with no CTA-adjacent language at all sets this explicitly."""
+    plan = make_plan(cta=CTAContract(primary_after_beat="B01", final_enabled=False))
+    narration_lead = FakeNarrationLead(GeneratedNarration(scenes=[]))
+    generate_narration(plan, [], narration_lead)
+    payload = narration_lead.calls[0]["payload"]
+    assert payload["cta"]["final_enabled"] is False
+
+
+def test_prompt_no_longer_lets_the_final_scene_auto_qualify_as_the_cta_scene():
+    """The confirmed real bug this phase fixes: the old prompt let ANY final
+    scene become a full CTA scene regardless of plan.cta.primary_after_beat,
+    letting the narrator invent an ask the planner never placed."""
+    from narration.generator import TASK_PROMPT
+
+    assert "or is\n  the final scene" not in TASK_PROMPT
+    assert "or is the final scene" not in TASK_PROMPT
+    assert "ONLY when it matches" in TASK_PROMPT
+    assert "final_enabled" in TASK_PROMPT
 
 
 def test_uses_a_longer_timeout_for_this_potentially_large_call():
     """The real batching timeout finding (S2b) applies here too -- a full
-    narration draft over many scenes is a large generation."""
+    narration draft over many scenes is a large generation. Raised 300 -> 600
+    (2026-09-17): the final live-verify run hit `claude -p timed out after 300s`
+    at this exact call site twice in a row (a fresh run and its resume), each
+    time after all 3 of claude_cli.py's own retries were exhausted -- real,
+    repeated evidence the default was too tight for this call's actual size,
+    not a one-off network blip."""
     plan = make_plan()
     narration_lead = FakeNarrationLead(GeneratedNarration(scenes=[]))
     generate_narration(plan, [], narration_lead)
-    assert narration_lead.calls[0]["timeout_s"] == 300
+    assert narration_lead.calls[0]["timeout_s"] == 600
 
 
 def test_passes_scene_function_new_concepts_and_must_not_repeat_per_scene():
@@ -150,6 +179,27 @@ def test_prompt_instructs_confirming_already_previewed_exact_values():
 def test_prompt_instructs_stating_mechanism_scope_correctly_in_a_recap():
     from narration.generator import TASK_PROMPT
     assert "mechanism_scope" in TASK_PROMPT
+
+
+def test_prompt_warns_against_overusing_causal_connectors_and_repeated_rhetorical_devices():
+    """STORY_IMPROVEMENT_PLAN.md Phase 23, found live: a real generated script measured
+    causal_per100w=1.93 (target 0.44-1.61) and independently read as repeating the "not X,
+    but Y" construction 6+ times -- the prompt's own voice instruction named causal
+    connectors as a desired feature with no guidance capping their frequency or warning
+    against a repeated device becoming a tell."""
+    from narration.generator import TASK_PROMPT
+
+    assert "seasoning, not a default sentence template" in TASK_PROMPT
+    assert "not X, but Y" in TASK_PROMPT
+
+
+def test_prompt_requires_one_idea_per_sentence():
+    """STORY_IMPROVEMENT_PLAN.md Phase 23: real 50-62 word sentences found in a generated
+    script stacking cause, mechanism, and a numeric example together -- no prior guidance
+    against this."""
+    from narration.generator import TASK_PROMPT
+
+    assert "exactly ONE idea" in TASK_PROMPT
 
 
 def test_claim_importance_reaches_the_payload():
@@ -203,6 +253,18 @@ def test_prompt_instructs_the_preview_derivation_recap_distinction():
     assert "must_not_repeat" in TASK_PROMPT
 
 
+def test_prompt_says_a_same_beat_sibling_is_just_as_off_limits_as_another_beat():
+    """STORY_IMPROVEMENT_PLAN.md Phase 27 item 2: found live -- a real script re-derived
+    the same underlying assumptions across 3 consecutive scenes within ONE beat, even
+    though the "don't re-derive a must_not_repeat concept" rule already existed, apparently
+    because a sibling scene felt like "still building the same point" rather than a
+    genuinely separate prior scene that's off-limits."""
+    from narration.generator import TASK_PROMPT
+
+    assert "your OWN earlier scenes in this" in TASK_PROMPT
+    assert "not an exception" in TASK_PROMPT
+
+
 def test_prompt_has_no_hardcoded_topic_vocabulary():
     """Overfitting guard (user-flagged, STORY_IMPROVEMENT_PLAN.md): this
     prompt runs once per full video regardless of topic -- must state its
@@ -223,3 +285,13 @@ def test_passes_the_running_example_to_the_writer():
     payload = narration_lead.calls[0]["payload"]
     assert payload["running_example"]["label"] == "trophy/suitcase"
     assert payload["running_example"]["values"] == {"trophy": "9.6"}
+
+
+def test_prompt_carries_the_shared_factual_invariants():
+    """STORY_IMPROVEMENT_PLAN.md Phase 12: one shared fragment, not rules
+    B1 alone carries and B2/shorts silently drift out of sync with."""
+    from narration.factual_invariants import NARRATION_FACTUAL_INVARIANTS
+    from narration.generator import TASK_PROMPT
+
+    assert NARRATION_FACTUAL_INVARIANTS in TASK_PROMPT
+    assert "NEVER UPGRADE" in TASK_PROMPT

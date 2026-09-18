@@ -13,6 +13,7 @@ from agents.base import Agent
 from facts.models import Claim
 from planning.models import StoryPlan
 
+from .factual_invariants import NARRATION_FACTUAL_INVARIANTS
 from .models import SceneNarration, SentenceNarration, SentenceType
 
 PLANNING_WPM = 167
@@ -22,6 +23,23 @@ Write the spoken narration for every scene in the story plan below, in the
 plan's own voice: short-to-medium sentences, varied rhythm, concrete verbs,
 causal connectors (because, so, but, which means, that creates a problem,
 so we need, this solves). Write for listening, never for silent reading.
+
+Causal connectors are seasoning, not a default sentence template: use one
+where the actual logic calls for it, but let most sentences open plainly,
+with no connector at all -- a script where "so"/"since"/"because" opens
+several sentences in a row reads as formulaic, not causal. The same
+discipline applies to any other rhetorical device (e.g. a "not X, but Y"
+contrast) -- effective the first couple of times, a tell once it becomes
+the script's default move. Real variety, not a rotating cast of the same
+few constructions, is what makes narration sound spoken rather than
+templated.
+
+Each sentence carries exactly ONE idea. If a sentence needs "and" or
+"because" to link two separate claims, or a claim plus its own
+consequence, split it into two sentences instead -- a single 50+ word
+sentence stacking cause, mechanism, and a numeric example together is
+harder to follow out loud than the same content in two or three shorter
+ones, even though the total information is the same.
 
 For each scene:
 - Stay within its word_budget (target the middle of 30-100 words; err toward
@@ -36,10 +54,17 @@ For each scene:
   transition / question / payoff / cta. This is your own bookkeeping, not a
   security boundary -- classify accurately rather than to avoid scrutiny.
 - Do not merely describe what a visual shows -- explain its consequence.
-- If this scene is the CTA scene (matches plan.cta.primary_after_beat or is
-  the final scene), write the CTA sentence in the plan's chosen intent, ≤18
-  words, naming the payoff just earned -- never a generic "like and
-  subscribe".
+- A scene is the CTA scene ONLY when it matches `plan.cta.primary_after_beat`
+  -- full stop, never because it happens to be the final scene. There, write
+  the CTA sentence in the plan's chosen intent, ≤18 words, naming the payoff
+  just earned -- never a generic "like and subscribe". Do not invent a
+  second CTA scene the plan didn't place.
+- If the video's TRUE final scene is a DIFFERENT scene than the one above,
+  and `cta.final_enabled` is true, that final scene may add ONE short, soft
+  closing line reinforcing the payoff just earned -- never a second full CTA
+  ask, never a new call to action. If `cta.final_enabled` is false, the
+  final scene must end cleanly on its own content with no CTA-adjacent
+  language at all.
 - Do not invent a technical claim that is not in the claim registry. Reduce
   words, never the causal reasoning a mechanism needs to make sense.
 
@@ -55,6 +80,16 @@ scene as a standalone article. Each scene carries `scene_function`,
   the viewer already saw during an earlier preview, frame reaching it here
   as CONFIRMING what was already shown ("that's the same 0.88 we already
   saw -- here's why") rather than presenting it as a fresh discovery.
+  `must_not_repeat` now also names concepts your OWN earlier scenes in this
+  SAME beat already covered, not just other beats -- confirmed live: a real
+  script re-derived the same underlying assumptions across 3 consecutive
+  scenes within one beat, violating this rule even though it was already
+  flagged, apparently because the source felt like "the same beat, still
+  building the same point" rather than a genuinely separate prior scene. A
+  sibling scene two
+  sentences back is exactly as off-limits to re-derive as a concept from a
+  completely different, earlier beat -- proximity within the same beat is
+  not an exception.
 - `scene_function=recap`: compress everything it touches into 1-2 bridging
   sentences on the way to what's new -- never restate it at full length.
 - `scene_function=preview`: keep it to a single short forward-looking line
@@ -102,7 +137,8 @@ together, describe what one component contributes rather than claiming it
 alone fully causes or resolves the outcome. Never state a detail specific
 to one architecture, algorithm, or implementation as if it were universal
 to every version of the underlying general idea.
-"""
+
+""" + NARRATION_FACTUAL_INVARIANTS
 
 
 class GeneratedSentence(BaseModel):
@@ -158,7 +194,7 @@ def generate_narration(plan: StoryPlan, claims: list[Claim], narration_lead: Age
 
     generated = narration_lead.run(
         pass_id="B1", mode="FIRST_DRAFT", task_prompt=TASK_PROMPT,
-        payload=payload, schema=GeneratedNarration, timeout_s=300,
+        payload=payload, schema=GeneratedNarration, timeout_s=600,
     )
 
     result: list[SceneNarration] = []

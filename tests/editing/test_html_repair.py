@@ -28,7 +28,7 @@ def make_plan() -> StoryPlan:
     )
 
 
-class FakeNarrationLead:
+class FakeHtmlAuthor:
     def __init__(self, response):
         self._response = response
         self.calls = []
@@ -69,56 +69,90 @@ def test_no_flagged_scenes_returns_empty():
 # ---- repair_beat_visual ----
 
 def test_repair_beat_visual_passes_render_failures_in_the_payload():
-    narration_lead = FakeNarrationLead(BeatVisual(beat_id="B01", heading="h", subheading="s", scenes=[]))
+    html_author = FakeHtmlAuthor(BeatVisual(beat_id="B01", heading="h", subheading="s", scenes=[]))
     plan = make_plan()
     beat = plan.beats[0]
     failures = [RenderIssue("rendered_clipping", "text overflows", scene_id="s1")]
 
-    repair_beat_visual(beat, plan, [], narration_lead, failures)
+    repair_beat_visual(beat, plan, [], html_author, failures)
 
-    sent = narration_lead.calls[0]["payload"]["render_failures"]
+    sent = html_author.calls[0]["payload"]["render_failures"]
     assert sent == [{"scene_id": "s1", "code": "rendered_clipping", "detail": "text overflows"}]
 
 
 def test_repair_beat_visual_uses_pass_id_h_and_repair_mode():
-    narration_lead = FakeNarrationLead(BeatVisual(beat_id="B01", heading="h", subheading="s", scenes=[]))
+    html_author = FakeHtmlAuthor(BeatVisual(beat_id="B01", heading="h", subheading="s", scenes=[]))
     plan = make_plan()
 
-    repair_beat_visual(plan.beats[0], plan, [], narration_lead, [])
+    repair_beat_visual(plan.beats[0], plan, [], html_author, [])
 
-    assert narration_lead.calls[0]["pass_id"] == "H"
-    assert narration_lead.calls[0]["mode"] == "BEAT_VISUAL_REPAIR"
-    assert narration_lead.calls[0]["schema"] is BeatVisual
+    assert html_author.calls[0]["pass_id"] == "H"
+    assert html_author.calls[0]["mode"] == "BEAT_VISUAL_REPAIR"
+    assert html_author.calls[0]["schema"] is BeatVisual
 
 
 def test_repair_beat_visual_only_offers_claims_from_this_beats_own_source_units():
-    narration_lead = FakeNarrationLead(BeatVisual(beat_id="B01", heading="h", subheading="s", scenes=[]))
+    html_author = FakeHtmlAuthor(BeatVisual(beat_id="B01", heading="h", subheading="s", scenes=[]))
     plan = make_plan()
     claims = [
         Claim(claim_id="C1", source_unit="u1", claim="from B01", type="definition"),
         Claim(claim_id="C2", source_unit="u2", claim="from B02", type="definition"),
     ]
 
-    repair_beat_visual(plan.beats[0], plan, claims, narration_lead, [])
+    repair_beat_visual(plan.beats[0], plan, claims, html_author, [])
 
-    sent_claim_ids = {c["claim_id"] for c in narration_lead.calls[0]["payload"]["available_claims"]}
+    sent_claim_ids = {c["claim_id"] for c in html_author.calls[0]["payload"]["available_claims"]}
     assert sent_claim_ids == {"C1"}
+
+
+def test_required_qualifiers_and_scope_reach_the_repair_payload():
+    """STORY_IMPROVEMENT_PLAN.md Phase 10 follow-up: same fix as the first H pass -- a repair
+    round must not lose the qualifier context either."""
+    html_author = FakeHtmlAuthor(BeatVisual(beat_id="B01", heading="h", subheading="s", scenes=[]))
+    plan = make_plan()
+    claims = [Claim(
+        claim_id="C1", source_unit="u1", claim="reaching forward works", type="mechanism",
+        scope="MODEL_SPECIFIC", required_qualifiers=["only for unmasked/bidirectional attention"],
+    )]
+
+    repair_beat_visual(plan.beats[0], plan, claims, html_author, [])
+
+    offered = html_author.calls[0]["payload"]["available_claims"][0]
+    assert offered["required_qualifiers"] == ["only for unmasked/bidirectional attention"]
+    assert offered["scope"] == "MODEL_SPECIFIC"
+
+
+def test_repair_prompt_instructs_preserving_required_qualifiers():
+    from editing.html_repair import REPAIR_TASK_PROMPT
+
+    assert "required_qualifiers" in REPAIR_TASK_PROMPT
+
+
+def test_repair_prompt_bans_latex_same_as_a_first_pass():
+    """PIPELINE_AUDIT_2026-09-17.md finding #7: every Agent.run call is stateless (no
+    conversation history), so a repair call has zero memory of the first pass's own LaTeX
+    ban -- a repair regenerating a beat with a math_block scene for an UNRELATED reason
+    (clipping, overflow) could silently reintroduce raw LaTeX while fixing the named issue."""
+    from editing.html_repair import REPAIR_TASK_PROMPT
+
+    assert "never LaTeX escape syntax" in REPAIR_TASK_PROMPT
+    assert "\\frac{}{}" in REPAIR_TASK_PROMPT
 
 
 def test_repair_beat_visual_carries_running_example_and_narration_text():
     """Phase 6 (BUG-5): a repair pass must have the same running_example/
     narration_text context as a first H pass, or it could reintroduce the
     exact drift a first pass was fixed to avoid."""
-    narration_lead = FakeNarrationLead(BeatVisual(beat_id="B01", heading="h", subheading="s", scenes=[]))
+    html_author = FakeHtmlAuthor(BeatVisual(beat_id="B01", heading="h", subheading="s", scenes=[]))
     plan = make_plan()
     plan.running_example = RunningExample(label="trophy/suitcase", values={"trophy": "9.6"})
     narration = [SceneNarration(scene_id="s1", sentences=[
         SentenceNarration(text="actual spoken line", sentence_type="technical_assertion"),
     ])]
 
-    repair_beat_visual(plan.beats[0], plan, [], narration_lead, [], narration)
+    repair_beat_visual(plan.beats[0], plan, [], html_author, [], narration)
 
-    payload = narration_lead.calls[0]["payload"]
+    payload = html_author.calls[0]["payload"]
     assert payload["running_example"]["label"] == "trophy/suitcase"
     sent_scene = next(s for s in payload["scenes"] if s["scene_id"] == "s1")
     assert sent_scene["narration_text"] == "actual spoken line"
@@ -127,24 +161,33 @@ def test_repair_beat_visual_carries_running_example_and_narration_text():
 # ---- repair_hero ----
 
 def test_repair_hero_passes_render_failures_and_uses_repair_mode():
-    narration_lead = FakeNarrationLead(HeroContent(badge="b", title="t", subtitle="s"))
+    html_author = FakeHtmlAuthor(HeroContent(badge="b", title="t", subtitle="s"))
     plan = make_plan()
     failures = [RenderIssue("rendered_invisible_required_content", "hero title invisible", scene_id="hero")]
 
-    result = repair_hero(plan, narration_lead, failures)
+    result = repair_hero(plan, html_author, failures)
 
     assert result == HeroContent(badge="b", title="t", subtitle="s")
-    assert narration_lead.calls[0]["mode"] == "HERO_REPAIR"
-    assert narration_lead.calls[0]["payload"]["render_failures"] == [
+    assert html_author.calls[0]["mode"] == "HERO_REPAIR"
+    assert html_author.calls[0]["payload"]["render_failures"] == [
         {"scene_id": "hero", "code": "rendered_invisible_required_content", "detail": "hero title invisible"}
     ]
 
 
 def test_repair_hero_carries_running_example():
-    narration_lead = FakeNarrationLead(HeroContent(badge="b", title="t", subtitle="s"))
+    html_author = FakeHtmlAuthor(HeroContent(badge="b", title="t", subtitle="s"))
     plan = make_plan()
     plan.running_example = RunningExample(label="trophy/suitcase")
 
-    repair_hero(plan, narration_lead, [])
+    repair_hero(plan, html_author, [])
 
-    assert narration_lead.calls[0]["payload"]["running_example"]["label"] == "trophy/suitcase"
+    assert html_author.calls[0]["payload"]["running_example"]["label"] == "trophy/suitcase"
+
+
+def test_repair_prompt_is_visual_first_but_never_allows_blank_screen_prose():
+    """STORY_IMPROVEMENT_PLAN.md Phase 14: same rebalancing as the first H pass."""
+    from editing.html_repair import REPAIR_TASK_PROMPT
+
+    assert "minimum" in REPAIR_TASK_PROMPT.lower()
+    assert "never blank" in REPAIR_TASK_PROMPT.lower()
+    assert "1-3 sentences of on-screen article prose" not in REPAIR_TASK_PROMPT

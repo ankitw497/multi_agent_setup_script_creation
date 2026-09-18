@@ -3,8 +3,8 @@
 Deterministic allocation, no LLM -- the actual fix for A2 being unreliable
 at summing a word budget across an entire multi-beat plan in one shot.
 """
-from planning.beat_word_budget import MIN_BEAT_WORDS, allocate_beat_word_budgets
-from planning.models import RetentionDeadline, StoryBeat
+from planning.beat_word_budget import MIN_BEAT_WORDS, allocate_beat_word_budgets, redistribute_rebudgeted_words
+from planning.models import RetentionDeadline, ScenePlan, StoryBeat
 
 
 def beat(beat_id, source_unit_ids=None, archetype_role="") -> StoryBeat:
@@ -110,3 +110,70 @@ def test_retention_deadline_already_satisfied_does_not_shrink_the_beat():
     without = allocate_beat_word_budgets(beats, target_duration_seconds=600)
 
     assert with_deadline == without
+
+
+# ---- redistribute_rebudgeted_words (STORY_IMPROVEMENT_PLAN.md Phase 12) --------------------
+
+def scene(scene_id, beat_id, word_budget=60, needs_rebudget=False) -> ScenePlan:
+    return ScenePlan(scene_id=scene_id, beat_id=beat_id, word_budget=word_budget, needs_rebudget=needs_rebudget)
+
+
+def test_no_beat_flagged_needs_rebudget_is_a_no_op():
+    scenes = [scene("B01_s01", "B01", 70), scene("B02_s01", "B02", 70)]
+    budgets = {"B01": 70, "B02": 70}
+    assert redistribute_rebudgeted_words(budgets, scenes) == scenes
+
+
+def test_a_flagged_beat_at_or_over_its_target_is_a_no_op():
+    """needs_rebudget with no actual deficit (the beat still hit its target) has nothing to
+    redistribute -- must not touch other beats' scenes for no reason."""
+    scenes = [scene("B01_s01", "B01", 70, needs_rebudget=True), scene("B02_s01", "B02", 70)]
+    budgets = {"B01": 70, "B02": 70}
+    assert redistribute_rebudgeted_words(budgets, scenes) == scenes
+
+
+def test_deficit_is_redistributed_to_scenes_in_non_flagged_beats():
+    """The real case doc §30.6 describes: a simple beat given an oversized target correctly
+    comes in under it (needs_rebudget) instead of padding -- the difference goes to a beat
+    with real remaining depth, not back onto the under-budget one."""
+    scenes = [
+        scene("B01_s01", "B01", 40, needs_rebudget=True),  # target 100, actual 40 -> deficit 60
+        scene("B02_s01", "B02", 60),
+        scene("B02_s02", "B02", 60),
+    ]
+    budgets = {"B01": 100, "B02": 120}
+
+    result = redistribute_rebudgeted_words(budgets, scenes)
+
+    by_id = {s.scene_id: s for s in result}
+    assert by_id["B01_s01"].word_budget == 40  # the under-budget beat itself is untouched
+    # the 60-word deficit is split across B02's two scenes, capped at 100 each
+    assert by_id["B02_s01"].word_budget + by_id["B02_s02"].word_budget == 120 + 60
+    assert by_id["B02_s01"].word_budget <= 100
+    assert by_id["B02_s02"].word_budget <= 100
+
+
+def test_redistribution_never_exceeds_a_scenes_100_word_hard_bound():
+    """Even a large deficit must never push a single scene's word_budget past ScenePlan's
+    own hard ceiling -- the excess simply goes unabsorbed rather than violating the bound."""
+    scenes = [
+        scene("B01_s01", "B01", 30, needs_rebudget=True),  # target 200, actual 30 -> deficit 170
+        scene("B02_s01", "B02", 95),
+    ]
+    budgets = {"B01": 200, "B02": 95}
+
+    result = redistribute_rebudgeted_words(budgets, scenes)
+
+    by_id = {s.scene_id: s for s in result}
+    assert by_id["B02_s01"].word_budget == 100  # capped, not 95 + 170
+
+
+def test_no_eligible_recipient_scenes_is_a_no_op():
+    """Every other scene already maxed out at 100 -- nothing can absorb the deficit, and that
+    must not crash or silently violate any scene's bound."""
+    scenes = [
+        scene("B01_s01", "B01", 40, needs_rebudget=True),
+        scene("B02_s01", "B02", 100),
+    ]
+    budgets = {"B01": 100, "B02": 100}
+    assert redistribute_rebudgeted_words(budgets, scenes) == scenes

@@ -50,6 +50,7 @@ def test_scene_payload_shape_reaches_the_call():
         "scene_id": "s1", "image_index": 0,
         "screen_prose": "the prose text", "narration_text": "the spoken text",
         "scene_function": "standard", "must_not_repeat": [], "running_example": {},
+        "required_qualifiers": [],
     }]
 
 
@@ -83,10 +84,28 @@ def test_scene_function_must_not_repeat_and_running_example_reach_the_call():
     assert sent["running_example"] == {"label": "trophy/suitcase"}
 
 
+def test_required_qualifiers_reach_the_call():
+    """STORY_IMPROVEMENT_PLAN.md Phase 10 follow-up: confirmed live gap (2026-09-15) -- H's
+    screen prose is written independently of narration and can drop a qualifier C2b would
+    catch on the narration side; C3 needs the same claim-level data to check the screen side."""
+    auditor = FakeVisualAuditor(VisualCritique(issues=[]))
+    budget = BudgetCounter(tier=DEFAULT_TIERS["longform"])
+    payloads = [scene_payload(
+        "s1", 0, "prose", "narration",
+        required_qualifiers=["only for unmasked/bidirectional attention"],
+    )]
+
+    critique_visuals(payloads, ["img"], auditor, budget)
+
+    sent = auditor.calls[0]["payload"]["scenes"][0]
+    assert sent["required_qualifiers"] == ["only for unmasked/bidirectional attention"]
+
+
 def test_prompt_instructs_checking_screen_prose_for_repetition_and_overclaim():
     assert "REPETITION" in TASK_PROMPT
     assert "OVERCLAIM" in TASK_PROMPT
     assert "must_not_repeat" in TASK_PROMPT
+    assert "required_qualifiers" in TASK_PROMPT
 
 
 def test_prompt_instructs_a_critical_carve_out_for_genuine_contradictions():

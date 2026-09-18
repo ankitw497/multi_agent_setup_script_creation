@@ -25,6 +25,17 @@ understand"), reflexive three-item lists, overly balanced "on one hand /
 on the other hand" framing, generic connective tissue ("moving on to...",
 "next, let's discuss..."), or a lecture-y tone with no person behind it.
 
+Two more, found live (STORY_IMPROVEMENT_PLAN.md Phase 23) on a real script this exact
+check already ran on, that this list didn't previously name -- both independently
+confirmed by the deterministic voice diagnostic on the same script, so treat them as real,
+not speculative:
+- CAUSAL-CONNECTOR CHAINING: several sentences across the script opening with "so",
+  "since", or "because" -- one or two is normal narration, but a pattern of leaning on the
+  same causal opener repeatedly reads as formulaic, not causal.
+- A REPEATED RHETORICAL DEVICE: the same construction (e.g. a "not X, but Y" contrast)
+  used more than 2-3 times across the whole script. Effective once or twice, a tell once it
+  becomes the script's default move for introducing a correction or reframing.
+
 Do not rewrite -- name the specific recurring pattern, where it shows up
 (scene_ids), and what must change (recommended_intent: a description of
 the pattern to break, never replacement prose). Use category="repetition"

@@ -196,6 +196,59 @@ def test_prompt_instructs_weighing_production_notes_as_direct_evidence():
     assert "production notes" in TASK_PROMPT.lower()
 
 
+def test_prompt_gives_the_cta_position_target_band():
+    """STORY_IMPROVEMENT_PLAN.md Phase 23, found live: verification/diagnostics/cta.py's
+    own CTA_POSITION_BAND = (0.20, 0.40) was never stated in A2's own prompt -- a real
+    generated script placed primary_after_beat at 100% through the story and measured RED,
+    with no way for the model to have known the target it was being graded against."""
+    from planning.story_planner import TASK_PROMPT
+
+    assert "20-40%" in TASK_PROMPT
+
+
+def test_prompt_warns_against_a_cta_that_implies_the_payoff_is_deferred_elsewhere():
+    """STORY_IMPROVEMENT_PLAN.md Phase 25 item 7, found live: a real CTA said "subscribe
+    for how they combine" about a combination the SAME video goes on to explain a few
+    beats later -- reading as if the answer lives in a different video when it doesn't."""
+    from planning.story_planner import TASK_PROMPT
+
+    assert "Never phrase the CTA as if the payoff is being withheld for elsewhere" in TASK_PROMPT
+
+
+def test_prompt_restricts_payoff_true_to_a_major_video_level_payoff():
+    """STORY_IMPROVEMENT_PLAN.md Phase 25 item 2, found live: a real plan marked
+    payoff=True on 10 of 12 beats (83%), making the field meaningless -- diagnostics and
+    the CTA placement rule that anchor to "the first beat with a real payoff" ended up
+    anchoring to an early, minor beat (8% of runtime) instead of the video's actual
+    central payoff (~50%). mini_payoffs already exists for smaller wins but was never
+    mentioned in this prompt at all."""
+    from planning.story_planner import TASK_PROMPT
+
+    assert "typically 1-3 for a full video" in TASK_PROMPT
+    assert "mini_payoffs" in TASK_PROMPT
+
+
+def test_prompt_requires_checking_the_chosen_title_against_must_cover():
+    """STORY_IMPROVEMENT_PLAN.md Phase 25 item 3, found live: scope_contract.must_cover
+    correctly listed the back-half content (masking, multi-head, cross-attention,
+    quadratic cost), but the title never got checked against it -- long-form never had
+    any prompt guidance on title SELECTION at all, unlike shorts' own hook-echo rule."""
+    from planning.story_planner import TASK_PROMPT
+
+    assert "check it against your own" in TASK_PROMPT
+    assert "must_cover" in TASK_PROMPT
+
+
+def test_prompt_requires_the_ending_to_echo_the_hooks_own_concrete_terms():
+    """STORY_IMPROVEMENT_PLAN.md Phase 23, found live: a real generated script's
+    ending.resolve_hook was thematically related to hook.promise but shared almost no
+    concrete language with it, and the mechanical word-overlap check
+    (verification/hard/structure.py) correctly flagged hook_promise_unpaid_by_ending."""
+    from planning.story_planner import TASK_PROMPT
+
+    assert "own concrete terms" in TASK_PROMPT
+
+
 def test_passes_target_duration_and_planning_wpm():
     story_lead = FakeStoryLead(make_plan())
     from planning.models import SourceBrief
@@ -491,3 +544,35 @@ def test_prompt_has_no_hardcoded_topic_vocabulary():
     lowered = TASK_PROMPT.lower()
     for term in ("trophy", "suitcase", "q/k/v", "softmax", "multi-head"):
         assert term not in lowered, f"found topic-specific term {term!r} in a generic per-video prompt"
+
+
+def test_needs_rebudget_words_are_redistributed_through_the_real_loop():
+    """STORY_IMPROVEMENT_PLAN.md Phase 12, end to end: a beat that flags
+    needs_rebudget keeps its own (smaller) actual word count, and the
+    deficit is redistributed to the other beat's scene -- confirms
+    plan_story() actually wires redistribute_rebudgeted_words() into its
+    real multi-beat loop, not just that the function works in isolation
+    (already covered by tests/planning/test_beat_word_budget.py)."""
+    from planning.models import SourceBrief
+
+    structure = make_plan(beats=[
+        StoryBeat(beat_id="B01", purpose="a", source_unit_ids=["u1"]),
+        StoryBeat(beat_id="B02", purpose="b", source_unit_ids=["u2"]),
+    ])
+    story_lead = SequencedStoryLead(
+        structure_response=structure,
+        beat_responses=[
+            BeatSceneExpansion(scenes=[{"visual_description": "x", "word_budget": 30, "needs_rebudget": True}]),
+            BeatSceneExpansion(scenes=[{"visual_description": "y", "word_budget": 83}]),
+        ],
+    )
+
+    plan = plan_story(
+        SourceBrief(topic="t", core_question="q", viewer_problem="p", central_insight="i"),
+        [], AssumptionLedger(), story_lead, BudgetCounter(tier=DEFAULT_TIERS["longform"]),
+        target_duration_seconds=60, source_units=[],
+    )
+
+    by_beat = {s.beat_id: s for s in plan.scene_plan}
+    assert by_beat["B01"].word_budget == 30  # the flagged beat's own scene is untouched
+    assert by_beat["B02"].word_budget == 100  # absorbed as much of the deficit as its 100-cap allows

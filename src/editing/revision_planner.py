@@ -59,7 +59,12 @@ names:
 - `rewrite_scenes` (naming specific `scene_id`s and the INTENT of the fix,
   never the prose itself) -- the default choice for a critique issue that
   already names specific `scene_ids` (repetition, pacing, a bad
-  transition, an overclaim). Most findings should end up here.
+  transition, an overclaim). Most findings should end up here. When the
+  finding is a critique issue, its own `recommended_intent` already names
+  the specific pattern to break -- carry that same specificity into your
+  own `intent` text rather than generalizing it into something vaguer
+  ("improve the voice" loses the "stop opening with So/Because/Since"
+  detail the rewrite pass actually needs to act on it).
 - `rewrite_beats` (naming the whole `beat_id`) -- ONLY when the problem
   genuinely spans every scene in that beat (e.g. the beat's entire causal
   arc needs restructuring, not just one or two sentences inside it). A

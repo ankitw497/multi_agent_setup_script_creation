@@ -54,3 +54,35 @@ def test_uses_pass_id_c1s_and_short_critic_mode():
     call = review_agent.calls[0]
     assert call["pass_id"] == "C1s"
     assert call["mode"] == "SHORT_CRITIC"
+
+
+def test_bridge_mode_defaults_to_none_and_reaches_the_payload():
+    """2026-09-15: confirmed live -- every one of 5 real shorts got a critical
+    RESERVED_OUTRO finding even though narration/short_generator.py's own prompt REQUIRES
+    a follow-up sentence when bridge.mode is SPOKEN. Root cause: this pass never received
+    bridge_mode at all, so its own unconditional "no reserved outro" rule couldn't tell a
+    required follow-up line from an unprompted one."""
+    from llm.budget import BudgetCounter, DEFAULT_TIERS
+
+    review_agent = FakeReviewAgent(ShortCritique(issues=[]))
+    critique_short("problem_fix", make_narration(), review_agent, BudgetCounter(tier=DEFAULT_TIERS["short"]))
+    assert review_agent.calls[0]["payload"]["bridge_mode"] == "NONE"
+
+
+def test_bridge_mode_is_passed_through_when_given():
+    from llm.budget import BudgetCounter, DEFAULT_TIERS
+
+    review_agent = FakeReviewAgent(ShortCritique(issues=[]))
+    critique_short(
+        "problem_fix", make_narration(), review_agent, BudgetCounter(tier=DEFAULT_TIERS["short"]),
+        bridge_mode="SPOKEN",
+    )
+    assert review_agent.calls[0]["payload"]["bridge_mode"] == "SPOKEN"
+
+
+def test_prompt_explains_bridge_mode_gates_the_reserved_outro_rule():
+    from review.short_critic import TASK_PROMPT
+
+    assert "bridge_mode" in TASK_PROMPT
+    assert "SPOKEN" in TASK_PROMPT
+    assert "REQUIRED" in TASK_PROMPT

@@ -87,3 +87,30 @@ def test_extract_claims_preserves_mode_stage_scope_when_the_model_sets_them():
 def test_extract_claims_handles_a_batch_with_no_claims_found():
     worker = FakeWorker([ExtractedClaims(claims=[])])
     assert extract_claims([make_unit("u1", 10)], worker) == []
+
+
+def test_production_meta_units_never_reach_the_model_at_all():
+    """STORY_IMPROVEMENT_PLAN.md Phase 11 (doc §30.8's source-meta-contamination case):
+    a production note like "Show Q/K/V before 0:30" describes how the piece is meant to be
+    built, not a checkable fact about the subject matter -- filtered deterministically before
+    the worker ever sees it, not left to the prompt alone."""
+    production_note = SourceUnit(id="production_notes", text="Show Q/K/V before 0:30", kind="PRODUCTION_META")
+    worker = FakeWorker([ExtractedClaims(claims=[])])
+
+    claims = extract_claims([production_note], worker, batch_words=6000)
+
+    assert claims == []
+    assert worker.calls == []  # not one call -- there was nothing left to send
+
+
+def test_production_meta_units_are_excluded_but_content_units_alongside_them_still_extract():
+    production_note = SourceUnit(id="production_notes", text="Show Q/K/V before 0:30", kind="PRODUCTION_META")
+    content_unit = make_unit("u1", 10)
+    worker = FakeWorker([ExtractedClaims(claims=[{"source_unit": "u1", "claim": "x", "type": "definition"}])])
+
+    claims = extract_claims([production_note, content_unit], worker, batch_words=6000)
+
+    assert len(claims) == 1
+    assert claims[0].source_unit == "u1"
+    sent_ids = {u["id"] for u in worker.calls[0]["payload"]["units"]}
+    assert sent_ids == {"u1"}

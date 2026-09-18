@@ -7,7 +7,7 @@ else survives byte-for-byte, and every finding type (rewrite_beats,
 technical_fixes, delete_or_compress) actually reaches the model.
 """
 from editing.models import DeleteOrCompress, RevisionPlan, RewriteBeat, RewriteScene, TechnicalFix
-from editing.targeted_rewrite import apply_targeted_rewrite
+from editing.targeted_rewrite import B2_BATCH_SIZE, apply_targeted_rewrite
 from narration.generator import GeneratedNarration
 from narration.models import SceneNarration, SentenceNarration
 from planning.models import (
@@ -214,6 +214,18 @@ def test_prompt_instructs_the_same_scene_function_and_running_example_rules_as_b
     assert "running_example" in TASK_PROMPT
 
 
+def test_prompt_warns_against_overusing_causal_connectors_and_repeated_devices():
+    """STORY_IMPROVEMENT_PLAN.md: confirmed live -- the same causal-connector/repeated-
+    device cap shipped to narration/generator.py (B1) was never propagated here (B2, the
+    actual rewrite executor both revision cycles used), so 12 sentences opening with
+    So/Because/Since and a 6x-repeated "not X, but Y" survived 2 full targeted-rewrite
+    cycles into the final emitted script."""
+    from editing.targeted_rewrite import TASK_PROMPT
+
+    assert "seasoning, not a default" in TASK_PROMPT
+    assert "not X, but Y" in TASK_PROMPT
+
+
 def test_prompt_has_no_hardcoded_topic_vocabulary():
     """Overfitting guard (STORY_IMPROVEMENT_PLAN.md's own Phase 3 precedent):
     this prompt runs on every future video's revision cycles regardless of
@@ -268,3 +280,67 @@ def test_rewrite_scenes_and_technical_fixes_on_the_same_scene_combine():
     payload_scene = narration_lead.calls[0]["payload"]["scenes"][0]
     assert "compress the repetition" in payload_scene["required_intent"]
     assert "C001" in payload_scene["required_intent"]
+
+
+class FakeNarrationLeadEcho:
+    """Rewrites every scene_id present in whatever payload it's called with --
+    used to verify chunking/merging across multiple B2 calls without hand-listing
+    every scene's response up front."""
+
+    def __init__(self):
+        self.calls = []
+
+    def run(self, **kwargs):
+        self.calls.append(kwargs)
+        scenes = [
+            {"scene_id": s["scene_id"], "sentences": [{"text": f"rewritten {s['scene_id']}", "sentence_type": "transition"}]}
+            for s in kwargs["payload"]["scenes"]
+        ]
+        return GeneratedNarration(scenes=scenes)
+
+
+def test_a_revision_plan_larger_than_one_batch_is_split_across_multiple_calls():
+    """ERR-065 (2026-09-15, found live on a gpt-5.6-sol run): a single B2 call
+    carrying 16 scenes' worth of claims timed out at the 300s ceiling ERR-051
+    had raised. Must chunk into multiple calls of at most B2_BATCH_SIZE scenes
+    each, never one unbounded call."""
+    scene_count = B2_BATCH_SIZE * 2 + 1  # forces 3 batches: 5, 5, 1
+    plan = make_plan(
+        beats=[StoryBeat(beat_id="B01", purpose="x", source_unit_ids=["u1"])],
+        scene_plan=[ScenePlan(scene_id=f"s{i}", beat_id="B01", word_budget=40) for i in range(scene_count)],
+    )
+    narration = [
+        SceneNarration(scene_id=f"s{i}", sentences=[SentenceNarration(text="original", sentence_type="transition")])
+        for i in range(scene_count)
+    ]
+    narration_lead = FakeNarrationLeadEcho()
+    revision_plan = RevisionPlan(run_id="r", rewrite_beats=[RewriteBeat(beat_id="B01", reason="x", intent="tighten")])
+
+    result = apply_targeted_rewrite(plan, narration, [], revision_plan, narration_lead)
+
+    assert len(narration_lead.calls) == 3
+    assert [len(c["payload"]["scenes"]) for c in narration_lead.calls] == [B2_BATCH_SIZE, B2_BATCH_SIZE, 1]
+    # every scene actually got rewritten, regardless of which batch it landed in
+    result_by_id = {s.scene_id: s for s in result}
+    for i in range(scene_count):
+        assert result_by_id[f"s{i}"].sentences[0].text == f"rewritten s{i}"
+
+
+def test_a_small_revision_plan_still_makes_exactly_one_call():
+    narration_lead = FakeNarrationLeadEcho()
+    revision_plan = RevisionPlan(run_id="r", rewrite_beats=[RewriteBeat(beat_id="B01", reason="x", intent="tighten")])
+
+    apply_targeted_rewrite(make_plan(), make_narration(), [], revision_plan, narration_lead)
+
+    assert len(narration_lead.calls) == 1
+
+
+def test_prompt_carries_the_shared_factual_invariants():
+    """STORY_IMPROVEMENT_PLAN.md Phase 12: confirmed real gap -- this prompt
+    used to have no hedging/upgrade language at all, so a targeted rewrite
+    could reintroduce exactly the overclaim B1 was told to avoid."""
+    from editing.targeted_rewrite import TASK_PROMPT
+    from narration.factual_invariants import NARRATION_FACTUAL_INVARIANTS
+
+    assert NARRATION_FACTUAL_INVARIANTS in TASK_PROMPT
+    assert "NEVER UPGRADE" in TASK_PROMPT

@@ -1,6 +1,6 @@
 """Tests for review/style_critic.py -- C5 (plan §8, §11.5)."""
 from narration.models import SceneNarration, SentenceNarration
-from review.style_critic import StyleCritique, critique_style
+from review.style_critic import TASK_PROMPT, StyleCritique, critique_style
 
 
 def make_narration() -> list[SceneNarration]:
@@ -60,3 +60,15 @@ def test_never_returns_replacement_prose_only_intent():
     }]))
     issues = critique_style(make_narration(), review_agent, BudgetCounter(tier=DEFAULT_TIERS["longform"]))
     assert "replacement_text" not in type(issues[0]).model_fields
+
+
+def test_prompt_names_causal_connector_chaining_and_repeated_rhetorical_devices():
+    """STORY_IMPROVEMENT_PLAN.md Phase 23, found live: C5 already ran on a real script
+    (voice was AMBER) and caught a real tell, but its own prompt never named causal-
+    connector chaining or a repeated rhetorical device -- even though
+    verification/diagnostics/voice.py's own check_voice independently measured BOTH as
+    out-of-band (causal_per100w, burstiness) on that exact same script. C5 running and
+    still missing what the mechanical diagnostic already measured was the actual gap."""
+    assert "CAUSAL-CONNECTOR CHAINING" in TASK_PROMPT
+    assert "REPEATED RHETORICAL DEVICE" in TASK_PROMPT
+    assert "not X, but Y" in TASK_PROMPT

@@ -1,4 +1,4 @@
-"""H REPAIR (Narration Lead / Sonnet, subscription lane) (plan §13, §15, V1C).
+"""H REPAIR (HTML Author / Sonnet, subscription lane) (plan §13, §15, V1C).
 
 Fixes structural render failures by regenerating ONLY the affected beat's
 screen prose/component choices -- reuses H's own `BeatVisual`/`HeroContent`
@@ -30,9 +30,12 @@ choices to resolve those specific failures -- do not otherwise change
 content for scenes not named in `render_failures`.
 
 For each scene in this beat:
-- `screen_prose`: 1-3 sentences of on-screen article prose, NOT spoken
-  narration. If this scene's failure was clipping/overflow, shorten the
-  prose or simplify the component data enough to fit; if it was
+- `screen_prose`: the minimum real text needed to support this scene's
+  dominant visual object, NOT spoken narration -- visual-first, never a
+  paragraph doing what a component could do instead, but never blank (a
+  component/diagram alone is never a substitute for real screen text). If
+  this scene's failure was clipping/overflow, shorten the prose or
+  simplify the component data enough to fit; if it was
   invisible-required-content, make sure real prose is present at all; if
   it was low contrast, that is a design-token issue this pass cannot fix
   by changing content -- leave the prose as the best version you can write
@@ -44,6 +47,21 @@ For each scene in this beat:
   blank.
 - `annotated_numbers`: as in a first pass -- exact substrings backed by a
   real claim.
+- As in a first pass, a claim in `available_claims` may carry
+  `required_qualifiers`/`scope` -- preserve them; do not describe a
+  conditional mechanism as universal while fixing an unrelated render
+  failure.
+- Any mathematical or algorithmic expression, in `screen_prose` OR
+  `component_data`, must use plain, readable notation only -- e.g. "a /
+  sqrt(b)" or "f(x)" -- never LaTeX escape syntax (`\\frac{}{}`,
+  `\\sqrt{}`, `\\operatorname{}`, `\\left`/`\\right`, `\\cdot`, `\\top`, and
+  similar backslash commands). This rule applies here too, not just on a
+  first pass -- this call has no memory of the original ban (every call is
+  stateless), and a repair regenerating a beat with a math_block/equation
+  scene for an UNRELATED reason (clipping, overflow) can silently
+  reintroduce LaTeX while fixing the named issue. This page renders no
+  LaTeX engine -- raw LaTeX source shows up as literal broken text on
+  screen.
 
 Also write this beat's own `heading` and `subheading`, matching a first
 H pass's own rules (a real, specific `<h2>`, never generic).
@@ -67,7 +85,10 @@ it, reuse its exact named objects/values.
 
 
 def _claim_payload(claim: Claim) -> dict:
-    return {"claim_id": claim.claim_id, "claim": claim.claim, "numbers": claim.numbers}
+    return {
+        "claim_id": claim.claim_id, "claim": claim.claim, "numbers": claim.numbers,
+        "scope": claim.scope, "required_qualifiers": claim.required_qualifiers,
+    }
 
 
 def _render_failure_payload(issue: RenderIssue) -> dict:
@@ -96,7 +117,7 @@ def beats_to_repair(plan: StoryPlan, flagged_scene_ids: set[str]) -> dict[str, l
 
 
 def repair_beat_visual(
-    beat: StoryBeat, plan: StoryPlan, claims: list[Claim], narration_lead: Agent,
+    beat: StoryBeat, plan: StoryPlan, claims: list[Claim], html_author: Agent,
     render_failures: list[RenderIssue], narration: list[SceneNarration] = (),
 ) -> BeatVisual:
     scenes = [s for s in plan.scene_plan if s.beat_id == beat.beat_id]
@@ -121,20 +142,20 @@ def repair_beat_visual(
         "render_failures": [_render_failure_payload(i) for i in render_failures],
         "running_example": plan.running_example.model_dump(),
     }
-    return narration_lead.run(
+    return html_author.run(
         pass_id="H", mode="BEAT_VISUAL_REPAIR", task_prompt=REPAIR_TASK_PROMPT,
         payload=payload, schema=BeatVisual, timeout_s=180,
     )
 
 
-def repair_hero(plan: StoryPlan, narration_lead: Agent, render_failures: list[RenderIssue]) -> HeroContent:
+def repair_hero(plan: StoryPlan, html_author: Agent, render_failures: list[RenderIssue]) -> HeroContent:
     payload = {
         "story_promise": plan.story_promise, "hook_promise": plan.hook.promise,
         "hook_tension": plan.hook.tension, "title_promise": plan.title.promise,
         "render_failures": [_render_failure_payload(i) for i in render_failures],
         "running_example": plan.running_example.model_dump(),
     }
-    return narration_lead.run(
+    return html_author.run(
         pass_id="H", mode="HERO_REPAIR", task_prompt=HERO_REPAIR_TASK_PROMPT,
         payload=payload, schema=HeroContent, timeout_s=120,
     )

@@ -61,3 +61,15 @@ def test_uses_pass_id_sc_and_candidate_finder_mode():
     call = worker.calls[0]
     assert call["pass_id"] == "SC"
     assert call["mode"] == "CANDIDATE_FINDER"
+
+
+def test_prompt_warns_sc_against_over_suggesting_problem_fix():
+    """2026-09-16, found on review: A2s's own prompt already had to be fixed for
+    over-selecting `problem_fix` for any problem-then-mechanism candidate (almost all
+    of them) -- but SC's `micro_arc_suggestion` prompt, one stage earlier, never carried
+    the same caution. A2s "may override" SC's suggestion, but a biased suggestion sitting
+    in context is a real anchor even when it's technically non-binding."""
+    from planning.candidate_finder import TASK_PROMPT
+
+    assert "over-suggests" in TASK_PROMPT
+    assert "guess honestly, not reflexively" in TASK_PROMPT

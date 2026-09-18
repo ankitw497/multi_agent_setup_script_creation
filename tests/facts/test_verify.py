@@ -1,7 +1,8 @@
 """Tests for facts/verify.py -- C2a (plan §6.5)."""
 from facts.models import Claim, NumericClaim
 from facts.verify import (
-    ClaimVerdict, ClaimVerdicts, verify_claims, verify_claims_with_llm, verify_numeric_linked_claims,
+    ClaimVerdict, ClaimVerdicts, find_claims_with_no_verdict, verify_claims, verify_claims_with_llm,
+    verify_numeric_linked_claims,
 )
 from facts.web_evidence import WebSearchResult
 
@@ -63,6 +64,22 @@ def test_all_verified_needs_only_one_call_no_evidence_loop():
     result = verify_claims_with_llm(claims, review_lead, BudgetCounter(tier=DEFAULT_TIERS["longform"]), tmp_references := __import__("pathlib").Path("/nonexistent"))
     assert len(review_lead.calls) == 1  # no second pass -- nothing needed evidence
     assert result[0].verification_status == "VERIFIED"
+
+
+def test_initial_verdict_call_enables_real_web_search():
+    """STORY_IMPROVEMENT_PLAN.md Phase 23: confirmed live that references_dir is always
+    empty and web_backend is never passed by the real CLI, so a real, easily-verifiable
+    claim had no path to ever become VERIFIED. Native Gemini web search on this call lets
+    the model search for itself while forming its very first verdict."""
+    claims = [make_claim("C001", claim_type="definition")]
+    review_lead = FakeReviewLead([
+        ClaimVerdicts(verdicts=[ClaimVerdict(claim_id="C001", verification_status="VERIFIED", reasoning="matches source")]),
+    ])
+    from llm.budget import BudgetCounter, DEFAULT_TIERS
+
+    verify_claims_with_llm(claims, review_lead, BudgetCounter(tier=DEFAULT_TIERS["longform"]), __import__("pathlib").Path("/nonexistent"))
+
+    assert review_lead.calls[0]["enable_web_search"] is True
 
 
 def test_unverified_with_no_local_evidence_stays_unverified_without_a_second_call(tmp_path):
@@ -195,6 +212,84 @@ def test_a_claim_the_model_never_returned_a_verdict_for_is_not_silently_dropped(
     assert len(result) == 2
     assert result[1].claim_id == "C002"
     assert result[1].verification_status == "UNVERIFIED"  # untouched default
+
+
+def test_initial_verdict_call_uses_a_generous_max_tokens():
+    """Found live, 2026-09-16: enabling web search (see the test above) made verdicts
+    verbose enough that a real 40-claim batch hit LiteLLMBackend's hardcoded 4096-token
+    default and silently truncated, dropping 21/80 claims. Raised explicitly on this call."""
+    claims = [make_claim("C001", claim_type="definition")]
+    review_lead = FakeReviewLead([
+        ClaimVerdicts(verdicts=[ClaimVerdict(claim_id="C001", verification_status="VERIFIED", reasoning="ok")]),
+    ])
+    from llm.budget import BudgetCounter, DEFAULT_TIERS
+
+    verify_claims_with_llm(claims, review_lead, BudgetCounter(tier=DEFAULT_TIERS["longform"]),
+                            __import__("pathlib").Path("/nonexistent"))
+
+    assert review_lead.calls[0]["max_tokens"] >= 8000
+
+
+def test_re_verify_with_evidence_call_also_uses_a_generous_max_tokens(tmp_path):
+    (tmp_path / "spec.md").write_text("The A100 has 80GB of HBM2e memory.")
+    claims = [make_claim("C001", claim_type="implementation")]
+    review_lead = FakeReviewLead([
+        ClaimVerdicts(verdicts=[ClaimVerdict(
+            claim_id="C001", verification_status="UNVERIFIED", reasoning="can't confirm",
+            needs_evidence="the A100's memory size",
+        )]),
+        ClaimVerdicts(verdicts=[ClaimVerdict(claim_id="C001", verification_status="VERIFIED", reasoning="confirmed")]),
+    ])
+    from llm.budget import BudgetCounter, DEFAULT_TIERS
+
+    verify_claims_with_llm(claims, review_lead, BudgetCounter(tier=DEFAULT_TIERS["longform"]), tmp_path)
+
+    assert len(review_lead.calls) == 2
+    assert review_lead.calls[1]["max_tokens"] >= 8000
+
+
+# ---- find_claims_with_no_verdict -------------------------------------------------
+
+def test_finds_a_claim_that_never_got_a_verdict():
+    claims = [make_claim("C001"), make_claim("C002")]
+    review_lead = FakeReviewLead([
+        ClaimVerdicts(verdicts=[ClaimVerdict(claim_id="C001", verification_status="VERIFIED", reasoning="ok")]),
+    ])
+    from llm.budget import BudgetCounter, DEFAULT_TIERS
+
+    result = verify_claims_with_llm(claims, review_lead, BudgetCounter(tier=DEFAULT_TIERS["longform"]),
+                                     __import__("pathlib").Path("/nonexistent"))
+
+    assert find_claims_with_no_verdict(result) == ["C002"]
+
+
+def test_a_legitimate_unverified_verdict_is_not_flagged():
+    """A real UNVERIFIED verdict always carries evidence (the model's own reasoning,
+    attached as a SOURCE entry) -- only a claim with BOTH fields still at Claim's own
+    pristine defaults means no verdict was ever recorded, distinguishing a real "the model
+    couldn't confirm this" outcome from "the model never even saw this claim's tail end"."""
+    claims = [make_claim("C001", claim_type="implementation")]
+    review_lead = FakeReviewLead([
+        ClaimVerdicts(verdicts=[ClaimVerdict(
+            claim_id="C001", verification_status="UNVERIFIED", reasoning="can't confirm from source",
+        )]),
+    ])
+    from llm.budget import BudgetCounter, DEFAULT_TIERS
+
+    result = verify_claims_with_llm(claims, review_lead, BudgetCounter(tier=DEFAULT_TIERS["longform"]),
+                                     __import__("pathlib").Path("/nonexistent"))
+
+    assert find_claims_with_no_verdict(result) == []
+
+
+def test_a_verified_claim_is_not_flagged():
+    assert find_claims_with_no_verdict([make_claim("C001").model_copy(update={
+        "verification_status": "VERIFIED",
+    })]) == []  # has no evidence attached in this bare model_copy, but isn't UNVERIFIED
+
+
+def test_no_claims_is_an_empty_list():
+    assert find_claims_with_no_verdict([]) == []
 
 
 # ---- verify_claims: full pipeline, arithmetic + LLM together --------------------

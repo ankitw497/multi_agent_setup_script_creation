@@ -67,6 +67,27 @@ def test_low_confidence_escalates_even_if_not_flagged():
     assert len(review_agent.calls) == 1
 
 
+def test_a_critical_severity_from_gemini_is_forced_down_to_major():
+    """2026-09-16: confirmed as a real gap on review -- unlike every other critic in
+    this codebase, _GEMINI_PROMPT never told the model what severity scale to use, so
+    nothing prevented a real "critical" cold-hook finding from silently becoming a hard
+    gate (or, since Phase 20, a targeted-rewrite trigger) despite the documented design
+    that cold-hook is always feedback, never a mechanical hard gate (plan §20.10). Now
+    enforced in code, not just prompted -- a model that ignores the prompt and returns
+    "critical" anyway must still come back as "major"."""
+    worker = FakeWorker(ColdHookVerdict(flagged=True))
+    review_agent = FakeReviewAgent(ColdHookCritique(issues=[{
+        "issue_id": "I1", "severity": "critical", "category": "hook", "layer": "STORY",
+        "problem": "a model that ignored the prompt's own severity instruction", "why_it_matters": "x",
+        "recommended_intent": "y", "repair_owner": "story_lead",
+    }]))
+
+    issues = critique_cold_hook("t", "n", "v", worker, review_agent, make_budget())
+
+    assert len(issues) == 1
+    assert issues[0].severity == "major"
+
+
 def test_gemini_can_clear_a_haiku_flag():
     """A flagged Haiku pass isn't automatically an issue -- Gemini's
     independent read is what actually decides."""

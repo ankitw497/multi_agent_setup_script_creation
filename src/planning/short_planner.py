@@ -39,29 +39,114 @@ long-form insight is often a poor short; a side observation is sometimes
 the strongest one.
 
 Design each selected candidate as its own short:
-- `title`: a short, concrete title -- must be semantically the same
-  promise as the hook event and the central payoff (never a mismatch
-  between what the title promises and what the short actually delivers).
+- `title`: a SHORT title (3-8 words, a real title, never a full sentence
+  copied verbatim from the hook or payoff) that still REUSES 2-3 actual
+  concrete words or phrases from the hook event, the central payoff, or
+  `central_insight` -- not just a thematically-related abstract label. A
+  title checked mechanically for shared words against those three; an
+  abstract technical label ("Pronoun Resolution in Language Models") that
+  never says any of their own concrete words fails that check even when
+  it's thematically on-topic -- but copying an entire sentence verbatim
+  ("With d_k = 128, a score like 12.5 is typical...") isn't a title
+  either. Pull 2-3 real words FROM their concrete language into a short,
+  punchy phrase -- don't paraphrase away from them, and don't just quote
+  them wholesale.
+  A third failure mode, distinct from both above: a title built ENTIRELY
+  from technical/jargon terminology that appears in `central_insight` but
+  never in the hook's own concrete language also fails this check, even
+  though it looks specific rather than vague. Confirmed live: a title
+  "Permutation Equivariance Limitation" for a hook about shuffling "token
+  cards" shared almost no words with either the hook or its own payoff --
+  reach into the HOOK's concrete language too, not just `central_insight`'s
+  technical framing.
+  This check matches EXACT words, never a different grammatical form of
+  the same root (no stemming) -- "equivariant" and "Equivariance" count as
+  completely different words even though a person reads them as the same
+  concept. When you pull a word from the hook/payoff/`central_insight`,
+  reuse the SAME form it already appears in there, not a noun/verb/
+  adjective variant of it.
 - `goal`: DISCOVERY (new-viewer reach), BRIDGE (payoff opens onto the
   parent's larger question), or SERIES (recognisably one piece of a
   larger series) -- pick whichever this candidate genuinely serves best.
+  Each candidate already carries its own `bridge_question` from the earlier
+  candidate-finder pass -- when it's non-empty, that IS a real, already-
+  judged signal this candidate has bridge potential; do not silently ignore
+  it just because this prompt's own instructions focus on the fields below.
+  DISCOVERY is the safe default this pass reaches for even when a
+  candidate's own payoff (or its own non-empty `bridge_question`) genuinely
+  opens onto the parent's larger question or clearly belongs to a
+  recognisable series -- confirmed live: a full batch landed 100% DISCOVERY
+  when at least one candidate's payoff (e.g. "so what happens to the OTHER
+  heads?") plainly invited BRIDGE or SERIES.
+  Before defaulting a candidate to DISCOVERY, ask honestly whether its own
+  payoff already gestures at a bigger question or a next piece -- all three
+  goals grow the channel, but differently (plan §20.1), and a batch that
+  never varies has quietly given up two of the three growth levers.
 - `central_insight`: the ONE thing this short teaches.
 - `micro_arc`: contradiction_resolution / problem_fix / before_after /
   question_answer / prediction_explanation / myth_correction /
   mini_derivation -- may differ from the candidate's own suggestion if a
-  different arc fits better.
+  different arc fits better. Whichever you choose, `setup` (or
+  `mechanism` for `mini_derivation` only) MUST actually contain the real,
+  source-grounded content that arc requires, or the narration pass
+  downstream has nothing true to narrate and either invents something
+  ungrounded or silently drops the requirement:
+  - `contradiction_resolution`: `setup` states two facts from the source
+    that genuinely conflict or are in tension.
+  - `problem_fix`: `setup` names a real naive/intuitive attempt (grounded
+    in the source, not invented) and states that it fails or falls short
+    -- distinct from just stating the problem. `problem_fix` is the arc
+    this pass defaults to reaching for even when it doesn't fit -- do NOT
+    pick it just because a candidate has a problem-then-mechanism shape
+    (almost every candidate does). Pick it ONLY when the source material
+    gives you a genuine, nameable naive/intuitive attempt that actually
+    fails -- not merely "the problem" restated. If you cannot name that
+    specific failed attempt as a concrete sentence right now, this
+    candidate is NOT a `problem_fix` short -- use `before_after` or
+    `mini_derivation` instead, which fit a plain problem-then-mechanism
+    shape without requiring a failed attempt at all.
+  - `before_after`: `setup` states the concrete "before" state.
+  - `question_answer`: `setup` poses the actual question explicitly.
+  - `prediction_explanation`: `setup` states the specific prediction.
+  - `myth_correction`: `setup` names the common myth/misconception itself.
+  - `mini_derivation`: `mechanism` walks through one real derivation step.
+  If the source material genuinely has nothing to support your chosen
+  arc's required beat, choose a different arc rather than forcing it.
 - `hook`: the interesting thing happening in the first 0-3 seconds
   (`starts_at_seconds` must be within that window) -- a visual may carry
   it before narration does.
 - `setup`: the minimum context needed (should read as roughly a 3-10
-  second beat, not a preamble).
+  second beat, not a preamble) -- see the micro_arc requirement above for
+  what else it must contain.
 - `mechanism`: ONE mechanism, not a tour of several.
 - `payoff_central`: the central payoff; `micro_payoffs` for any smaller
   ones along the way.
 - `bridge`: PLATFORM_LINK / ONSCREEN / SPOKEN / NONE -- NONE is a valid
   and often correct choice; do not force a bridge that weakens the ending.
-- `visual`: the dominant object, its states, and safe zones to keep clear
-  of platform UI overlays.
+  But NONE for every short in a batch, batch after batch, is its own bias
+  in the other direction, and subscribe is explicitly allowed to be earned
+  here (plan §20.1: "optional, only after value, <=8 words"). When a
+  payoff naturally invites "there's more where this came from" -- a BRIDGE
+  goal, or a mechanism that's visibly step one of a larger idea -- a single
+  short SPOKEN or ONSCREEN follow line (<=8 words, after the payoff, never
+  replacing it) costs the ending nothing and gives a real viewer a real
+  next action. Reach for it whenever the payoff genuinely supports it, not
+  only when leaving it out would look obviously wrong. When you pick
+  ONSCREEN or PLATFORM_LINK, you MUST also fill in `cta_text` with that
+  exact short line (<=8 words, e.g. "Part 2 breaks down what's next") --
+  it is rendered as on-screen text, not spoken, so an empty `cta_text`
+  means nothing is ever shown at all. SPOKEN needs no `cta_text` (the line
+  belongs in the narration itself); leave it empty for NONE too.
+- `visual`: `dominant_object` (the one concrete thing the short visually
+  centers on) is not enough by itself -- `states` MUST also be filled in,
+  or the mechanism screen renders as plain text with no diagram at all.
+  Give 2-4 short labels (2-4 words each) naming the SEQUENTIAL stages the
+  dominant object visibly moves through, matching the mechanism's own
+  steps -- e.g. for a scaling short: `["raw scores", "scaled scores",
+  "softmax weights"]`; for a masking short: `["unmasked", "masked",
+  "zeroed after softmax"]`. This is not optional decoration -- an empty
+  `states` list is a real content gap, not a valid "no diagram needed"
+  signal. Also give `safe_zones` to keep clear of platform UI overlays.
 - `source_beat_ids`: the exact beat id(s) (from the ones given) this
   design is actually built from -- never invent a beat id.
 
@@ -149,3 +234,28 @@ def plan_shorts(
             visual=draft.visual, narration=draft.narration,
         ))
     return plans
+
+
+def check_bridge_selection_defaulted(candidates: list[ShortsCandidate], plans: list[ShortPlan]) -> str | None:
+    """STORY_IMPROVEMENT_PLAN.md Phase 23 continuation, 2026-09-16: ERR-072's own prompt
+    nudge (encourage BRIDGE/a follow line when the payoff supports it) has now shown 0%
+    variation across two full real verification rounds (v08, v10 -- 10 shorts total) -- real
+    evidence a prompt-only nudge alone isn't reliably changing behavior. This does NOT
+    override the model's own selection (a real `bridge_question` candidate can legitimately
+    lose to a stronger DISCOVERY candidate on other merits, and forcing a worse selection just
+    to hit a variety target would be its own mistake) -- it only makes a real, already-
+    computed signal VISIBLE when the model's own selection looks like a reflexive default
+    rather than a genuine judgement call, the same "measure before gating" discipline Phase
+    22's audit mechanism already uses. Returns `None` when there's nothing worth flagging
+    (either the selection already varied, or no candidate ever had a real bridge signal to
+    weigh in the first place)."""
+    if not plans or any(p.goal != "DISCOVERY" or p.bridge.mode != "NONE" for p in plans):
+        return None
+    with_signal = [c for c in candidates if c.bridge_question.strip()]
+    if not with_signal:
+        return None
+    return (
+        f"NOTE: all {len(plans)} selected short(s) landed on goal=DISCOVERY/bridge=NONE, but "
+        f"{len(with_signal)} of {len(candidates)} candidates had a real bridge_question -- "
+        "worth checking whether this was a genuine judgement call or a reflexive default."
+    )

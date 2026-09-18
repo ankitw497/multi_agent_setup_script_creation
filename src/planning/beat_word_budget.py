@@ -12,7 +12,7 @@ only at verification time).
 """
 from __future__ import annotations
 
-from planning.models import RetentionDeadline, StoryBeat
+from planning.models import RetentionDeadline, ScenePlan, StoryBeat
 
 PLANNING_WPM = 167
 MIN_BEAT_WORDS = 30  # ScenePlan's own hard floor (plan §9) -- a beat allocated less than
@@ -103,3 +103,64 @@ def _redistribute(
             share = round(extra_words * weight / total_weight)
         allocations[beat.beat_id] += share
         distributed += share
+
+
+def redistribute_rebudgeted_words(
+    beat_word_budgets: dict[str, int], scene_plan: list[ScenePlan],
+) -> list[ScenePlan]:
+    """STORY_IMPROVEMENT_PLAN.md Phase 12: A2b may set `ScenePlan.needs_rebudget=True` on a
+    beat's scenes when that beat's real content genuinely didn't support its allocated
+    `target_words` without padding -- a legitimate outcome, not a defect. The words it left on
+    the table are redistributed here, deterministically, to scenes in beats that did NOT flag
+    it (real remaining depth), each scene capped at its own 30-100 hard bound
+    (`ScenePlan.word_budget`'s own `Field` constraint) -- never forced back onto the
+    under-budget beat as filler, and never a second LLM call.
+
+    A no-op (returns `scene_plan` unchanged) when nothing flagged `needs_rebudget`, or when
+    every other scene is already at its own 100-word ceiling."""
+    scenes_by_beat: dict[str, list[ScenePlan]] = {}
+    for scene in scene_plan:
+        scenes_by_beat.setdefault(scene.beat_id, []).append(scene)
+
+    flagged_beat_ids = {
+        beat_id for beat_id, scenes in scenes_by_beat.items() if any(s.needs_rebudget for s in scenes)
+    }
+    if not flagged_beat_ids:
+        return scene_plan
+
+    deficit = sum(
+        max(0, beat_word_budgets.get(beat_id, 0) - sum(s.word_budget for s in scenes))
+        for beat_id, scenes in scenes_by_beat.items() if beat_id in flagged_beat_ids
+    )
+    if deficit <= 0:
+        return scene_plan
+
+    eligible_ids = [
+        s.scene_id for s in scene_plan if s.beat_id not in flagged_beat_ids and s.word_budget < 100
+    ]
+    if not eligible_ids:
+        return scene_plan  # nothing left with headroom -- fine, the target is a soft band anyway
+
+    current = {s.scene_id: s.word_budget for s in scene_plan}
+    remaining = deficit
+    pool = list(eligible_ids)
+    while remaining > 0 and pool:
+        share = max(1, remaining // len(pool))
+        next_pool = []
+        for scene_id in pool:
+            headroom = 100 - current[scene_id]
+            if headroom <= 0:
+                continue
+            add = min(share, headroom, remaining)
+            current[scene_id] += add
+            remaining -= add
+            if current[scene_id] < 100:
+                next_pool.append(scene_id)
+            if remaining <= 0:
+                break
+        pool = next_pool
+
+    return [
+        s.model_copy(update={"word_budget": current[s.scene_id]}) if current[s.scene_id] != s.word_budget else s
+        for s in scene_plan
+    ]

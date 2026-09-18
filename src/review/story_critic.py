@@ -88,29 +88,50 @@ Check, in order:
    problem within the hook itself, not several scenes later. Use
    `category: pacing`.
 
-9. OVERCLAIM. Flag narration that states more certainty or mechanism than
-   is actually justified by the source, regardless of the video's topic:
-   - Hard-selection language describing a mechanism that is actually
-     soft/weighted or probabilistic -- narrating a graded, weighted
-     contribution as if it were a single discrete pick.
-   - Claiming one single component or step fully causes or resolves an
-     outcome that the source actually attributes to several components
-     acting together -- narrating a partial contribution as if it were the
-     entire explanation.
-   - A detail specific to one particular architecture, algorithm,
-     implementation, or system stated as if it were universal to every
-     version of the underlying general idea.
-   - A motivation or limitation claim overstated as an absolute
-     ("X can only ever do one thing") where the source's actual claim is
-     narrower or conditional.
-   - `scene_plan` gives each scene's `mechanism_scope` -- the recorded
-     scope of any mechanism whose applicability is conditional rather than
-     universal. If a scene's narration states such a mechanism without its
-     recorded condition (e.g. as if it applies unconditionally, when
-     `mechanism_scope` says it only applies under a specific setup), that
-     is a CONFIRMED overclaim, not a suspected one -- the plan's own
-     record already settles it.
-   Use `category: clarity`.
+9. MECHANISM SCOPE. `scene_plan` gives each scene's `mechanism_scope` --
+   the recorded scope of any mechanism whose applicability is conditional
+   rather than universal (e.g. a technique that only applies under one
+   specific setup, not every version of the underlying idea). If a scene's
+   narration states such a mechanism without its recorded condition (e.g.
+   as if it applies unconditionally, when `mechanism_scope` says it only
+   applies under a specific setup), that is a CONFIRMED overclaim, not a
+   suspected one -- the plan's own record already settles it. Use
+   `category: clarity`. This also runs in the OTHER direction: if an
+   EARLIER scene establishes a mechanism as broad/unconditional (or under
+   one setup), and a LATER scene narrates a MORE RESTRICTED or otherwise
+   DIFFERENT version of that same mechanism (a stricter condition added, a
+   condition silently dropped, an exception introduced) with no explicit
+   transition marking the change of setup, that is the same class of
+   confirmed contradiction, read across the two scenes' own
+   `mechanism_scope` records, not judged from either scene alone -- missing
+   this exact shape on a real run is what prompted spelling it out here.
+   (Generic technical-overclaim language -- soft-vs-hard mechanism
+   phrasing, single-component causality, architecture-specific-as-
+   universal claims -- is C2b's job now, checked per sentence against each
+   cited claim's own `scope`/`required_qualifiers`; this check is
+   narrower, using only the plan's own `mechanism_scope` record.)
+
+10. PROMISE / SCOPE. You are given `scope_contract` (the story's own committed
+    `title_promise`, `central_question`, `must_cover`, `supporting`,
+    `deferred`, `title_must_not_imply`) and `source_coverage` (A2's per-source-unit
+    disposition, with a reason). Check, concretely:
+    - TITLE_TOO_NARROW: does the chosen title (or its `promise`) actually
+      narrow the story down to something in `title_must_not_imply`, or to
+      only a fraction of `must_cover`, while the beats go on to cover the
+      full committed scope? Name the specific gap between what the title
+      promises and what the story actually delivers.
+    - BEAT_OUT_OF_SCOPE: does any beat cover a topic that `scope_contract`
+      never classified as `must_cover`/`supporting` at all -- content that
+      crept in without ever being committed to?
+    - IMPORTANT_SOURCE_CONTENT_DROPPED: does `source_coverage` mark a unit
+      `MUST_COVER` or `SUPPORTING` with a genuinely weak `reason`, or mark
+      something `DEFERRED`/`REDUNDANT` that the story's own `must_cover`
+      list actually depends on to make sense?
+    - SUPPORTING_BEAT_TOO_LONG: does a beat built from only `supporting`
+      source units consume a disproportionate share of the runway compared
+      to the beats actually paying off `must_cover`?
+    Use `category: scope`, and name which of the four findings above
+    applies in `problem` so it's unambiguous which check fired.
 
 Rate severity honestly: critical = the story doesn't work as this
 archetype; major = a real story defect a viewer would notice; minor =
@@ -151,6 +172,7 @@ def critique_story(
         "archetype": plan.archetype,
         "selection_reason": plan.selection_reason,
         "rejected_archetypes": plan.rejected_archetypes,
+        "title": plan.title.model_dump(),
         "hook": plan.hook.model_dump(),
         "beats": [b.model_dump() for b in plan.beats],
         "ending": plan.ending.model_dump(),
@@ -158,6 +180,8 @@ def critique_story(
         "scene_plan": [_scene_plan_payload(s) for s in plan.scene_plan],
         "running_example": plan.running_example.model_dump(),
         "source_units": [_source_unit_payload(u) for u in source_units],
+        "scope_contract": plan.scope_contract.model_dump(),
+        "source_coverage": [d.model_dump() for d in plan.source_coverage],
     }
     critique = review_lead.run(
         pass_id="C1", mode="STORY_CRITIC", task_prompt=TASK_PROMPT,

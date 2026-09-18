@@ -44,7 +44,20 @@ any story is planned around them. For each claim below, decide:
 
 Be adversarial, not charitable. Do not assume a claim is correct because it
 sounds plausible or is commonly repeated -- verify it against what you actually
-know and against the source context given.
+know and against the source context given. You have a real web search tool
+available -- use it whenever you are not already fully confident, rather than
+marking a claim UNVERIFIED on internal recall alone or, worse, guessing VERIFIED
+without checking. A claim that's actually a well-documented fact (a standard
+mathematical property, a widely published result) should come back VERIFIED
+with real search behind it, not UNVERIFIED for lack of trying.
+
+For a claim you mark VERIFIED or CONTEXT_DEPENDENT, also list in
+`required_qualifiers` any condition or assumption the claim's truth actually
+depends on (e.g. "only for autoregressive/causal-masked attention", "assumes
+independent components", "specific to this architecture, not attention in
+general") -- leave it empty when the claim genuinely holds without
+qualification. This is what later lets a check catch a claim being narrated
+as an unconditional fact when the source only ever asserted it conditionally.
 """
 
 RE_VERIFY_WITH_EVIDENCE_PROMPT = """\
@@ -64,6 +77,7 @@ class ClaimVerdict(BaseModel):
     verification_status: VerificationStatusLiteral
     reasoning: str
     needs_evidence: str | None = None
+    required_qualifiers: list[str] = Field(default_factory=list)
 
 
 class ClaimVerdicts(BaseModel):
@@ -130,7 +144,10 @@ def _claim_payload(claim: Claim) -> dict:
 
 
 def _apply_verdict(claim: Claim, verdict: ClaimVerdict, evidence: list[VerificationEvidence]) -> Claim:
-    return claim.model_copy(update={"verification_status": verdict.verification_status, "evidence": evidence})
+    return claim.model_copy(update={
+        "verification_status": verdict.verification_status, "evidence": evidence,
+        "required_qualifiers": verdict.required_qualifiers,
+    })
 
 
 def verify_claims_with_llm(
@@ -154,9 +171,30 @@ def verify_claims_with_llm(
 
     for batch in _batch_claims(claims, batch_size):
         payload = {"claims": [_claim_payload(c) for c in batch]}
+        # enable_web_search (STORY_IMPROVEMENT_PLAN.md Phase 23, 2026-09-16): this pipeline's
+        # local/web-backend evidence broker below (fulfil_evidence_requests /
+        # fulfil_evidence_requests_via_web) has never actually had a real evidence source --
+        # references_dir is empty and web_backend is never passed by the real CLI (confirmed
+        # by direct read of run_pipeline.py) -- so a real, easily-verifiable claim (e.g. a
+        # well-documented mathematical property) had no path to ever become VERIFIED. Native
+        # Gemini web search on THIS call lets the model search for itself while forming its
+        # very first verdict, rather than depending on a second pass through a broker that
+        # was never actually wired to anything. `estimated_usd` bumped slightly (from 0.05)
+        # to account for the real, separate per-search billing (see litellm_backend.py).
         verdicts = review_lead.run(
             pass_id="C2a", mode="VERIFY_SOURCE_CLAIMS", task_prompt=TASK_PROMPT,
-            payload=payload, schema=ClaimVerdicts, budget=budget, estimated_usd=0.05,
+            payload=payload, schema=ClaimVerdicts, budget=budget, estimated_usd=0.07,
+            enable_web_search=True,
+            # max_tokens (found live, 2026-09-16): enabling web search above made each
+            # claim's verdict far more verbose (search + reasoning per claim), and a real
+            # 40-claim batch came back at output_tokens=4092 -- 4 short of
+            # LiteLLMBackend's hardcoded 4096 default -- silently truncating the JSON
+            # response and dropping verdicts for the tail of the batch (confirmed live:
+            # 21/80 claims across 2 batches never got a verdict at all). Raised generously
+            # (not just past 4096) mirroring openai_story_strong_gpt56's own precedent --
+            # for a reasoning model this is a COMBINED ceiling over hidden reasoning +
+            # visible output, not just the visible JSON.
+            max_tokens=12000,
         )
         for verdict in verdicts.verdicts:
             claim = claims_by_id.get(verdict.claim_id)
@@ -182,6 +220,7 @@ def verify_claims_with_llm(
             verdicts = review_lead.run(
                 pass_id="C2a", mode="VERIFY_WITH_EVIDENCE", task_prompt=RE_VERIFY_WITH_EVIDENCE_PROMPT,
                 payload=payload, schema=ClaimVerdicts, budget=budget, estimated_usd=0.03,
+                max_tokens=12000,  # same truncation risk as the first-pass call above, lower-volume but not immune
             )
             for verdict in verdicts.verdicts:
                 claim = claims_by_id.get(verdict.claim_id)
@@ -192,6 +231,21 @@ def verify_claims_with_llm(
     # Anything neither arithmetic-resolved nor LLM-resolved (shouldn't normally
     # happen, but never drop a claim silently) stays exactly as it arrived.
     return [resolved.get(c.claim_id, c) for c in claims]
+
+
+def find_claims_with_no_verdict(claims: list[Claim]) -> list[str]:
+    """Found live, 2026-09-16: a truncated batch response (see the `max_tokens` comment
+    on the C2a call above) silently dropped 21/80 claims from verification, with no error
+    and no log line -- each one fell back to `Claim`'s own pristine defaults
+    (`verification_status="UNVERIFIED"`, `evidence=[]`). Both `verify_numeric_linked_claims`
+    and every LLM verdict path in `verify_claims_with_llm` always attach at least one
+    `VerificationEvidence` entry, regardless of the resulting status (including a
+    legitimate UNVERIFIED verdict) -- so a claim reaching here with BOTH fields still at
+    their untouched defaults can only mean no verdict was ever recorded for it, for
+    whatever reason (truncation, a dropped batch, a future regression). Pure and
+    deterministic, matching this project's own "measure and surface, don't silently
+    degrade" precedent (ERR-078) -- the caller decides how to log it, this only detects it."""
+    return [c.claim_id for c in claims if c.verification_status == "UNVERIFIED" and not c.evidence]
 
 
 def verify_claims(

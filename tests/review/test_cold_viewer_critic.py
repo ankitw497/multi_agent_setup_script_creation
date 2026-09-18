@@ -9,7 +9,8 @@ from planning.models import (
     CTAContract, EndingContract, HookContract, ScenePlan, StoryBeat, StoryPlan, TitleContract,
 )
 from review.cold_viewer_critic import (
-    ColdViewerCritique, ColdViewerVerdict, critique_cold_viewer, select_cold_viewer_checkpoints,
+    ColdViewerCritique, ColdViewerVerdict, ContinuingViewerCritique, ContinuingViewerVerdict,
+    critique_cold_viewer, critique_continuing_viewer, select_cold_viewer_checkpoints,
 )
 
 
@@ -177,3 +178,109 @@ def test_uses_pass_id_c4c_for_both_stages_by_default():
     critique_cold_viewer(plan, {"m0": "x"}, worker, review_agent, make_budget())
     assert worker.calls[0]["pass_id"] == "C4c"
     assert review_agent.calls[0]["pass_id"] == "C4c"
+
+
+# ---- C4d: continuing viewer (STORY_IMPROVEMENT_PLAN.md Phase 13) --------------------------
+
+def make_plan_with_concepts() -> StoryPlan:
+    """A plan real enough to exercise _viewer_knows_as_of/_previous_beat_payoff: B01 teaches
+    a concept and has a real payoff, B02's checkpoint scene should see both."""
+    beats = [
+        StoryBeat(beat_id="B01", purpose="hook", source_unit_ids=["u1"], answer_or_payoff="the fixed summary loses context"),
+        StoryBeat(beat_id="B02", purpose="middle", source_unit_ids=["u2"], next_question="what comes next?"),
+        StoryBeat(beat_id="B03", purpose="ending", source_unit_ids=["u3"]),
+    ]
+    scene_plan = [
+        ScenePlan(scene_id="s1", beat_id="B01", new_concepts=["Q/K/V roles"]),
+        ScenePlan(scene_id="m0", beat_id="B02"),
+        ScenePlan(scene_id="s3", beat_id="B03"),
+    ]
+    return StoryPlan(
+        archetype="build", selection_reason="x", story_promise="x", central_question="x",
+        title=TitleContract(chosen="My Video", promise="p"),
+        hook=HookContract(viewer_problem="x", tension="y", promise="z"),
+        cta=CTAContract(primary_after_beat="B01"),
+        ending=EndingContract(resolve_hook="x", compressed_mental_model="y", capstone_payoff="z", viewer_can_now="do x"),
+        beats=beats, scene_plan=scene_plan,
+    )
+
+
+def test_continuing_viewer_uses_the_same_checkpoints_as_cold_viewer():
+    plan = make_plan()
+    assert select_cold_viewer_checkpoints(plan) == ["m0"]
+
+
+def test_viewer_knows_reconstructed_from_preceding_scenes_new_concepts():
+    plan = make_plan_with_concepts()
+    worker = FakeWorker(ContinuingViewerVerdict())
+    critique_continuing_viewer(plan, {"s1": "hook text", "m0": "middle text"}, worker)
+    payload = worker.calls[0]["payload"]
+    assert payload["viewer_knows"] == ["Q/K/V roles"]
+
+
+def test_previous_beat_payoff_and_next_question_reach_the_payload():
+    plan = make_plan_with_concepts()
+    worker = FakeWorker(ContinuingViewerVerdict())
+    critique_continuing_viewer(plan, {"s1": "hook text", "m0": "middle text"}, worker)
+    payload = worker.calls[0]["payload"]
+    assert payload["previous_payoff"] == "the fixed summary loses context"
+    assert payload["last_narration"] == "hook text"
+    assert payload["current_narration"] == "middle text"
+    assert payload["next_question"] == "what comes next?"
+
+
+def test_first_beat_has_no_previous_payoff():
+    """A checkpoint can never actually land in the first beat (excluded by
+    select_cold_viewer_checkpoints), but the helper itself must not crash
+    if ever called for one -- no previous beat exists."""
+    from review.cold_viewer_critic import _previous_beat_payoff
+
+    plan = make_plan_with_concepts()
+    assert _previous_beat_payoff(plan, "s1") == ""
+
+
+def test_a_clean_confident_verdict_never_escalates():
+    plan = make_plan()
+    worker = FakeWorker(ContinuingViewerVerdict(feels_caused=True, knows_why=True, progress_stalled=False, confidence="high"))
+    review_agent = FakeReviewAgent(ContinuingViewerCritique(issues=[]))
+    issues = critique_continuing_viewer(plan, {"m0": "text"}, worker, review_agent, make_budget())
+    assert issues == []
+    assert review_agent.calls == []
+
+
+def test_feels_caused_false_maps_to_causal_flow_category():
+    plan = make_plan()
+    worker = FakeWorker(ContinuingViewerVerdict(feels_caused=False, flagged=True))
+    issues = critique_continuing_viewer(plan, {"m0": "text"}, worker)
+    assert issues[0].category == "causal_flow"
+
+
+def test_progress_stalled_maps_to_pacing_category():
+    plan = make_plan()
+    worker = FakeWorker(ContinuingViewerVerdict(progress_stalled=True, flagged=True))
+    issues = critique_continuing_viewer(plan, {"m0": "text"}, worker)
+    assert issues[0].category == "pacing"
+
+
+def test_knows_why_false_maps_to_cognitive_load_category():
+    plan = make_plan()
+    worker = FakeWorker(ContinuingViewerVerdict(knows_why=False, flagged=True))
+    issues = critique_continuing_viewer(plan, {"m0": "text"}, worker)
+    assert issues[0].category == "cognitive_load"
+
+
+def test_low_confidence_escalates_even_when_everything_else_is_clean():
+    plan = make_plan()
+    worker = FakeWorker(ContinuingViewerVerdict(confidence="low"))
+    review_agent = FakeReviewAgent(ContinuingViewerCritique(issues=[]))
+    critique_continuing_viewer(plan, {"m0": "text"}, worker, review_agent, make_budget())
+    assert len(review_agent.calls) == 1
+
+
+def test_uses_pass_id_c4d_for_both_stages_by_default():
+    plan = make_plan()
+    worker = FakeWorker(ContinuingViewerVerdict(flagged=True))
+    review_agent = FakeReviewAgent(ContinuingViewerCritique(issues=[]))
+    critique_continuing_viewer(plan, {"m0": "x"}, worker, review_agent, make_budget())
+    assert worker.calls[0]["pass_id"] == "C4d"
+    assert review_agent.calls[0]["pass_id"] == "C4d"

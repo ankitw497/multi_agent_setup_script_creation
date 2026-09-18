@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from agents.base import Agent
 from facts.models import Claim
+from narration.factual_invariants import NARRATION_FACTUAL_INVARIANTS
 from narration.models import SceneNarration, SentenceNarration
 from planning.models import StoryPlan
 
@@ -29,12 +30,33 @@ from .models import RevisionPlan
 
 PLANNING_WPM = 167
 
+# ERR-065 (2026-09-15): a gpt-5.6-sol live run's revision plan named 16 scenes in one
+# rewrite_beats/rewrite_scenes/technical_fixes/delete_or_compress mix -- sent as a single B2
+# call, each scene carrying its own visual_description + available_claims, it timed out at
+# the 300s ceiling ERR-051 had raised specifically because "not yet live-verified" a large
+# batch would fit. Chunking bounds each call's payload the same way CM/C2b already batch
+# (review/claim_mapper.py's CM_BATCH_SIZE) instead of raising the timeout again with no
+# ceiling on how large a single revision plan can get.
+B2_BATCH_SIZE = 5
+
 TASK_PROMPT = """\
 Rewrite ONLY the scenes listed below, each with its own `required_intent`
 -- do not touch anything else, and do not expand scope beyond what the
 intent actually asks for. Follow the same voice rules as a first draft:
 short-to-medium sentences, varied rhythm, concrete verbs, causal
-connectors. Stay within the scene's word_budget. Ground every
+connectors.
+
+Causal connectors are seasoning, not a default sentence template: use one
+where the actual logic calls for it, but let most sentences open plainly,
+with no connector at all. The same discipline applies to any other
+rhetorical device (e.g. a "not X, but Y" contrast) -- effective the first
+couple of times, a tell once it becomes a default move. This matters MORE
+here than in a first draft: you only see the handful of scenes listed
+below, not the whole script, so a device that reads as fine in isolation
+may already be overused elsewhere in scenes you can't see -- when
+`required_intent` names a repetition/repeated-device problem specifically,
+treat that as a signal to reach for a genuinely different construction,
+not a synonym of the same one. Stay within the scene's word_budget. Ground every
 technical_assertion/source_paraphrase sentence in a real claim from
 `available_claims` and cite it in `claim_refs` -- never invent a technical
 claim that isn't in the registry. Anything named in `preserve` must not be
@@ -61,7 +83,8 @@ If `running_example` is set (non-empty `label`), and this scene's content
 is the same running illustration, reuse its exact named objects and values
 verbatim -- never invent new numbers or a different example for the same
 underlying idea, even when rewriting for a different reason.
-"""
+
+""" + NARRATION_FACTUAL_INVARIANTS
 
 
 def _claims_for_beat(beat_id: str, plan: StoryPlan, claims: list[Claim]) -> list[Claim]:
@@ -135,24 +158,27 @@ def apply_targeted_rewrite(
     if not scenes_payload:
         return narration
 
-    payload = {
-        "story_promise": plan.story_promise, "central_question": plan.central_question,
-        "preserve": revision_plan.preserve, "scenes": scenes_payload,
-        "running_example": plan.running_example.model_dump(),
-    }
-    rewritten = narration_lead.run(
-        # timeout_s=300 (2026-09-14, was 180): a real "targeted" rewrite can
-        # still carry multiple scenes' full claim payloads (a whole-beat
-        # rewrite_beats call, not just a single scene) -- confirmed live,
-        # twice, on two separate runs: the 180s ceiling was too tight even
-        # after ERR-050's fix made a timeout retryable, since every retry
-        # hit the exact same too-short limit and still failed. Matches B1's
-        # own timeout_s=300 (narration/generator.py) for the same reason --
-        # a full-scale Sonnet narration call routinely needs this long.
-        pass_id="B2", mode="TARGETED_REWRITE", task_prompt=TASK_PROMPT,
-        payload=payload, schema=GeneratedNarration, timeout_s=300,
-    )
-    rewritten_by_id = {s.scene_id: s for s in rewritten.scenes}
+    rewritten_by_id: dict[str, object] = {}
+    for batch_start in range(0, len(scenes_payload), B2_BATCH_SIZE):
+        batch = scenes_payload[batch_start:batch_start + B2_BATCH_SIZE]
+        payload = {
+            "story_promise": plan.story_promise, "central_question": plan.central_question,
+            "preserve": revision_plan.preserve, "scenes": batch,
+            "running_example": plan.running_example.model_dump(),
+        }
+        rewritten = narration_lead.run(
+            # timeout_s=300 (2026-09-14, was 180): matches B1's own
+            # timeout_s=300 (narration/generator.py) -- a full-scale Sonnet
+            # call routinely needs this long. ERR-065 (2026-09-15): even at
+            # 300s this was not enough once a single call carried 16 scenes'
+            # worth of claims -- B2_BATCH_SIZE above is what actually bounds
+            # payload size now; this timeout is a per-batch ceiling, not a
+            # substitute for chunking.
+            pass_id="B2", mode="TARGETED_REWRITE", task_prompt=TASK_PROMPT,
+            payload=payload, schema=GeneratedNarration, timeout_s=300,
+        )
+        for s in rewritten.scenes:
+            rewritten_by_id[s.scene_id] = s
 
     result: list[SceneNarration] = []
     for scene in narration:

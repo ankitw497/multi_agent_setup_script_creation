@@ -133,3 +133,14 @@ def test_prompt_instructs_preferring_rewrite_scenes_over_rewrite_beats():
 
     assert "rewrite_scenes" in TASK_PROMPT
     assert "NARROWEST" in TASK_PROMPT
+
+
+def test_prompt_instructs_preserving_a_critique_issues_own_recommended_intent_specificity():
+    """STORY_IMPROVEMENT_PLAN.md: found live -- a real revision cycle's own rewrite_scenes
+    intent apparently lost the specificity of the underlying critique issue (a named,
+    repeated device) somewhere between C5's own recommended_intent and A3's own intent
+    text, since 2 full rewrite cycles never eliminated a repetition pattern C5 had already
+    named precisely."""
+    from editing.revision_planner import TASK_PROMPT
+
+    assert "recommended_intent" in TASK_PROMPT

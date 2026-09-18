@@ -140,6 +140,40 @@ def test_scene_function_and_must_not_repeat_flow_into_the_scene_plan():
     assert scenes[0].must_not_repeat == ["Q/K/V roles"]
 
 
+def test_a_later_sibling_scenes_must_not_repeat_includes_earlier_siblings_new_concepts():
+    """STORY_IMPROVEMENT_PLAN.md Phase 27 item 2, found live: must_not_repeat used to be
+    tied exclusively to viewer_knows (prior BEATS) -- a real beat's 3 sibling scenes
+    (generated in the SAME call) each independently re-derived the same setup, because
+    nothing told scene 3 that scenes 1-2 (its own siblings, not an earlier beat) already
+    covered it. This is now accumulated deterministically in Python, the same principle
+    already used for cross-beat viewer_knows."""
+    story_lead = FakeStoryLead(BeatSceneExpansion(scenes=[
+        {"visual_description": "s1", "new_concepts": ["independent unit-variance assumption"]},
+        {"visual_description": "s2", "new_concepts": ["variance grows like d_k"]},
+        {"visual_description": "s3", "scene_function": "derivation", "must_not_repeat": ["an earlier beat's concept"]},
+    ]))
+    scenes, _ledger = expand_beat_scenes(make_beat(), 100, [], story_lead, make_budget(), make_ledger())
+
+    # scene 1 has no siblings before it -- must_not_repeat stays exactly what the model gave
+    assert scenes[0].must_not_repeat == []
+    # scene 2 must now be told about scene 1's own new_concepts
+    assert scenes[1].must_not_repeat == ["independent unit-variance assumption"]
+    # scene 3 must be told about BOTH prior siblings, on top of its own (cross-beat) entry --
+    # never replacing what the model itself already correctly listed
+    assert scenes[2].must_not_repeat == [
+        "an earlier beat's concept", "independent unit-variance assumption", "variance grows like d_k",
+    ]
+
+
+def test_a_sibling_concept_already_listed_by_the_model_is_not_duplicated():
+    story_lead = FakeStoryLead(BeatSceneExpansion(scenes=[
+        {"visual_description": "s1", "new_concepts": ["X"]},
+        {"visual_description": "s2", "must_not_repeat": ["X"]},  # the model already caught this one itself
+    ]))
+    scenes, _ledger = expand_beat_scenes(make_beat(), 100, [], story_lead, make_budget(), make_ledger())
+    assert scenes[1].must_not_repeat == ["X"]  # not ["X", "X"]
+
+
 def test_neighbor_contract_and_central_question_reach_the_model():
     previous = make_beat(beat_id="B00", purpose="setup", forward_driver="fd0",
                           viewer_question_before="why?", next_question="what next?")
@@ -284,6 +318,16 @@ def test_prompt_instructs_recording_mechanism_scope_updates():
     assert "mechanism_scope" in TASK_PROMPT
 
 
+def test_prompt_warns_against_recap_bloat():
+    """STORY_IMPROVEMENT_PLAN.md Phase 25 item 5, found live: a real closing beat had 7 of
+    its 9 scenes tagged recap with zero new_concepts, re-teaching the mechanism a second
+    time right after its real payoff had already landed."""
+    from planning.scene_expander import TASK_PROMPT
+
+    assert "it into ONE OR TWO" in TASK_PROMPT
+    assert "matters most for the CLOSING beat" in TASK_PROMPT
+
+
 def test_prompt_has_no_hardcoded_topic_vocabulary():
     """Overfitting guard (user-flagged, STORY_IMPROVEMENT_PLAN.md): this
     prompt runs once per beat for EVERY future video regardless of topic --
@@ -295,3 +339,29 @@ def test_prompt_has_no_hardcoded_topic_vocabulary():
     lowered = TASK_PROMPT.lower()
     for term in ("q/k/v", "softmax", "multi-head", "q asks", "k matches", "v carries"):
         assert term not in lowered, f"found topic-specific term {term!r} in a generic per-video prompt"
+
+
+def test_needs_rebudget_flows_into_the_scene_plan():
+    """STORY_IMPROVEMENT_PLAN.md Phase 12: when A2b determines a beat's target_words can't be
+    filled without padding, it signals needs_rebudget rather than the caller having to guess
+    from a low word_budget alone."""
+    story_lead = FakeStoryLead(BeatSceneExpansion(scenes=[
+        {"visual_description": "x", "word_budget": 40, "needs_rebudget": True},
+    ]))
+    scenes, _ledger = expand_beat_scenes(make_beat(), 100, [], story_lead, make_budget(), make_ledger())
+
+    assert scenes[0].needs_rebudget is True
+
+
+def test_needs_rebudget_defaults_to_false():
+    story_lead = FakeStoryLead(BeatSceneExpansion(scenes=[{"visual_description": "x"}]))
+    scenes, _ledger = expand_beat_scenes(make_beat(), 100, [], story_lead, make_budget(), make_ledger())
+
+    assert scenes[0].needs_rebudget is False
+
+
+def test_prompt_instructs_signaling_needs_rebudget_instead_of_padding():
+    from planning.scene_expander import TASK_PROMPT
+
+    assert "needs_rebudget" in TASK_PROMPT
+    assert "do not pad" in TASK_PROMPT.lower()

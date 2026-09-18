@@ -27,6 +27,10 @@ implementation detail, a historical fact, or a recommendation.
 Rules:
 - Extract ONLY what the text actually asserts. Never infer, extrapolate, or
   add a claim the text does not support.
+- Never convert a production note, pacing note, storyboard instruction, or
+  visual-guidance direction ("show Q/K/V before 0:30") into a factual claim
+  about the subject matter -- it describes how the piece is meant to be
+  built, not a checkable assertion about the topic itself.
 - Tag each claim's `source_unit` with the exact unit id it came from.
 - Set `type` to the single best-fitting category.
 - Set `mode` (INFERENCE/FULL_TRAINING/LORA/QLORA), `stage` (prefill/decode/
@@ -88,7 +92,13 @@ def extract_claims(
     claims: list[Claim] = []
     counter = 0
 
-    for batch in _batch_units(units, batch_words):
+    # STORY_IMPROVEMENT_PLAN.md Phase 11: a production note/storyboard/visual-guidance unit
+    # never even reaches the model here -- filtered deterministically, not left to the
+    # prompt alone, matching this project's own "prompt instruction + deterministic backstop"
+    # pattern used elsewhere (e.g. the LaTeX/entity-consistency checks).
+    content_units = [u for u in units if u.kind == "CONTENT"]
+
+    for batch in _batch_units(content_units, batch_words):
         payload = {"units": [_unit_payload(u) for u in batch]}
         extracted = worker.run(
             pass_id="S2b", mode="CLAIM_EXTRACT", task_prompt=TASK_PROMPT,

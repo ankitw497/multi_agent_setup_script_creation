@@ -1,11 +1,14 @@
 """Tests for review/story_critic.py -- C1 (plan §5, §10, design doc §27-28)."""
 from narration.models import SceneNarration, SentenceNarration
-from planning.models import CTAContract, EndingContract, HookContract, StoryBeat, StoryPlan, TitleContract
+from planning.models import (
+    CTAContract, EndingContract, HookContract, SourceCoverageDecision, StoryBeat, StoryPlan, StoryScopeContract,
+    TitleContract,
+)
 from review.story_critic import StoryCritique, critique_story
 
 
-def make_plan(archetype="foundation") -> StoryPlan:
-    return StoryPlan(
+def make_plan(archetype="foundation", **overrides) -> StoryPlan:
+    base = dict(
         archetype=archetype, selection_reason="dependency-driven concepts", story_promise="x",
         central_question="x", rejected_archetypes={"build": "no problem/fix chain found"},
         title=TitleContract(chosen="t", promise="p"),
@@ -14,6 +17,8 @@ def make_plan(archetype="foundation") -> StoryPlan:
         ending=EndingContract(resolve_hook="x", compressed_mental_model="y", capstone_payoff="z", viewer_can_now="do x"),
         beats=[StoryBeat(beat_id="B01", purpose="x")],
     )
+    base.update(overrides)
+    return StoryPlan(**base)
 
 
 def make_narration() -> list[SceneNarration]:
@@ -147,20 +152,33 @@ def test_prompt_instructs_checking_hook_pacing():
     assert "category: pacing" in TASK_PROMPT
 
 
-def test_prompt_instructs_checking_technical_overclaims():
-    """feedback (multi_agent_script_and_model_feedback.md §8): hard-selection
-    language for a soft/weighted mechanism, claiming a distributed behavior
-    is fully resolved by one component, architecture-specific-as-universal
-    claims, and overstated motivation/limitation claims. Phrased generically
-    (no hardcoded topic vocabulary) so it applies to any video's subject,
-    not just the one the original feedback was about -- see
-    STORY_IMPROVEMENT_PLAN.md's overfitting note."""
+def test_generic_technical_overclaim_checking_moved_to_c2b():
+    """STORY_IMPROVEMENT_PLAN.md Phase 13: the generic hard-selection/single-
+    component/architecture-specific-as-universal overclaim checks (originally
+    feedback §8) moved to C2b, which now has per-sentence claim data
+    (`scope`/`required_qualifiers`, Phases 10-11) to check them precisely
+    instead of via a whole-script read. C1 keeps only the narrower
+    mechanism_scope check, which uses plan-level data C2b doesn't have."""
     from review.story_critic import TASK_PROMPT
 
-    assert "OVERCLAIM" in TASK_PROMPT
-    assert "soft/weighted or probabilistic" in TASK_PROMPT
-    assert "universal to every" in TASK_PROMPT
-    assert "underlying general idea" in TASK_PROMPT
+    assert "soft/weighted or probabilistic" not in TASK_PROMPT
+    assert "MECHANISM SCOPE" in TASK_PROMPT
+    assert "mechanism_scope" in TASK_PROMPT
+    assert "CONFIRMED overclaim" in TASK_PROMPT
+
+
+def test_mechanism_scope_check_covers_a_later_scene_narrowing_an_earlier_one():
+    """STORY_IMPROVEMENT_PLAN.md Phase 25 item 4, found live: a script first showed a
+    mechanism under one setup, then later narrated a MORE RESTRICTED version of it with
+    no explicit transition -- this exact contradiction survived to the final script
+    despite this prompt bullet already existing, because it only ever described a single
+    scene stating its OWN condition wrong, never a later scene silently diverging from an
+    earlier one's."""
+    from review.story_critic import TASK_PROMPT
+
+    assert "the OTHER direction" in TASK_PROMPT
+    assert "with no explicit" in TASK_PROMPT
+    assert "transition marking the change of setup" in TASK_PROMPT
 
 
 def test_scene_plan_and_running_example_reach_the_payload():
@@ -249,3 +267,62 @@ def test_returns_a_repetition_issue_when_the_critic_flags_one():
     assert len(issues) == 1
     assert issues[0].category == "repetition"
     assert issues[0].scene_ids == ["s3", "s7", "s9"]
+
+
+def test_prompt_has_a_promise_scope_check():
+    """STORY_IMPROVEMENT_PLAN.md Phase 11: C1 must be able to catch a title
+    that narrows the story's promise, or a beat that crept in without ever
+    being committed to in the scope contract."""
+    from review.story_critic import TASK_PROMPT
+
+    assert "PROMISE / SCOPE" in TASK_PROMPT
+    assert "TITLE_TOO_NARROW" in TASK_PROMPT
+    assert "BEAT_OUT_OF_SCOPE" in TASK_PROMPT
+
+
+def test_payload_carries_title_scope_contract_and_source_coverage():
+    """The three real inputs the PROMISE/SCOPE check needs -- without these,
+    C1 has no way to judge whether the title over-promises/under-promises
+    relative to what the plan itself committed to."""
+    plan = make_plan(
+        scope_contract=StoryScopeContract(
+            title_promise="understand the full retrieval mechanism", central_question="q",
+            must_cover=["Q/K/V", "scaling"], supporting=["multi-head"], deferred=["causal masking"],
+            title_must_not_imply=["only pronoun resolution"],
+        ),
+        source_coverage=[SourceCoverageDecision(source_unit_id="u1", disposition="MUST_COVER", reason="the core mechanism")],
+    )
+    review_lead = FakeReviewLead(StoryCritique(issues=[]))
+    from llm.budget import BudgetCounter, DEFAULT_TIERS
+
+    critique_story(plan, make_narration(), review_lead, BudgetCounter(tier=DEFAULT_TIERS["longform"]), source_units=[])
+
+    payload = review_lead.calls[0]["payload"]
+    assert payload["title"] == {"candidates": [], "chosen": "t", "promise": "p"}
+    assert payload["scope_contract"]["must_cover"] == ["Q/K/V", "scaling"]
+    assert payload["scope_contract"]["title_must_not_imply"] == ["only pronoun resolution"]
+    assert payload["source_coverage"] == [
+        {"source_unit_id": "u1", "disposition": "MUST_COVER", "reason": "the core mechanism"},
+    ]
+
+
+def test_returns_a_scope_issue_when_the_critic_flags_a_narrowed_title():
+    """The doc's own headline real finding, replayed as a fake response: a
+    title that only promises the hook's illustration while the plan's own
+    scope_contract commits to a broader must_cover list."""
+    review_lead = FakeReviewLead(StoryCritique(issues=[{
+        "issue_id": "I002", "severity": "major", "category": "scope", "layer": "STORY",
+        "scene_ids": ["s1"],
+        "problem": "TITLE_TOO_NARROW: title implies only pronoun resolution, but must_cover "
+                   "includes the full retrieval mechanism the beats actually teach.",
+        "why_it_matters": "A viewer who clicks for the promised topic gets less than the video delivers.",
+        "recommended_intent": "Broaden the title to match the full scope_contract.must_cover promise.",
+        "repair_owner": "story_lead",
+    }]))
+    from llm.budget import BudgetCounter, DEFAULT_TIERS
+
+    issues = critique_story(make_plan(), make_narration(), review_lead, BudgetCounter(tier=DEFAULT_TIERS["longform"]), source_units=[])
+
+    assert len(issues) == 1
+    assert issues[0].category == "scope"
+    assert "TITLE_TOO_NARROW" in issues[0].problem

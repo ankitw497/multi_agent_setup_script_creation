@@ -79,6 +79,9 @@ that this screen text never otherwise gets reviewed for:
 - OVERCLAIM: hard-selection language for a soft/weighted mechanism, one
   component's contribution stated as if it single-handedly causes the
   whole outcome, or an architecture-specific detail stated as universal.
+  If `required_qualifiers` is given for this scene, this is a CONFIRMED
+  overclaim (not a suspected one) whenever the screen prose states that
+  exact mechanism without its listed condition(s) -- say so explicitly.
   Use `category: clarity`, `layer: NARRATION`, `repair_owner: html_author`,
   same severity rule as above.
 
@@ -95,13 +98,20 @@ class VisualCritique(BaseModel):
 def scene_payload(
     scene_id: str, image_index: int, screen_prose: str, narration_text: str,
     scene_function: str = "standard", must_not_repeat: list[str] | None = None,
-    running_example: dict | None = None,
+    running_example: dict | None = None, required_qualifiers: list[str] | None = None,
 ) -> dict:
     return {
         "scene_id": scene_id, "image_index": image_index,
         "screen_prose": screen_prose, "narration_text": narration_text,
         "scene_function": scene_function, "must_not_repeat": must_not_repeat or [],
         "running_example": running_example or {},
+        # STORY_IMPROVEMENT_PLAN.md Phase 10 follow-up: the same claim-level qualifiers
+        # C2b checks narration against (Claim.required_qualifiers), aggregated from this
+        # scene's own beat's claims -- confirmed live gap (2026-09-15): H's screen prose is
+        # written independently of narration and can drop a qualifier narration correctly
+        # dropped too, or one narration got right and screen prose gets wrong, with nothing
+        # checking it before this.
+        "required_qualifiers": required_qualifiers or [],
     }
 
 

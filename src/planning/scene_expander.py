@@ -27,11 +27,22 @@ from llm.budget import BudgetCounter
 from planning.models import NarrativeBeat, ScenePlan, SceneFunction, StoryBeat, ViewerLedger
 
 TASK_PROMPT = """\
-Break this ONE beat into concrete scenes whose word_budgets together land
-within about 15% of `target_words` -- no more, no less. If `target_words`
+Break this ONE beat into concrete scenes using the MINIMUM number of words
+actually needed to satisfy the beat's own learning objective -- not a fixed
+target to hit regardless of content. Land within about 15% of `target_words`
+when the beat genuinely has that much real depth to cover. If `target_words`
 is large enough to need it, use multiple scenes rather than cramming
 everything into one overloaded scene; a beat covering real source depth
 should usually become 2-6 scenes, not always exactly one.
+
+If `target_words` genuinely CANNOT be filled without padding -- restating
+the same point in different words, or re-explaining something already
+covered -- do not pad. Instead, write only what the content actually
+supports and set `needs_rebudget=true` on the LAST scene you write for this
+beat. This is a signal, not a failure: a deterministic pass afterward
+redistributes the difference to beats that have real remaining depth,
+rather than forcing every beat to hit the same number regardless of how
+much it actually has to say.
 
 Each scene needs: a realistic word_budget (30-100 hard bounds, 40-80
 preferred), a narrative_beat (hook/teaching/escalation/reveal/close --
@@ -76,6 +87,17 @@ this source teaches -- e.g. "the retry backoff formula" for a networking
 source, "the balance invariant" for a tree-rotation source) so later beats
 know not to re-teach it -- do not list a concept that is already in the
 given `viewer_knows`.
+
+If most of what remains to narrate for a beat is recap (nothing left to
+teach that isn't already in `viewer_knows`), that is a signal to compress
+it into ONE OR TWO `recap` scenes total, not to allocate the beat's usual
+scene count to walking back through each already-taught concept one at a
+time. This applies to any beat, but matters most for the CLOSING beat --
+confirmed live: a real closing beat had 7 of its 9 scenes tagged `recap`
+with zero new concepts between them, re-teaching the whole mechanism a
+second time right after its real payoff had already landed. A closing
+beat's job is to land the payoff and give one forward-looking beat, not
+to re-derive everything scene by scene.
 
 A `preview` scene can be too complete, not just present: if it reveals an
 EXACT concrete value (a specific number, a specific outcome), not just
@@ -133,6 +155,7 @@ class ExpandedScene(BaseModel):
     must_not_repeat: list[str] = Field(default_factory=list)
     formula_stage_id: str = ""
     mechanism_scope_updates: dict[str, bool] = Field(default_factory=dict)
+    needs_rebudget: bool = False  # STORY_IMPROVEMENT_PLAN.md Phase 12
 
 
 class BeatSceneExpansion(BaseModel):
@@ -180,17 +203,35 @@ def expand_beat_scenes(
     )
     scenes = []
     running_scope = dict(ledger.mechanism_scope)
+    # STORY_IMPROVEMENT_PLAN.md Phase 27 item 2: `must_not_repeat` used to be tied
+    # exclusively to `viewer_knows` (prior BEATS, via the model's own self-reporting from
+    # the payload above) -- confirmed live, a real beat's own 3 sibling scenes (generated
+    # in this SAME call) each independently re-derived the same setup, because nothing told
+    # scene 3 that scenes 1-2 (its own siblings, not an earlier beat) already covered it.
+    # Deterministic, same "arithmetic accumulates in Python, not left to the model to
+    # self-track across its own single response" principle already used for
+    # `new_viewer_knows` below -- accumulated and merged in, on top of (never replacing)
+    # whatever cross-beat concepts the model itself already listed.
+    sibling_concepts_so_far: list[str] = []
     for i, s in enumerate(result.scenes, start=1):
         running_scope.update(s.mechanism_scope_updates)
+        must_not_repeat = list(s.must_not_repeat)
+        for concept in sibling_concepts_so_far:
+            if concept not in must_not_repeat:
+                must_not_repeat.append(concept)
         scenes.append(ScenePlan(
             scene_id=f"{beat.beat_id}_s{i:02d}", beat_id=beat.beat_id,
             archetype_role=beat.archetype_role, narrative_beat=s.narrative_beat,
             narrative_job=beat.purpose, visual_description=s.visual_description,
             word_budget=s.word_budget, scene_function=s.scene_function,
-            new_concepts=s.new_concepts, must_not_repeat=s.must_not_repeat,
+            new_concepts=s.new_concepts, must_not_repeat=must_not_repeat,
             formula_stage_id=s.formula_stage_id,
             mechanism_scope=dict(running_scope),
+            needs_rebudget=s.needs_rebudget,
         ))
+        for concept in s.new_concepts:
+            if concept not in sibling_concepts_so_far:
+                sibling_concepts_so_far.append(concept)
     new_viewer_knows = list(ledger.viewer_knows)
     for scene in scenes:
         for concept in scene.new_concepts:

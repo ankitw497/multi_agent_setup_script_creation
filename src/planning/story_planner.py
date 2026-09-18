@@ -22,7 +22,7 @@ from facts.models import AssumptionLedger, Claim, SourceUnit
 from llm.budget import BudgetCounter
 
 from .archetypes import ALL_ARCHETYPES, load_archetype_specs
-from .beat_word_budget import allocate_beat_word_budgets
+from .beat_word_budget import allocate_beat_word_budgets, redistribute_rebudgeted_words
 from .models import ReplanFeedback, SourceBrief, StoryPlan, StoryStructure, ViewerLedger
 from .scene_expander import expand_beat_scenes
 
@@ -79,10 +79,56 @@ couldn't before; and the observable fields (`new_information`, `payoff`,
 `visual_mode_change`, `question_progress`, `concept_density`) describing
 what actually happens in it -- never a numeric "energy" score.
 
-Every source unit given to you should appear in at least one beat's
-`source_unit_ids` unless it is genuinely redundant with another -- a source
-with 11 real sections should not collapse into 4 beats that only draw on a
-handful of them.
+`payoff=True` marks a MAJOR, video-level payoff -- reserve it for the beat
+(or the very small handful of beats, typically 1-3 for a full video) that
+land something genuinely significant, not every beat that advances the
+story in some way. Confirmed live: a real plan marked `payoff=True` on 10
+of its 12 beats, making the field meaningless -- diagnostics and the CTA
+placement rule that anchor to "the first beat with a real payoff" ended
+up anchoring to an early, minor beat instead of the video's actual central
+payoff (its full equation/result/conclusion, wherever that lands). A
+smaller, intermediate win that's real but not the central payoff belongs
+in `mini_payoffs` instead (`after_beat`, `payoff`, `opens`) -- use it
+freely for those; it costs nothing and keeps `payoff=True` meaningful for
+the one thing later checks actually rely on it to mean.
+
+Before choosing beats, decide the story's own scope contract in
+`scope_contract`: `title_promise` (the same semantic promise `title.promise`
+will make), `central_question`, `must_cover` (the topics the video cannot
+skip without breaking its own promise), `supporting` (topics worth touching
+on but not load-bearing), `deferred` (real topics in the source that this
+video deliberately does NOT take on), and `title_must_not_imply` (specific
+narrower promises the title must avoid making when the story is actually
+broader -- e.g. "only pronoun resolution" when the video teaches the full
+mechanism). Once the central promise (`must_cover`) is fully paid off by the
+beats, do not keep introducing further adjacent technical concepts unless
+you have explicitly classified them `supporting` -- a video that keeps
+going after its own promise is met, without saying so, is exactly how a
+title ends up narrower than the story it actually tells.
+
+When you actually choose `title.chosen`, check it against your own
+`must_cover` list before finalizing it: a title naming only the FIRST or
+most obvious `must_cover` item, while several other DIFFERENT `must_cover`
+items also got real beats and real word budget, is exactly this same
+too-narrow-title failure -- confirmed live, a real title named only the
+video's opening mechanism while several later, unrelated `must_cover`
+items each got their own real beats and shared no real language with the
+title at all. If several `must_cover` items are genuinely load-bearing,
+the title should gesture at the video's actual breadth, not just its
+opening move.
+
+Also decide, EXPLICITLY, a `source_coverage` disposition for EVERY source
+unit given to you -- never leave one unclassified: `MUST_COVER` (the video's
+core promise depends on it), `SUPPORTING` (worth a beat but not essential),
+`DEFERRED` (a real topic this video deliberately does not take on -- valid,
+not a failure), `REDUNDANT` (substantially covered by another unit already),
+or `META_ONLY` (production/storyboard/visual-guidance content, not subject
+matter). Give each a one-sentence `reason`. Only `MUST_COVER` and
+`SUPPORTING` units need to actually appear in a beat's `source_unit_ids` --
+a source with 11 real sections should not collapse into 4 beats that only
+draw on a handful of them UNLESS the rest are genuinely and explicitly
+`DEFERRED`/`REDUNDANT`/`META_ONLY`, with a real reason each, not silently
+dropped.
 
 The hook must create a knowledge gap, not announce a syllabus -- no "in this
 video we will cover X". `must_not_reveal_yet` must list what the hook
@@ -144,11 +190,27 @@ no such evolving expression -- most sources will not.
 The CTA's `intent` should default to VALUE_LINKED (it names the payoff just
 earned and the channel's promise) unless there's a clear reason for another
 intent. `primary_after_beat` must be a beat that has a real payoff, not the
-first beat that happens to exist.
+first beat that happens to exist. It should also land at roughly 20-40% of
+the way through the story's own total runtime (sum the word budgets of the
+beats up to and including it, against the story's total) -- a real
+generated script placed it at 100% (the very last beat) and measured RED
+against exactly this target; a CTA that late only reaches viewers who
+already stayed for the whole video, which defeats its own purpose.
+Never phrase the CTA as if the payoff is being withheld for elsewhere --
+confirmed live: a real CTA said "subscribe for how they combine" about a
+combination the SAME video goes on to explain a few beats later, reading
+as if the answer lives in a different video when it doesn't. A CTA earns
+subscription on the channel's ongoing value, not by implying this video
+won't finish answering its own question.
 
-The ending must resolve the hook's promise, compress the mechanism into a
-usable mental model, and state `viewer_can_now` as a capability (diagnose /
-predict / build / explain), never a feature list.
+The ending must resolve the hook's promise -- not just thematically, but by
+actually echoing `hook.promise`'s own concrete terms in `ending.resolve_hook`
+(a real generated script failed this: its ending discussed the general
+retrieval mechanism but never used the hook promise's own specific
+language, and a mechanical word-overlap check correctly caught the gap).
+Also compress the mechanism into a usable mental model, and state
+`viewer_can_now` as a capability (diagnose / predict / build / explain),
+never a feature list.
 
 Do not produce a scene-by-scene breakdown here -- that is a separate pass
 (A2b), given your beats afterward. Focus entirely on getting the
@@ -267,5 +329,11 @@ def plan_story(
             previous_beat=previous_beat, next_beat=next_beat, central_question=structure.central_question,
         )
         scene_plan.extend(beat_scenes)
+
+    # STORY_IMPROVEMENT_PLAN.md Phase 12: a beat that genuinely couldn't fill its target
+    # without padding (needs_rebudget) left real words on the table -- redistribute them to
+    # beats with real remaining depth, deterministically, rather than leaving the pressure on
+    # A2b to invent filler just to hit the number.
+    scene_plan = redistribute_rebudgeted_words(beat_word_budgets, scene_plan)
 
     return StoryPlan(**structure.model_dump(exclude={"scene_plan"}), scene_plan=scene_plan)

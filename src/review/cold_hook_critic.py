@@ -47,9 +47,11 @@ A first-pass reviewer flagged this short's title/hook as possibly weak or
 was unsure. Give an independent, careful second opinion as a cold viewer
 (no channel context) on the same title + first 3 seconds. If there is a
 real problem, raise ONE concrete issue: category="hook", layer="STORY",
-naming exactly what's wrong (unclear, no real tension, no curiosity gap,
-or a generic opening) and what must change -- never replacement prose. If
-it's actually fine on a careful look, return no issues.
+severity="major" (a weak hook is real feedback worth fixing, never a hard
+block on its own -- never "critical", regardless of how weak the hook
+is), naming exactly what's wrong (unclear, no real tension, no curiosity
+gap, or a generic opening) and what must change -- never replacement
+prose. If it's actually fine on a careful look, return no issues.
 """
 
 
@@ -117,4 +119,10 @@ def critique_cold_hook(
         pass_id=gemini_pass_id, mode="COLD_HOOK_GEMINI", task_prompt=_GEMINI_PROMPT,
         payload=escalation_payload, schema=ColdHookCritique, budget=budget, estimated_usd=0.01, timeout_s=120,
     )
-    return gemini_result.issues
+    # Forced, not just prompted (2026-09-16 fix, found on review): every other severity
+    # constraint in this codebase (long-form's C1, C1s, ...) is enforced in code, never
+    # left to the model's own say-so alone -- this one previously wasn't, so nothing
+    # actually prevented a "critical" cold-hook finding from silently becoming a hard
+    # gate (or, since Phase 20, a targeted-rewrite trigger) despite the documented design
+    # ("cold-hook findings are feedback, never a mechanical hard gate", plan §20.10).
+    return [i.model_copy(update={"severity": "major"}) for i in gemini_result.issues]

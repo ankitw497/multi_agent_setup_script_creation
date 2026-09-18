@@ -30,7 +30,13 @@ later, with more judgement). For each candidate:
 - `micro_arc_suggestion`: your best guess at which micro-arc fits
   (contradiction_resolution / problem_fix / before_after /
   question_answer / prediction_explanation / myth_correction /
-  mini_derivation) -- A2s may override this.
+  mini_derivation) -- A2s may override this. Confirmed live: `problem_fix`
+  is the arc this step over-suggests, since almost every candidate has SOME
+  problem-then-mechanism shape -- that shape alone does not make it
+  `problem_fix`; only suggest it when the source material gives you a real,
+  nameable naive/intuitive attempt that actually fails, not merely "the
+  problem" restated. A wrong suggestion here still costs a real short later
+  even though A2s can override it -- guess honestly, not reflexively.
 - `prerequisites`: anything a viewer would need to already know for this
   candidate to make sense on its own (keep this list short -- a long one
   means the candidate is a poor short).
