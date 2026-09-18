@@ -97,6 +97,16 @@ class CTAContract(BaseModel):
     primary_after_beat: str  # beat_id
     intent: CTAIntent = "VALUE_LINKED"
     end_after_final_payoff: bool = True
+    # STORY_IMPROVEMENT_PLAN.md Phase 12: CTA placement is the PLANNER's decision, not the
+    # narrator's -- confirmed real gap, B1's own prompt used to say a scene becomes the CTA
+    # scene "if it matches primary_after_beat OR is the final scene", letting the narrator
+    # invent a second ask the plan never placed. A scene is now the CTA scene only when it
+    # matches `primary_after_beat`, full stop; this flag separately controls whether the
+    # video's true final scene (when that's a DIFFERENT scene) may add one short, soft
+    # closing line reinforcing the payoff already earned -- never a second full CTA ask.
+    # Default True preserves a natural send-off; set False for a video that should end purely
+    # on its payoff with no CTA-adjacent language at all.
+    final_enabled: bool = True
 
 
 class MiniPayoff(BaseModel):
@@ -220,6 +230,51 @@ class ScenePlan(BaseModel):
     # Phase 7 #3: the ViewerLedger.mechanism_scope snapshot as of this scene's own beat --
     # empty until some earlier (or this) beat establishes a conditional mechanism's scope.
     mechanism_scope: dict[str, bool] = Field(default_factory=dict)
+    # STORY_IMPROVEMENT_PLAN.md Phase 12: A2b sets this when the beat's own target_words
+    # couldn't be filled without repeating already-taught material -- a signal, not a
+    # failure. `story_planner.py`'s post-loop reallocation pass reads it to redistribute the
+    # difference to beats with real remaining depth, instead of leaving the pressure on A2b
+    # to invent filler just to hit the number.
+    needs_rebudget: bool = False
+
+
+SourceUnitDisposition = Literal["MUST_COVER", "SUPPORTING", "DEFERRED", "REDUNDANT", "META_ONLY"]
+
+
+class StoryScopeContract(BaseModel):
+    """STORY_IMPROVEMENT_PLAN.md Phase 11: what the video is allowed to promise vs. merely
+    touch on, decided once during A2 before beats are built. Confirmed real gap: a live
+    GPT-5.6-sol run produced a title narrower than the story it actually told (title promised
+    only the hook's pronoun example; the beats went on to cover the full mechanism plus
+    several supporting topics) -- nothing in the plan declared the intended scope up front for
+    either the title or C1 to check against. `must_cover`/`supporting`/`deferred` are the same
+    three-way split `SourceCoverageDecision.disposition` makes per source unit, but framed as
+    the STORY's own commitments (topic labels, not source unit ids) rather than a per-unit
+    bookkeeping record."""
+
+    title_promise: str = ""
+    central_question: str = ""
+    must_cover: list[str] = Field(default_factory=list)
+    supporting: list[str] = Field(default_factory=list)
+    deferred: list[str] = Field(default_factory=list)
+    # What the title must NOT narrow the story down to, e.g. "only pronoun resolution" when
+    # the video actually teaches the full mechanism -- C1's PROMISE/SCOPE check tests the
+    # chosen title against these directly (STORY_IMPROVEMENT_PLAN.md Phase 11).
+    title_must_not_imply: list[str] = Field(default_factory=list)
+
+
+class SourceCoverageDecision(BaseModel):
+    """STORY_IMPROVEMENT_PLAN.md Phase 11: A2's own editorial judgement on ONE source unit,
+    replacing the old blanket rule "every source unit should appear in a beat" (which forced
+    peripheral content into the video even when it should be deferred). Every source unit must
+    receive a disposition (nothing is silently dropped without a stated reason -- still a hard
+    gate, see `verification/hard/structure.py::check_source_disposition`), but only
+    MUST_COVER/SUPPORTING require an actual beat; DEFERRED/REDUNDANT/META_ONLY are legitimate
+    outcomes on their own."""
+
+    source_unit_id: str
+    disposition: SourceUnitDisposition
+    reason: str
 
 
 class RetentionDeadline(BaseModel):
@@ -270,6 +325,8 @@ class StoryStructure(BaseModel):
     running_example: RunningExample = Field(default_factory=RunningExample)  # V2: the one example every scene reuses
     formula_stages: list[FormulaStage] = Field(default_factory=list)  # Phase 6: empty unless the source has an evolving formula
     retention_deadlines: list[RetentionDeadline] = Field(default_factory=list)  # Phase 7: empty unless pacing needs one
+    scope_contract: StoryScopeContract = Field(default_factory=StoryScopeContract)  # Phase 11
+    source_coverage: list[SourceCoverageDecision] = Field(default_factory=list)  # Phase 11: one per source unit
 
 
 class StoryPlan(StoryStructure):

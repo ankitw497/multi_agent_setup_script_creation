@@ -49,6 +49,16 @@ class ShortParent(BaseModel):
 class ShortBridge(BaseModel):
     mode: BridgeMode = "NONE"
     parent_video_id: str | None = None
+    # 2026-09-16, found on review: `narration/short_generator.py`'s own prompt has always
+    # told the model ONSCREEN/PLATFORM_LINK mean "the bridge itself will render as
+    # on-screen text elsewhere, not spoken" -- but no field anywhere ever captured what
+    # that on-screen text actually IS, and `html_synth/vertical_assembler.py` never
+    # rendered `bridge` at all. A short assigned either mode shipped with the CTA
+    # narration correctly withheld and nothing ever shown in its place -- a silent,
+    # complete loss of the one thing that mode exists for. `cta_text` is A2s's own
+    # authored short line (<=8 words, same convention as the SPOKEN case); empty for
+    # SPOKEN (baked into the narration itself) and NONE (nothing to show).
+    cta_text: str = ""
 
 
 class ShortVisual(BaseModel):
@@ -58,8 +68,22 @@ class ShortVisual(BaseModel):
 
 
 class ShortNarration(BaseModel):
-    target_duration_seconds: float = Field(default=52.0, ge=45.0, le=60.0)
-    word_band: tuple[int, int] = (120, 165)  # advisory only (plan §20.4) — never a hard gate
+    # 2026-09-15: target_duration_seconds le lowered 60.0 -> 55.0, word_band lowered
+    # 120-165 -> 90-115 -- confirmed live: 4 of 5 real shorts measured 61.7-76.4s against
+    # the then-60s hard cap despite fitting the old (120, 165) band at an assumed ~167
+    # words/minute. Back-computing from the worst case (165 words measuring 76.4s)
+    # implied real edge-tts speech lands closer to ~130 words/minute, not 167.
+    #
+    # 2026-09-16: hard cap itself raised 60s -> 120s (user decision, verification/hard/
+    # shorts.py's MAX_MEASURED_SHORT_SECONDS) -- the tight 60s budget was itself a real
+    # contributing factor to several failures beyond direct duration overruns, since
+    # `setup` had to fit BOTH "minimum context" AND its per-micro_arc required beat
+    # (Phase 20) in the same tiny word allowance as everything else. Bounds recalibrated
+    # against the same ~130wpm real-speech rate, scaled to the new 120s cap, with the same
+    # real-margin-below-the-hard-cap philosophy as before (95s target * 130wpm ~= 206
+    # words, near the new word_band's own top; 110s ceiling leaves 10s margin below 120s).
+    target_duration_seconds: float = Field(default=95.0, ge=60.0, le=110.0)
+    word_band: tuple[int, int] = (160, 210)  # a real ceiling now -- see narration/short_generator.py
 
 
 class ShortPlan(BaseModel):

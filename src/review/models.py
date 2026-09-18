@@ -22,6 +22,8 @@ Category = Literal[
     "mini_payoff", "cognitive_load", "ending", "repetition",
     "micro_arc",  # short-format analogue of "archetype" (plan §20.3) -- shorts have no archetype
     "visual_mismatch",  # C3 (plan §13, V1C): the screen doesn't show what the narration says
+    "scope",  # C1's PROMISE/SCOPE check (STORY_IMPROVEMENT_PLAN.md Phase 11): a beat that
+    # doesn't serve the story's own scope_contract, or a title narrower than the story it tells
 ]
 
 Layer = Literal["SOURCE", "STORY", "NARRATION", "VOICE", "VISUAL", "RENDERER", "TECHNICAL"]
@@ -57,6 +59,14 @@ class DiagnosticResult(BaseModel):
     evidence: str  # e.g. "burstiness 0.31 vs band 0.47-0.63; scenes 7-11"
     value: float | str | None = None
     target: str | None = None
+
+
+class ReviewCoverageError(RuntimeError):
+    """Raised by CM or C2b (STORY_IMPROVEMENT_PLAN.md Phase 10) when a structured response
+    omits a verdict for one or more sentences -- fail closed, never silently treat a missing
+    verdict as "not factual" / "nothing to report". Confirmed real bug this replaces: a
+    truncated or incomplete response used to be indistinguishable from a genuinely clean
+    check, for both CM (`review/claim_mapper.py`) and C2b (`review/grounding_verifier.py`)."""
 
 
 class ReviewBundle(BaseModel):

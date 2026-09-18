@@ -62,6 +62,10 @@ def test_production_notes_survive_page_footer_chrome_stripping():
     assert "Mini payoff" in unit.text
     assert "Open on the unresolved question" in unit.text
     assert "0:00" in unit.text
+    # STORY_IMPROVEMENT_PLAN.md Phase 11 (doc §30.8's source-meta-contamination case):
+    # production notes are the author's own storyboard intent, not a technical claim about
+    # the subject matter -- S2b must never extract a Claim from this unit.
+    assert unit.kind == "PRODUCTION_META"
 
 
 def test_plain_source_with_no_hero_header_produces_no_hook_unit():

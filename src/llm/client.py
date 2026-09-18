@@ -112,6 +112,7 @@ class LLMClient:
         max_tokens: int | None = None,
         images: list[str] | None = None,
         timeout_s: float | None = None,
+        enable_web_search: bool = False,
     ) -> StructuredCallResult:
         """gpt | gemini — hard-gated by a local BudgetCounter (plan §3.2).
 
@@ -122,16 +123,28 @@ class LLMClient:
         litellm_backend.py's default-bump comment for the real failure this fixes.
         images (V1C, C3 visual critic) are base64 data URIs, forwarded as-is —
         this client has no opinion on image content, only on wiring it through.
+        enable_web_search (STORY_IMPROVEMENT_PLAN.md Phase 23): real, hosted Gemini web
+        search for the exact call it's set on -- see litellm_backend.py for the real schema
+        and cost implications. Forwarded as-is; this client has no opinion on when it's used,
+        only on wiring it through (C2a's own claim-verification call sets it, nothing else
+        does today).
         """
         budget.preflight_check(estimated_usd)
 
         result = self.paid_backend.call(
             model, system_prompt, user_payload, reasoning_effort,
             max_tokens=max_tokens, images=images, timeout_s=timeout_s,
+            enable_web_search=enable_web_search,
         )
-        budget.record_spend(result.billed_microusd)  # raises BudgetExceeded past hard_cap
-
-        value = self._validate(result.content, schema)
+        # 2026-09-16, found live (Phase 17 interrupt-and-resume verification): logging used to
+        # happen AFTER `budget.record_spend()`, so a call that pushed spend past the hard cap
+        # raised `BudgetExceeded` before its `UsageRecord` was ever built or appended -- the
+        # real money spent on that exact call vanished from `usage.jsonl` with no record
+        # anywhere except the exception's own message text. Confirmed live: a real gpt-5.6-sol
+        # A2 call billed $0.266102 and crashed the run, but `usage.jsonl` showed only the 3
+        # calls before it ($0.1656 total) -- the single most expensive call of the run was the
+        # one silently missing from its own cost audit trail. Log unconditionally, the moment
+        # real cost is known, before any budget-cap check gets a chance to raise and lose it.
         record = UsageRecord(
             run_id=self.run_id,
             agent=agent,
@@ -148,11 +161,19 @@ class LLMClient:
             latency_ms=result.latency_ms,
         )
         self.ledger.append(record)
+        budget.record_spend(result.billed_microusd)  # raises BudgetExceeded past hard_cap
+
+        value = self._validate(result.content, schema)
         return StructuredCallResult(value=value, usage_record=record)
 
     def _validate(self, raw: str, schema: type[T]) -> T:
         if self._repair_fn is not None:
-            return validate_with_repair(raw, schema, self._repair_fn)
+            # warn_fn=print (PIPELINE_AUDIT_2026-09-17.md finding #10): this layer has no
+            # `log` callback threaded down from run_pipeline.py (and adding one here would
+            # touch every call site between here and there) -- `print` reaches the same
+            # console output `log=print`'s own default already writes to, the cheapest way
+            # to make a real repair-fidelity warning actually visible without new plumbing.
+            return validate_with_repair(raw, schema, self._repair_fn, warn_fn=print)
         from .structured import validate
 
         return validate(raw, schema)

@@ -67,6 +67,83 @@ def test_call_reads_public_cost_interface_not_hidden_params(monkeypatch):
     assert result.billed_microusd == 2  # 0.0000024 usd -> rounds to 2 microusd
 
 
+def test_a_fully_versioned_resolved_model_is_not_a_mismatch(monkeypatch):
+    """PIPELINE_AUDIT_2026-09-17.md finding #8: the exact scenario the test right above
+    this one already exercises -- requesting "gpt-4o-mini" and getting back the provider's
+    own fully-dated "gpt-4o-mini-2024-07-18" -- must never raise. This is the real
+    false-positive risk an exact-string comparison (this project's own `ModelMismatch`
+    precedent on the Claude CLI backend) would have hit on every such call."""
+    from llm.backends.litellm_backend import LiteLLMModelMismatch
+
+    fake_response = FakeResponse("OK", "gpt-4o-mini-2024-07-18", 12, 1)
+    monkeypatch.setattr("litellm.completion", lambda **kw: fake_response)
+    monkeypatch.setattr("litellm.completion_cost", lambda completion_response: 0.0)
+
+    backend = LiteLLMBackend()
+    result = backend.call("gpt-4o-mini", "system", "user")  # must not raise
+    assert result.model_resolved == "gpt-4o-mini-2024-07-18"
+
+
+def test_a_provider_prefixed_request_matching_an_unprefixed_response_is_not_a_mismatch(monkeypatch):
+    """litellm's own request syntax uses "provider/model" (e.g. "gemini/gemini-3.1-pro-
+    preview", config/models.yaml's real alias) -- the response is not guaranteed to echo
+    the provider prefix back."""
+    fake_response = FakeResponse("OK", "gemini-3.1-pro-preview", 12, 1)
+    monkeypatch.setattr("litellm.completion", lambda **kw: fake_response)
+    monkeypatch.setattr("litellm.completion_cost", lambda completion_response: 0.0)
+
+    backend = LiteLLMBackend()
+    result = backend.call("gemini/gemini-3.1-pro-preview", "system", "user")  # must not raise
+    assert result.model_resolved == "gemini-3.1-pro-preview"
+
+
+def test_a_genuinely_different_model_family_raises_model_mismatch(monkeypatch):
+    """The real case this check exists to catch: a silent provider-side substitution to a
+    COMPLETELY different model, sharing no name prefix with what was requested -- e.g. a
+    retired "-preview" alias (config/models.yaml's own documented risk) silently served by
+    a different model instead of erroring."""
+    from llm.backends.litellm_backend import LiteLLMModelMismatch
+
+    fake_response = FakeResponse("OK", "gemini-2.0-flash", 12, 1)
+    monkeypatch.setattr("litellm.completion", lambda **kw: fake_response)
+    monkeypatch.setattr("litellm.completion_cost", lambda completion_response: 0.0)
+
+    backend = LiteLLMBackend()
+    with pytest.raises(LiteLLMModelMismatch, match="gemini-2.0-flash"):
+        backend.call("gemini/gemini-3.1-pro-preview", "system", "user")
+
+
+def test_a_sibling_model_substitution_sharing_a_string_prefix_raises_model_mismatch(monkeypatch):
+    """2026-09-17 (found on review): the original prefix-match implementation of
+    `_same_model_family` treated "gpt-4o" and "gpt-4o-mini" as the same family too, since
+    "gpt-4o-mini".startswith("gpt-4o") -- but both are real, distinct, already-configured
+    models (config/models.yaml: openai_story_strong -> "gpt-4o", openai_story_mini ->
+    "gpt-4o-mini"). A silent provider substitution of the cheaper mini model for a "gpt-4o"
+    request is exactly the scenario this whole check exists to catch, and must not pass
+    silently just because one name happens to be a literal prefix of the other."""
+    from llm.backends.litellm_backend import LiteLLMModelMismatch
+
+    fake_response = FakeResponse("OK", "gpt-4o-mini", 12, 1)
+    monkeypatch.setattr("litellm.completion", lambda **kw: fake_response)
+    monkeypatch.setattr("litellm.completion_cost", lambda completion_response: 0.0)
+
+    backend = LiteLLMBackend()
+    with pytest.raises(LiteLLMModelMismatch, match="gpt-4o-mini"):
+        backend.call("gpt-4o", "system", "user")
+
+
+def test_a_missing_resolved_model_field_never_raises(monkeypatch):
+    """`response.model` isn't guaranteed present on every provider response -- absence
+    must fall back silently (as before this fix), never be treated as a mismatch."""
+    fake_response = FakeResponse("OK", None, 12, 1)
+    monkeypatch.setattr("litellm.completion", lambda **kw: fake_response)
+    monkeypatch.setattr("litellm.completion_cost", lambda completion_response: 0.0)
+
+    backend = LiteLLMBackend()
+    result = backend.call("gpt-4o", "system", "user")  # must not raise
+    assert result.model_resolved == "gpt-4o"  # falls back to the requested model
+
+
 def test_call_degrades_to_zero_cost_when_completion_cost_raises(monkeypatch):
     """A model with no pricing entry in LiteLLM must not crash the call — the pre-flight
     estimate is the real backstop, not this figure."""
@@ -330,6 +407,46 @@ def test_images_become_an_openai_style_multimodal_content_block_list(monkeypatch
     ]
 
 
+def test_no_web_search_by_default_sends_no_tools_key(monkeypatch):
+    """STORY_IMPROVEMENT_PLAN.md Phase 23: every existing caller (nothing enables web search
+    yet except C2a) must get the exact same request shape as before this feature existed --
+    no `tools` key at all, matching the same care already taken for `images`."""
+    fake_response = FakeResponse("OK", "gemini-3.1-pro-preview", 6, 1)
+    captured = {}
+
+    def fake_completion(**kwargs):
+        captured.update(kwargs)
+        return fake_response
+
+    monkeypatch.setattr("litellm.completion", fake_completion)
+    monkeypatch.setattr("litellm.completion_cost", lambda completion_response: 0.0)
+
+    backend = LiteLLMBackend()
+    backend.call("gemini/gemini-3.1-pro-preview", "sys", "user")
+
+    assert "tools" not in captured
+
+
+def test_enable_web_search_sends_the_real_google_search_tool_schema(monkeypatch):
+    """The real schema litellm's own Gemini tool-transformation layer expects (confirmed by
+    reading litellm/llms/vertex_ai/gemini/vertex_and_google_ai_studio_gemini.py directly,
+    not assumed) -- C2a (facts/verify.py) is the one real caller of this today."""
+    fake_response = FakeResponse("OK", "gemini-3.1-pro-preview", 6, 1)
+    captured = {}
+
+    def fake_completion(**kwargs):
+        captured.update(kwargs)
+        return fake_response
+
+    monkeypatch.setattr("litellm.completion", fake_completion)
+    monkeypatch.setattr("litellm.completion_cost", lambda completion_response: 0.0)
+
+    backend = LiteLLMBackend()
+    backend.call("gemini/gemini-3.1-pro-preview", "sys", "user", enable_web_search=True)
+
+    assert captured["tools"] == [{"googleSearch": {}}]
+
+
 @pytest.mark.integration
 def test_live_openai_smoke():
     """Real API call, minimal tokens. Costs a fraction of a cent. Run with: pytest -m integration"""
@@ -431,3 +548,39 @@ def test_live_gemini_multimodal_smoke():
     assert result.content.strip() != ""
     print(f"\n[live gemini multimodal] content={result.content!r} "
           f"cost=${result.billed_microusd / 1_000_000:.6f}")
+
+
+@pytest.mark.integration
+def test_live_gemini_web_search_smoke():
+    """STORY_IMPROVEMENT_PLAN.md Phase 23: confirms `tools=[{"googleSearch": {}}]` actually
+    triggers real grounded search on the live API (not just that litellm accepts the
+    parameter) and that cost is still correctly attributed via `litellm.completion_cost` --
+    the real "confirm provider behavior before building on assumption" step the plan calls
+    for, before this is trusted inside the full C2a pipeline. Asks something the model could
+    NOT answer correctly from training data alone (today's date) as the actual proof search
+    happened, not just that a plausible-sounding answer came back.
+
+    Real finding from the FIRST run of this test (2026-09-16): `max_tokens=200` (an ad-hoc
+    guess) came back with EMPTY content -- 382 of 386 output tokens went to hidden reasoning,
+    the exact same "reasoning eats the whole budget" failure already documented elsewhere in
+    this codebase (ERR-021, the gpt-5.6-sol A2 bug). Uses the backend's real default
+    `max_tokens` (4096, no override) and the SAME `reasoning_effort="low"` C2a's own agent
+    config actually sets (`gemini_review_strong` in config/models.yaml) -- confirmed
+    sufficient (a 2000-token override alone already worked; the real default is 2x that)."""
+    from datetime import date
+
+    from dotenv import load_dotenv
+
+    load_dotenv(dotenv_path=".env")
+    assert os.environ.get("GEMINI_API_KEY"), "GEMINI_API_KEY not set"
+
+    backend = LiteLLMBackend()  # real default max_tokens=4096, not an ad-hoc override
+    result = backend.call(
+        "gemini/gemini-3.1-pro-preview", "You are terse.",
+        "Search the web and tell me today's exact date (year-month-day).",
+        enable_web_search=True, reasoning_effort="low",
+    )
+    print(f"\n[live gemini web search] content={result.content!r} "
+          f"tokens in={result.input_tokens} out={result.output_tokens} reasoning={result.reasoning_tokens} "
+          f"cost=${result.billed_microusd / 1_000_000:.6f}")
+    assert str(date.today().year) in result.content

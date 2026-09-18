@@ -8,6 +8,7 @@ approximately true.
 from __future__ import annotations
 
 import json
+import threading
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -84,9 +85,14 @@ class UsageLedger:
     def __init__(self, path: str | Path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        # 2026-09-15: concurrent batch calls (llm/concurrency.py) can append from multiple
+        # threads at once -- without this, two writers' open+write+close could interleave
+        # and corrupt a line, silently breaking the reconciliation invariant this ledger
+        # exists to guarantee.
+        self._lock = threading.Lock()
 
     def append(self, record: UsageRecord) -> None:
-        with self.path.open("a") as f:
+        with self._lock, self.path.open("a") as f:
             f.write(record.to_json() + "\n")
 
     def read_all(self) -> list[UsageRecord]:
@@ -145,9 +151,18 @@ class CostReport(BaseModel):
     by_revision_cycle: dict[int, int] = Field(default_factory=dict)  # cycle -> microusd
     cache_saved_microusd: int = 0
     escalations: list[str] = Field(default_factory=list)  # e.g. "C5 -> gemini_review_strong (voice AMBER)"
+    # PIPELINE_AUDIT_2026-09-17.md finding #5: a `--resume`d run's own `UsageLedger` is always
+    # scoped to the NEW run dir's own usage.jsonl -- it never contains whatever was spent on a
+    # stage the resume skipped (claims/source_brief/story_loop, carried forward in
+    # `PipelineState` instead). `billed_usd` deliberately stays a pure reflection of THIS
+    # ledger (the reconciliation invariant this class's own docstring states), so the
+    # resumed-run total is exposed here instead, explicitly -- the TRUE total cost of a
+    # resumed run is `billed_usd + carried_over_usd`, never `billed_usd` alone. Always 0.0 for
+    # a run that was never resumed.
+    carried_over_usd: float = 0.0
 
     @classmethod
-    def from_ledger(cls, run_id: str, ledger: "UsageLedger") -> "CostReport":
+    def from_ledger(cls, run_id: str, ledger: "UsageLedger", carried_over_microusd: int = 0) -> "CostReport":
         """The one deterministic path from records to a report — no other code
         should hand-aggregate a ledger (plan §4.1's reconciliation invariant)."""
         by_agent_raw = ledger.by_agent()
@@ -163,4 +178,5 @@ class CostReport(BaseModel):
             run_id=run_id,
             billed_usd=microusd_to_usd(ledger.total_billed_microusd()),
             by_agent=by_agent,
+            carried_over_usd=microusd_to_usd(carried_over_microusd),
         )

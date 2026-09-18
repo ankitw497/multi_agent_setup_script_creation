@@ -93,6 +93,9 @@ def _extract_production_notes(soup: BeautifulSoup) -> SourceUnit | None:
         heading=heading,
         level=1,
         text=text,
+        kind="PRODUCTION_META",  # STORY_IMPROVEMENT_PLAN.md Phase 11 -- author's own storyboard
+        # intent, not a technical assertion about the subject matter; S2b must never extract a
+        # Claim from this unit (see facts/claim_extract.py).
         callouts=[f"{s['title']} ({s['timestamp']})" for s in steps if s["title"]],
         dom_path=".page-footer .pipeline",
         structure_confidence=1.0,

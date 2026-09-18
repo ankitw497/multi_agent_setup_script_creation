@@ -32,6 +32,52 @@ class CallResult:
     latency_ms: int
 
 
+class LiteLLMModelMismatch(RuntimeError):
+    """PIPELINE_AUDIT_2026-09-17.md finding #8: the paid lane had no equivalent of
+    `claude_cli.py::ModelMismatch` -- "pin the exact model, never trust a moving alias"
+    (plan Appendix E #8) was only ever enforced on the subscription lane. A real config
+    comment already flags this exact risk (`gemini_review_strong`'s "-preview" in the id
+    means Google can retire/rename this one too"). Unlike `ModelMismatch`'s own exact-string
+    comparison, this uses a prefix match (see `_same_model_family`'s own docstring) -- a real
+    provider routinely echoes back a fully-versioned name (e.g. "gpt-4o-mini-2024-07-18" for
+    a request of "gpt-4o-mini"), which is the SAME model, not a substitution."""
+
+
+def _model_family(model_id: str) -> str:
+    """Strip a "provider/" prefix (litellm's own request syntax, e.g. "gemini/gemini-3.1-
+    pro-preview") -- the resolved model in a response is not guaranteed to echo it back."""
+    return model_id.rsplit("/", 1)[-1]
+
+
+def _strip_trailing_version_suffix(name: str) -> str:
+    """Drop trailing hyphen-separated tokens that are purely numeric (a date like
+    "2024-07-18" splits into three such tokens; a build tag like "001" is one) -- these are
+    a provider's own versioning, never a distinguishing part of the model name itself.
+    "gpt-4o-mini-2024-07-18" -> "gpt-4o-mini"; "gpt-4o-mini" is already bare and unchanged;
+    "gpt-4o" is unchanged too since "4o" isn't purely digits."""
+    tokens = name.split("-")
+    while len(tokens) > 1 and tokens[-1].isdigit():
+        tokens.pop()
+    return "-".join(tokens)
+
+
+def _same_model_family(requested: str, resolved: str) -> bool:
+    """Compares the two names with any trailing provider version/date suffix stripped, not
+    exact equality on the raw strings and not a bare prefix match. Exact equality (this
+    project's own `ModelMismatch` precedent on the Claude CLI backend) would false-positive
+    on a real, confirmed case: requesting "gpt-4o-mini" can come back resolved as
+    "gpt-4o-mini-2024-07-18", the provider's own fully-dated version of the SAME model, not a
+    substitution. A bare prefix match (`a.startswith(b)`) over-corrected: it was found on
+    review to also treat "gpt-4o" and "gpt-4o-mini" as the same family, since one is a
+    literal string-prefix of the other -- yet both are real, distinct, already-configured
+    models in config/models.yaml, so a silent substitution between them would pass silently.
+    Stripping only a trailing numeric-token suffix (never "mini", never a hyphenated word)
+    closes that hole while still absorbing the real dated-suffix case."""
+    a = _strip_trailing_version_suffix(_model_family(requested))
+    b = _strip_trailing_version_suffix(_model_family(resolved))
+    return a == b
+
+
 class LiteLLMBackend:
     """lane = paid_api. One call = one CallResult; the caller turns that into a UsageRecord."""
 
@@ -87,11 +133,24 @@ class LiteLLMBackend:
         max_tokens: int | None = None,
         images: list[str] | None = None,
         timeout_s: float | None = None,
+        enable_web_search: bool = False,
     ) -> CallResult:
         start = time.monotonic()
         extra_kwargs = {}
         if reasoning_effort is not None:
             extra_kwargs["reasoning_effort"] = reasoning_effort
+        # enable_web_search (STORY_IMPROVEMENT_PLAN.md Phase 23, 2026-09-16): real, hosted,
+        # single-call web search -- litellm.supports_web_search() confirms both Gemini models
+        # this pipeline uses (gemini-3.1-pro-preview, gemini-3.6-flash) support it, and the
+        # provider does the search-then-answer internally, no multi-turn orchestration needed
+        # here. `tools=[{"googleSearch": {}}]` is the real schema litellm's own Gemini tool-
+        # transformation layer expects (confirmed by reading
+        # litellm/llms/vertex_ai/gemini/vertex_and_google_ai_studio_gemini.py directly, not
+        # assumed). Byte-for-byte the same request shape as every existing caller when False
+        # (the default) -- no `tools` key at all, matching the same care already taken for
+        # `images` above.
+        if enable_web_search:
+            extra_kwargs["tools"] = [{"googleSearch": {}}]
 
         # images (V1C, C3 visual critic): a list of data URIs. When absent,
         # the user message is a plain string -- byte-for-byte the same
@@ -130,9 +189,16 @@ class LiteLLMBackend:
         details = getattr(usage, "completion_tokens_details", None)
         reasoning_tokens = getattr(details, "reasoning_tokens", None) or 0
 
+        resolved_model = getattr(response, "model", None)
+        if resolved_model and not _same_model_family(model, resolved_model):
+            raise LiteLLMModelMismatch(
+                f"requested model {model!r} but the provider resolved {resolved_model!r} — "
+                "refusing to proceed on an unpinned/moved alias (plan Appendix E #8)"
+            )
+
         return CallResult(
             content=response.choices[0].message.content or "",
-            model_resolved=getattr(response, "model", model),
+            model_resolved=resolved_model or model,
             input_tokens=usage.prompt_tokens,
             output_tokens=usage.completion_tokens,
             reasoning_tokens=reasoning_tokens,

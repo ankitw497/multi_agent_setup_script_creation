@@ -20,5 +20,5 @@
   "micro_payoffs": [],
   "bridge": {"mode": "SPOKEN", "parent_video_id": "video-1.1"},
   "visual": {"dominant_object": "memory_stack", "states": ["filling", "overflowing"], "safe_zones": ["bottom_20pct"]},
-  "narration": {"target_duration_seconds": 52, "word_band": [120, 165]}
+  "narration": {"target_duration_seconds": 95, "word_band": [160, 210]}
 }

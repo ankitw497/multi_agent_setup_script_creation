@@ -26,6 +26,16 @@ ProvenanceStatus = Literal["SOURCE_EXPLICIT", "SOURCE_INFERRED", "DERIVED", "EXT
 VerificationStatus = Literal["UNVERIFIED", "VERIFIED", "CONTEXT_DEPENDENT", "REJECTED"]
 InferenceKind = Literal["NONE", "DETERMINISTIC", "EXPLANATORY"]
 EvidenceKind = Literal["SOURCE", "CALCULATION", "EXTERNAL_REFERENCE"]
+# STORY_IMPROVEMENT_PLAN.md Phase 11: what kind of content a unit actually is, decided once
+# at extraction (S0) and used to keep claim extraction (S2b) from treating an author's own
+# storyboard/pacing intent as a technical assertion about the subject matter. `CONTENT` is
+# the default and covers everything a profile's own section-walk extracts; `PRODUCTION_META`
+# is the one real, already-structurally-distinguished case in this codebase
+# (`extraction/html_parser.py::_extract_production_notes`) -- `VISUAL_GUIDANCE`/`REFERENCE`/
+# `OTHER` are declared for the same three-way split the plan calls for, but nothing in this
+# codebase extracts a source unit that would need them yet (no speculative classifier built
+# ahead of a real case, matching this project's own YAGNI discipline).
+SourceUnitKind = Literal["CONTENT", "PRODUCTION_META", "VISUAL_GUIDANCE", "REFERENCE", "OTHER"]
 
 
 class SourceUnit(BaseModel):
@@ -35,6 +45,7 @@ class SourceUnit(BaseModel):
     heading: str = ""
     level: int = Field(ge=1, le=6, default=1)
     text: str = ""
+    kind: SourceUnitKind = "CONTENT"
     equations: list[str] = Field(default_factory=list)
     diagrams: list[str] = Field(default_factory=list)
     callouts: list[str] = Field(default_factory=list)
@@ -90,6 +101,14 @@ class Claim(BaseModel):
     provenance_status: ProvenanceStatus = "SOURCE_EXPLICIT"
     verification_status: VerificationStatus = "UNVERIFIED"
     evidence: list[VerificationEvidence] = Field(default_factory=list)
+    # STORY_IMPROVEMENT_PLAN.md Phase 10: a claim id alone doesn't stop a sentence from
+    # citing the right claim while changing its meaning -- "under assumption X, variance
+    # scales with d_k" narrated as "variance always equals d_k" cites the same claim_id but
+    # drops the condition that makes it true. C2a populates this for any VERIFIED/
+    # CONTEXT_DEPENDENT claim that only holds under a stated condition; C2b checks narration
+    # against it (`qualifier_preserved`). Free text, not a closed vocabulary -- the condition
+    # itself is whatever the source actually states.
+    required_qualifiers: list[str] = Field(default_factory=list)
 
     derived_from_claim_ids: list[str] = Field(default_factory=list)
     inference_kind: InferenceKind = "NONE"

@@ -38,19 +38,19 @@ def test_record_spend_returns_ok_under_warning():
 
 
 def test_record_spend_returns_warning_once_past_warning_threshold():
-    counter = BudgetCounter(tier=DEFAULT_TIERS["longform"])  # warning = 0.60, hard_cap = 1.00
-    status = counter.record_spend(usd_to_microusd(0.70))
+    counter = BudgetCounter(tier=DEFAULT_TIERS["longform"])  # warning = 1.20, hard_cap = 2.00
+    status = counter.record_spend(usd_to_microusd(1.30))
     assert status == BudgetStatus.WARNING
 
 
 def test_record_spend_raises_past_hard_cap():
-    """A run at $0.46 needing one more legitimate revision should still proceed under the cap;
+    """A run at $0.90 needing one more legitimate revision should still proceed under the cap;
     only crossing the hard cap itself must stop the run (Appendix G #9)."""
-    counter = BudgetCounter(tier=DEFAULT_TIERS["longform"])  # hard_cap = 1.00
-    counter.record_spend(usd_to_microusd(0.46))  # fine, under target even
-    counter.record_spend(usd_to_microusd(0.50))  # 0.96 total, still under hard cap -> proceeds
+    counter = BudgetCounter(tier=DEFAULT_TIERS["longform"])  # hard_cap = 2.00
+    counter.record_spend(usd_to_microusd(0.90))  # fine, under target even
+    counter.record_spend(usd_to_microusd(1.00))  # 1.90 total, still under hard cap -> proceeds
     with pytest.raises(BudgetExceeded):
-        counter.record_spend(usd_to_microusd(0.10))  # 1.06 total -> over hard cap
+        counter.record_spend(usd_to_microusd(0.20))  # 2.10 total -> over hard cap
 
 
 def test_record_spend_rejects_negative_amounts():
