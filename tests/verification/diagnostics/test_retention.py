@@ -1,10 +1,11 @@
 """Tests for verification/diagnostics/retention.py -- D* (plan §10.2)."""
 from planning.models import (
-    CTAContract, EndingContract, HookContract, ScenePlan, SourceBrief, StoryBeat, StoryPlan, TitleContract,
+    CTAContract, EndingContract, HookContract, ScenePlan, SourceBrief, StoryBeat, StoryPlan,
+    StoryScopeContract, TitleContract,
 )
 from verification.diagnostics.retention import (
     PAYOFF_GAP_SECONDS, VALLEY_BEAT_COUNT, check_driver_coverage, check_new_information_disagreement,
-    check_novelty_coverage, check_payoff_gap, check_retention, check_valleys,
+    check_novelty_coverage, check_payoff_gap, check_retention, check_title_scope_coverage, check_valleys,
 )
 
 
@@ -14,14 +15,14 @@ def make_source_brief(**overrides) -> SourceBrief:
     return SourceBrief(**base)
 
 
-def make_plan(beats, scene_plan=None) -> StoryPlan:
+def make_plan(beats, scene_plan=None, title=None, scope_contract=None) -> StoryPlan:
     return StoryPlan(
         archetype="build", selection_reason="x", story_promise="x", central_question="x",
-        title=TitleContract(chosen="t", promise="p"),
+        title=title or TitleContract(chosen="t", promise="p"),
         hook=HookContract(viewer_problem="x", tension="y", promise="z"),
         cta=CTAContract(primary_after_beat=beats[0].beat_id),
         ending=EndingContract(resolve_hook="x", compressed_mental_model="y", capstone_payoff="z", viewer_can_now="do x"),
-        beats=beats, scene_plan=scene_plan or [],
+        beats=beats, scene_plan=scene_plan or [], scope_contract=scope_contract or StoryScopeContract(),
     )
 
 
@@ -221,4 +222,76 @@ def test_new_information_false_is_never_a_disagreement_regardless_of_new_concept
         scene_plan=[ScenePlan(scene_id="s1", beat_id="B01", word_budget=40, new_concepts=[])],
     )
     result = check_new_information_disagreement(plan)
+    assert result.band == "GREEN"
+
+
+# ---- check_title_scope_coverage (STORY_IMPROVEMENT_PLAN.md Phase 25 item 3) ---------------
+
+def test_no_must_cover_items_is_green():
+    plan = make_plan([beat("B01")], scope_contract=StoryScopeContract(must_cover=[]))
+    result = check_title_scope_coverage(plan)
+    assert result.band == "GREEN"
+
+
+def test_title_reflecting_most_must_cover_items_is_green():
+    plan = make_plan(
+        [beat("B01")],
+        title=TitleContract(chosen="How Scaled Dot-Product Attention Works", promise="p"),
+        scope_contract=StoryScopeContract(must_cover=["scaled dot-product attention", "attention scores"]),
+    )
+    result = check_title_scope_coverage(plan)
+    assert result.band == "GREEN"
+
+
+def test_the_real_confirmed_case_is_amber():
+    """The real, live-confirmed case: a title naming only the core equation while masking,
+    multi-head attention, cross-attention, and quadratic cost all got real beats and
+    shared nothing with the title at all."""
+    plan = make_plan(
+        [beat("B01")],
+        title=TitleContract(chosen="Why Every Term in Scaled Dot-Product Attention Is Necessary", promise="p"),
+        scope_contract=StoryScopeContract(must_cover=[
+            "causal masking", "multi-head attention wiring", "cross-attention", "quadratic pair growth",
+        ]),
+    )
+    result = check_title_scope_coverage(plan)
+    assert result.band == "AMBER"
+
+
+def test_never_a_hard_gate_only_a_diagnostic():
+    """Advisory by design -- a word-overlap heuristic can only approximate this, never
+    replace C1's own judgment (mirrors check_novelty_coverage's own precedent)."""
+    plan = make_plan(
+        [beat("B01")],
+        title=TitleContract(chosen="A Narrow Title", promise="p"),
+        scope_contract=StoryScopeContract(must_cover=["completely unrelated topic one", "topic two also unrelated"]),
+    )
+    result = check_title_scope_coverage(plan)
+    assert result.band in ("GREEN", "AMBER")  # never RED -- no such band path exists
+
+
+def test_a_short_title_cannot_cover_a_long_item_via_one_incidental_shared_word():
+    """PIPELINE_AUDIT_2026-09-17.md finding #3: overlap() divides by the SHORTER text's
+    word count -- when the title (2 words) is shorter than a must_cover item (6 words),
+    a single shared word ("attention", the video's own overall topic) used to clear the
+    0.5 threshold: overlap=1/min(2,6)=0.5, exactly the "one incidental word" failure mode
+    this threshold exists to prevent. Only 1 of the item's own 6 words actually appears."""
+    plan = make_plan(
+        [beat("B01")],
+        title=TitleContract(chosen="Self-Attention", promise="p"),
+        scope_contract=StoryScopeContract(must_cover=["the quadratic cost of attention over sequence length"]),
+    )
+    result = check_title_scope_coverage(plan)
+    assert result.band == "AMBER"
+
+
+def test_a_short_title_that_genuinely_reflects_a_longer_item_is_still_green():
+    """The fix must not become overly strict -- a title containing MOST of a longer
+    item's own words should still count as covered."""
+    plan = make_plan(
+        [beat("B01")],
+        title=TitleContract(chosen="Scaled Dot-Product Attention", promise="p"),
+        scope_contract=StoryScopeContract(must_cover=["scaled dot-product attention mechanism"]),
+    )
+    result = check_title_scope_coverage(plan)
     assert result.band == "GREEN"

@@ -77,6 +77,18 @@ def test_prompt_does_not_discourage_using_diagram_or_math_components():
     assert "math_block" in TASK_PROMPT or "diagram_card" in TASK_PROMPT
 
 
+def test_prompt_is_visual_first_but_never_allows_blank_screen_prose():
+    """STORY_IMPROVEMENT_PLAN.md Phase 14: the lighter prompt-level rebalancing (minimum
+    text needed, not "1-3 sentences of article prose") must not contradict the existing
+    hard gate (`verification/hard/render.py::check_every_scene_has_prose`) that a
+    component/diagram is never a substitute for real screen text."""
+    from html_synth.synthesizer import TASK_PROMPT
+
+    assert "minimum" in TASK_PROMPT.lower()
+    assert "never blank" in TASK_PROMPT.lower()
+    assert "1-3 sentences of article prose" not in TASK_PROMPT
+
+
 def test_prompt_has_no_stray_control_characters_from_unescaped_backslashes():
     """Regression guard for a bug in THIS session's own fix: writing a raw
     LaTeX example like \\frac/\\right/\\top directly into a normal (non-raw)
@@ -164,6 +176,28 @@ def test_only_claims_from_the_beats_source_units_are_offered():
     synthesize_beat_visual(make_plan().beats[0], make_plan(), claims, agent)
     offered = {c["claim_id"] for c in agent.calls[0]["payload"]["available_claims"]}
     assert offered == {"C001"}
+
+
+def test_required_qualifiers_and_scope_reach_the_beat_visual_payload():
+    """STORY_IMPROVEMENT_PLAN.md Phase 10 follow-up: confirmed live gap (2026-09-15) -- H's
+    screen prose is written independently of narration and can drop a qualifier C2b would
+    catch on the narration side, since H never even saw it. Threading required_qualifiers/
+    scope into H's own claim payload is the fix."""
+    agent = FakeAgent(BeatVisual(beat_id="B01", heading="h"))
+    claims = [Claim(
+        claim_id="C001", source_unit="u1", claim="reaching forward works", type="mechanism",
+        scope="MODEL_SPECIFIC", required_qualifiers=["only for unmasked/bidirectional attention"],
+    )]
+    synthesize_beat_visual(make_plan().beats[0], make_plan(), claims, agent)
+    offered = agent.calls[0]["payload"]["available_claims"][0]
+    assert offered["required_qualifiers"] == ["only for unmasked/bidirectional attention"]
+    assert offered["scope"] == "MODEL_SPECIFIC"
+
+
+def test_prompt_instructs_preserving_required_qualifiers():
+    from html_synth.synthesizer import TASK_PROMPT
+
+    assert "required_qualifiers" in TASK_PROMPT
 
 
 def test_allowed_components_matches_the_beats_archetype_role():

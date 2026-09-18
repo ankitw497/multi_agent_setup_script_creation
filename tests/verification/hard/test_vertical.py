@@ -58,3 +58,15 @@ def test_tampered_narration_hash_is_caught_by_the_shared_hash_check():
     different_narration = [SceneNarration(scene_id="hook", sentences=[SentenceNarration(text="different", sentence_type="transition")])]
     issues = check_vertical_short(html, different_narration)
     assert any(i.code == "narration_hash_mismatch" for i in issues)
+
+
+def test_an_undeclared_css_variable_is_caught_by_the_shared_lint_check():
+    """2026-09-16: the real regression this check exists for -- BASE_STYLESHEET's
+    `.math-block` referenced `var(--r_sm)` while css_tokens() only ever emitted
+    `--r-sm`, a silent property drop that shipped in every H/short render undetected.
+    This test injects the SAME shape of typo to prove the wiring (not just the
+    standalone check function) actually catches it."""
+    html = synthesize_short_html(make_plan(), make_narration())
+    tampered = html.replace("var(--r-sm)", "var(--r_sm)") if "var(--r-sm)" in html else html + "<style>.x{color:var(--totally_undeclared)}</style>"
+    issues = check_vertical_short(tampered, make_narration())
+    assert any(i.code == "css_variable_never_declared" for i in issues)

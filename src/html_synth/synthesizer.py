@@ -1,4 +1,4 @@
-"""H -- HTML synthesis (Narration Lead / Sonnet, subscription lane) (plan §12).
+"""H -- HTML synthesis (HTML Author / Sonnet, subscription lane) (plan §12).
 
 The dual-audience contract (plan §12.0): the reader sees screen prose in an
 on-screen voice, never the spoken narration; the renderer reads the
@@ -24,15 +24,24 @@ from planning.models import StoryBeat, StoryPlan
 from .component_library import component_slots, components_for_story_role
 
 TASK_PROMPT = """\
-Write the ON-SCREEN article prose for this one beat -- NOT spoken
-narration. This is a different text a reader sees on a webpage, in an
-explanatory written voice (more like a technical article than a script):
-denser, more concrete, can use terms the spoken narration simplifies away.
-Never restate the narration text given for reference; write independent
-prose that explains the same idea in writing.
+Design the ON-SCREEN content for this one beat -- NOT spoken narration.
+This is visual-first: a viewer's eye should land on one dominant teaching
+object per scene (a diagram, a worked comparison, an equation, an
+annotated number), with only the minimum text needed to support it --
+never a paragraph doing the work a component could do instead. Never
+restate the narration text given for reference; where you do write text,
+make it independent, denser and more concrete than the spoken narration,
+not a copy of it.
 
 For each scene in this beat:
-- `screen_prose`: 1-3 sentences of article prose covering that scene's idea.
+- `screen_prose`: the minimum real text needed to support this scene's
+  dominant visual object -- often a single, substantive sentence, up to 3
+  only when the idea genuinely can't be carried by the component alone.
+  Never blank: a component or diagram is never a substitute for real
+  screen text (this page requires visible prose on every scene), but
+  "minimum needed" means exactly that -- do not pad a one-sentence idea
+  into three just to fill space. More text is not more thorough; it's the
+  reader having to read what the visual should already be showing.
 - `component_id`: OPTIONAL -- choose one component from `allowed_components`
   if (and only if) this scene's content genuinely benefits from one (a
   concrete comparison, a callout-worthy caveat, an equation, a labeled
@@ -65,6 +74,15 @@ For each scene in this beat:
   appears (so it can be found and annotated), and `claim_id` from
   `available_claims`. A number with no backing claim should not appear in
   the prose at all.
+- Each claim in `available_claims` may carry `required_qualifiers` --
+  conditions its truth actually depends on (e.g. "only for unmasked/
+  bidirectional attention, not causal") -- and `scope`
+  (UNIVERSAL/MODEL_SPECIFIC/EXAMPLE_SPECIFIC/IMPLEMENTATION_DEPENDENT). If
+  your screen prose states something grounded in such a claim, preserve
+  its qualifier/scope -- do not describe a conditional mechanism as if it
+  applied universally just because the spoken narration you're
+  illustrating happened to state it that way; this page's own prose is
+  independent and must get it right even where the narration didn't.
 
 Also write this beat's own `heading` (a real `<h2>`, specific to what this
 beat teaches, never generic like "Section 3") and a one-sentence
@@ -121,23 +139,26 @@ class HeroContent(BaseModel):
 
 
 def _claim_payload(claim: Claim) -> dict:
-    return {"claim_id": claim.claim_id, "claim": claim.claim, "numbers": claim.numbers}
+    return {
+        "claim_id": claim.claim_id, "claim": claim.claim, "numbers": claim.numbers,
+        "scope": claim.scope, "required_qualifiers": claim.required_qualifiers,
+    }
 
 
-def synthesize_hero(plan: StoryPlan, narration_lead: Agent) -> HeroContent:
+def synthesize_hero(plan: StoryPlan, html_author: Agent) -> HeroContent:
     payload = {
         "story_promise": plan.story_promise, "hook_promise": plan.hook.promise,
         "hook_tension": plan.hook.tension, "title_promise": plan.title.promise,
         "running_example": plan.running_example.model_dump(),
     }
-    return narration_lead.run(
+    return html_author.run(
         pass_id="H", mode="HERO", task_prompt=HERO_TASK_PROMPT,
         payload=payload, schema=HeroContent, timeout_s=120,
     )
 
 
 def synthesize_beat_visual(
-    beat: StoryBeat, plan: StoryPlan, claims: list[Claim], narration_lead: Agent,
+    beat: StoryBeat, plan: StoryPlan, claims: list[Claim], html_author: Agent,
     narration: list[SceneNarration] = (),
 ) -> BeatVisual:
     scenes = [s for s in plan.scene_plan if s.beat_id == beat.beat_id]
@@ -161,7 +182,7 @@ def synthesize_beat_visual(
         "available_claims": [_claim_payload(c) for c in beat_claims],
         "running_example": plan.running_example.model_dump(),
     }
-    result = narration_lead.run(
+    result = html_author.run(
         pass_id="H", mode="BEAT_VISUAL", task_prompt=TASK_PROMPT,
         payload=payload, schema=BeatVisual, timeout_s=180,
     )

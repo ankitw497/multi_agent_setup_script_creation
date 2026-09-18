@@ -15,6 +15,7 @@ from __future__ import annotations
 from html_synth.vertical_assembler import SAFE_BOTTOM, SAFE_TOP, VERTICAL_HEIGHT, VERTICAL_WIDTH
 from narration.models import SceneNarration
 
+from .css_lint import check_css_variable_references
 from .render import RenderIssue, check_narration_hash_matches, check_scenes_present_in_order
 
 
@@ -39,9 +40,11 @@ def check_vertical_canvas_size(html: str) -> list[RenderIssue]:
 def check_vertical_short(html: str, narration: list[SceneNarration]) -> list[RenderIssue]:
     """The full vertical-short static pass -- every check, one call."""
     expected_segments = [n.scene_id for n in narration]
+    css_issues = [RenderIssue(i.code, i.detail) for i in check_css_variable_references(html)]
     return (
         check_scenes_present_in_order(html, expected_segments)
         + check_narration_hash_matches(html, narration)
         + check_safe_zones_present(html)
         + check_vertical_canvas_size(html)
+        + css_issues
     )

@@ -59,12 +59,34 @@ def check_every_beat_has_source_units(plan: StoryPlan) -> list[StructuralIssue]:
     ]
 
 
-def check_source_coverage(plan: StoryPlan, all_source_unit_ids: list[str]) -> list[StructuralIssue]:
+def check_source_disposition(plan: StoryPlan, all_source_unit_ids: list[str]) -> list[StructuralIssue]:
+    """STORY_IMPROVEMENT_PLAN.md Phase 11: replaces the old blanket rule ("every source unit
+    must be referenced by a beat"), which forced peripheral source content into the video even
+    when it should have been deferred -- the confirmed real cause (per an external review of a
+    live GPT-5.6-sol run) of a video's actual scope drifting wider than its title. A2 now gives
+    every unit an explicit `SourceCoverageDecision`; the hard gate here only requires that (a)
+    every unit actually got one (nothing silently dropped without a stated reason) and (b) a
+    unit A2 itself marked MUST_COVER or SUPPORTING actually shows up in a beat -- DEFERRED/
+    REDUNDANT/META_ONLY are legitimate outcomes that need no beat at all."""
+    decided = {d.source_unit_id: d for d in plan.source_coverage}
+    issues: list[StructuralIssue] = []
+
+    missing_decision = [uid for uid in all_source_unit_ids if uid not in decided]
+    if missing_decision:
+        issues.append(StructuralIssue(
+            "source_unit_missing_disposition", f"never classified with a disposition: {missing_decision}",
+        ))
+
     covered = {uid for beat in plan.beats for uid in beat.source_unit_ids}
-    missing = [uid for uid in all_source_unit_ids if uid not in covered]
-    if missing:
-        return [StructuralIssue("source_units_uncovered", f"never referenced by any beat: {missing}")]
-    return []
+    uncovered_required = [
+        d.source_unit_id for d in plan.source_coverage
+        if d.disposition in ("MUST_COVER", "SUPPORTING") and d.source_unit_id not in covered
+    ]
+    if uncovered_required:
+        detail = "; ".join(f"{uid} ({decided[uid].disposition}, reason: {decided[uid].reason!r})" for uid in uncovered_required)
+        issues.append(StructuralIssue("required_source_unit_uncovered", f"never referenced by any beat: {detail}"))
+
+    return issues
 
 
 def check_referential_integrity(plan: StoryPlan) -> list[StructuralIssue]:
@@ -210,7 +232,7 @@ def check_structure(
     return (
         check_word_budget_matches_target(plan, target_duration_seconds)
         + check_every_beat_has_source_units(plan)
-        + check_source_coverage(plan, all_source_unit_ids)
+        + check_source_disposition(plan, all_source_unit_ids)
         + check_referential_integrity(plan)
         + check_core_roles_present(plan)
         + check_promise_chain(plan)

@@ -5,12 +5,12 @@ Two of these tests replay REAL defects found in live A2 runs on
 this check actually catches what happened, not just synthetic cases.
 """
 from planning.models import (
-    CTAContract, EndingContract, HookContract, MiniPayoff, ScenePlan, SourceBrief, StoryBeat, StoryPlan,
-    TitleContract,
+    CTAContract, EndingContract, HookContract, MiniPayoff, ScenePlan, SourceBrief, SourceCoverageDecision,
+    StoryBeat, StoryPlan, TitleContract,
 )
 from verification.hard.structure import (
     check_core_roles_present, check_cta_placement, check_every_beat_has_source_units,
-    check_learning_gate, check_promise_chain, check_referential_integrity, check_source_coverage,
+    check_learning_gate, check_promise_chain, check_referential_integrity, check_source_disposition,
     check_structure, check_word_budget_matches_target,
 )
 
@@ -30,6 +30,7 @@ def make_plan(**overrides) -> StoryPlan:
         ending=EndingContract(resolve_hook="x", compressed_mental_model="y", capstone_payoff="z", viewer_can_now="do x"),
         beats=[StoryBeat(beat_id="B01", purpose="x", source_unit_ids=["u1"], archetype_stage="desired_capability")],
         scene_plan=[ScenePlan(scene_id="s1", beat_id="B01", word_budget=60)],
+        source_coverage=[SourceCoverageDecision(source_unit_id="u1", disposition="MUST_COVER", reason="x")],
     )
     base.update(overrides)
     return StoryPlan(**base)
@@ -68,16 +69,55 @@ def test_real_defect_empty_source_unit_ids_on_every_beat_is_flagged():
     assert issues[0].code == "beat_missing_source_units"
 
 
-def test_source_coverage_flags_units_never_referenced_by_any_beat():
-    plan = make_plan(beats=[StoryBeat(beat_id="B01", purpose="x", source_unit_ids=["u1"])])
-    issues = check_source_coverage(plan, all_source_unit_ids=["u1", "u2", "u3"])
-    assert len(issues) == 1
-    assert "u2" in issues[0].detail and "u3" in issues[0].detail
+def test_units_missing_a_disposition_entirely_are_flagged():
+    plan = make_plan(
+        beats=[StoryBeat(beat_id="B01", purpose="x", source_unit_ids=["u1"])],
+        source_coverage=[SourceCoverageDecision(source_unit_id="u1", disposition="MUST_COVER", reason="x")],
+        # u2/u3 never classified at all
+    )
+    issues = check_source_disposition(plan, all_source_unit_ids=["u1", "u2", "u3"])
+    codes = {i.code for i in issues}
+    assert "source_unit_missing_disposition" in codes
+    detail = next(i.detail for i in issues if i.code == "source_unit_missing_disposition")
+    assert "u2" in detail and "u3" in detail
 
 
-def test_full_coverage_passes():
-    plan = make_plan(beats=[StoryBeat(beat_id="B01", purpose="x", source_unit_ids=["u1", "u2"])])
-    assert check_source_coverage(plan, all_source_unit_ids=["u1", "u2"]) == []
+def test_a_must_cover_unit_never_referenced_by_any_beat_is_flagged():
+    plan = make_plan(
+        beats=[StoryBeat(beat_id="B01", purpose="x", source_unit_ids=["u1"])],
+        source_coverage=[
+            SourceCoverageDecision(source_unit_id="u1", disposition="MUST_COVER", reason="x"),
+            SourceCoverageDecision(source_unit_id="u2", disposition="MUST_COVER", reason="the core mechanism"),
+        ],
+    )
+    issues = check_source_disposition(plan, all_source_unit_ids=["u1", "u2"])
+    codes = {i.code for i in issues}
+    assert "required_source_unit_uncovered" in codes
+    assert "u2" in next(i.detail for i in issues if i.code == "required_source_unit_uncovered")
+
+
+def test_a_deferred_unit_never_referenced_by_any_beat_is_clean():
+    """The whole point of Phase 11: DEFERRED/REDUNDANT/META_ONLY are legitimate
+    outcomes on their own -- they must never force a beat into existing."""
+    plan = make_plan(
+        beats=[StoryBeat(beat_id="B01", purpose="x", source_unit_ids=["u1"])],
+        source_coverage=[
+            SourceCoverageDecision(source_unit_id="u1", disposition="MUST_COVER", reason="x"),
+            SourceCoverageDecision(source_unit_id="u2", disposition="DEFERRED", reason="out of scope for this video"),
+        ],
+    )
+    assert check_source_disposition(plan, all_source_unit_ids=["u1", "u2"]) == []
+
+
+def test_full_must_cover_coverage_passes():
+    plan = make_plan(
+        beats=[StoryBeat(beat_id="B01", purpose="x", source_unit_ids=["u1", "u2"])],
+        source_coverage=[
+            SourceCoverageDecision(source_unit_id="u1", disposition="MUST_COVER", reason="x"),
+            SourceCoverageDecision(source_unit_id="u2", disposition="SUPPORTING", reason="y"),
+        ],
+    )
+    assert check_source_disposition(plan, all_source_unit_ids=["u1", "u2"]) == []
 
 
 # ---- referential integrity --------------------------------------------------------
@@ -235,6 +275,11 @@ def test_check_structure_on_a_fully_clean_plan_is_empty():
             StoryBeat(beat_id="B03", purpose="x", source_unit_ids=["u3"], archetype_stage="assembled_system"),
         ],
         scene_plan=[ScenePlan(scene_id=f"s{i}", beat_id="B01", word_budget=70) for i in range(24)],  # ~1680 words
+        source_coverage=[
+            SourceCoverageDecision(source_unit_id="u1", disposition="MUST_COVER", reason="x"),
+            SourceCoverageDecision(source_unit_id="u2", disposition="MUST_COVER", reason="y"),
+            SourceCoverageDecision(source_unit_id="u3", disposition="SUPPORTING", reason="z"),
+        ],
     )
     assert check_structure(plan, target_duration_seconds=600.0, all_source_unit_ids=["u1", "u2", "u3"]) == []
 

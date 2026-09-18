@@ -24,7 +24,7 @@ import hashlib
 import html as html_module
 import json
 
-from narration.models import SceneNarration
+from narration.models import SceneNarration, SentenceNarration
 from planning.shorts_models import ShortPlan
 
 VERTICAL_WIDTH = 1080
@@ -57,12 +57,21 @@ body{{background:#111;}}
   letter-spacing:0.1em;color:var(--accent);background:var(--bg3);
   padding:6px 14px;border-radius:20px;position:absolute;top:32px;left:32px;}}
 .short-prose{{color:var(--text);font-family:var(--sans);}}
+.short-duration{{position:absolute;top:32px;right:32px;font-family:var(--sans);font-size:13px;
+  font-weight:600;color:var(--text3);letter-spacing:0.02em;font-variant-numeric:tabular-nums;}}
+.short-beats{{display:flex;flex-direction:column;gap:30px;}}
+.short-beat{{opacity:0;animation:shortBeatIn 0.5s ease forwards;}}
+.short-beat-bar{{height:4px;border-radius:2px;background:var(--accent);margin-bottom:12px;min-width:28px;}}
+@keyframes shortBeatIn{{from{{opacity:0;transform:translateY(10px);}}to{{opacity:1;transform:none;}}}}
+@media (prefers-reduced-motion: reduce){{.short-beat{{opacity:1;animation:none;}}}}
 .short-flow{{display:flex;flex-direction:column;gap:0;margin-bottom:36px;}}
 .short-flow-node{{display:flex;gap:18px;align-items:flex-start;}}
 .short-flow-dot{{width:14px;height:14px;border-radius:50%;background:var(--accent);
   flex-shrink:0;margin-top:8px;}}
 .short-flow-connector{{width:2px;flex-grow:1;background:var(--border);margin:2px 0 2px 6px;min-height:24px;}}
 .short-flow-label{{font-family:var(--sans);font-size:24px;font-weight:500;color:var(--text);line-height:1.4;padding-bottom:20px;}}
+.short-cta{{display:inline-block;margin-top:32px;font-family:var(--sans);font-size:20px;
+  font-weight:700;color:#fff;background:var(--accent);padding:14px 28px;border-radius:32px;}}
 """
 
 
@@ -103,13 +112,55 @@ def _render_flow_diagram(stages: list[str]) -> str:
     return f'<div class="short-flow">{"".join(nodes)}</div>'
 
 
-def _render_screen(segment: str, prose: str, include_metadata: bool, diagram: str = "") -> str:
+def _render_beats(sentences: list[SentenceNarration], prose_style: str) -> str:
+    """One visually distinct block per sentence (2026-09-16, found on review of a real
+    run's own output) -- a single merged paragraph, vertically centered in a full
+    1920px-tall screen, left 70-85% of every hook/setup/payoff screen blank and read as
+    "just a few sentences" to a real viewer even though the underlying script was a
+    complete 176-209 word script. Each beat's bar width is proportional to its own share
+    of the segment's words -- a real pacing cue (which sentence carries more airtime),
+    not decoration -- and a short staggered fade-in gives the screen a sequential,
+    produced feel on load instead of one flat static block."""
+    total_words = sum(len(s.text.split()) for s in sentences) or 1
+    beats = []
+    for i, s in enumerate(sentences):
+        share = len(s.text.split()) / total_words
+        delay = min(i * 0.12, 0.6)
+        width = max(round(share * 100), 10)
+        beats.append(
+            f'<div class="short-beat" style="animation-delay:{delay:.2f}s">'
+            f'<div class="short-beat-bar" style="width:{width}%"></div>'
+            f'<p class="short-prose" style="{prose_style}">{_esc(s.text)}</p>'
+            "</div>"
+        )
+    return f'<div class="short-beats">{"".join(beats)}</div>'
+
+
+def _render_cta(plan: ShortPlan) -> str:
+    """The ONSCREEN/PLATFORM_LINK half of `plan.bridge` (2026-09-16, found on review):
+    `narration/short_generator.py`'s own prompt has always told the model these two
+    modes mean "the bridge itself will render as on-screen text elsewhere, not spoken"
+    -- but nothing ever rendered it anywhere, so a short assigned either mode shipped
+    with the CTA correctly withheld from narration and never shown in its place at all.
+    SPOKEN needs no separate rendering -- it's already baked into the payoff's own
+    narration text; NONE has nothing to show."""
+    if plan.bridge.mode not in ("ONSCREEN", "PLATFORM_LINK") or not plan.bridge.cta_text.strip():
+        return ""
+    return f'<div class="short-cta">{_esc(plan.bridge.cta_text)}</div>'
+
+
+def _render_screen(
+    segment: str, sentences: list[SentenceNarration], est_seconds: float,
+    include_metadata: bool, diagram: str = "", cta: str = "",
+) -> str:
     narration_attr = f' data-narration-id="{_esc(segment)}"' if include_metadata else ""
     prose_style = _PROSE_STYLE.get(segment, _PROSE_STYLE["setup"])
+    beats = _render_beats(sentences, prose_style)
     return (
         f'<div id="{_esc(segment)}" class="short-screen reveal"{narration_attr}>'
         f'<div class="short-label">{_esc(segment)}</div>'
-        f'<div class="short-safe-content"><div>{diagram}<p class="short-prose" style="{prose_style}">{_esc(prose)}</p></div></div>'
+        f'<div class="short-duration">~{est_seconds:.0f}s</div>'
+        f'<div class="short-safe-content"><div>{diagram}{beats}{cta}</div></div>'
         f"</div>"
     )
 
@@ -119,10 +170,11 @@ def synthesize_short_html(plan: ShortPlan, narration: list[SceneNarration]) -> s
 
     narration_by_id = {n.scene_id: n for n in narration}
     diagram = _render_flow_diagram(_flow_stages(plan))
+    cta = _render_cta(plan)
     screens_html = "".join(
         _render_screen(
-            seg, " ".join(s.text for s in narration_by_id[seg].sentences), include_metadata=True,
-            diagram=diagram if seg == "mechanism" else "",
+            seg, narration_by_id[seg].sentences, narration_by_id[seg].est_seconds, include_metadata=True,
+            diagram=diagram if seg == "mechanism" else "", cta=cta if seg == "payoff" else "",
         )
         for seg in _SEGMENT_ORDER if seg in narration_by_id
     )

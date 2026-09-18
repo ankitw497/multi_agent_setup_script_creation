@@ -60,7 +60,7 @@ section{padding:64px 40px;max-width:1100px;margin:0 auto;}
 .defbox-term{font-weight:600;font-size:14px;color:var(--accent);margin-bottom:5px;}
 .defbox-body{font-size:14px;color:var(--text3);line-height:1.6;}
 
-.math-block{background:var(--bg3);border:1px solid var(--border);border-radius:var(--r_sm);padding:20px 26px;margin:18px 0;font-size:16px;text-align:center;}
+.math-block{background:var(--bg3);border:1px solid var(--border);border-radius:var(--r-sm);padding:20px 26px;margin:18px 0;font-size:16px;text-align:center;}
 .math-block-label{font-size:10.5px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text3);margin-bottom:10px;text-align:left;}
 .math-block-equation{font-family:'JetBrains Mono',monospace;}
 

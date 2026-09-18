@@ -119,6 +119,91 @@ def test_diagram_content_is_html_escaped():
     assert "&lt;i&gt;y&lt;/i&gt;" in html
 
 
+def test_each_sentence_renders_as_its_own_beat_not_one_merged_paragraph():
+    """2026-09-16, user-reported: opening a real short.html showed one merged paragraph,
+    vertically centered in a full 1920px screen, leaving most of it blank -- read as
+    "just a few sentences" even though the underlying script was a complete 176-209 word
+    narration. Each sentence now renders as its own distinct block."""
+    narration = [SceneNarration(scene_id="hook", sentences=[
+        SentenceNarration(text="First sentence.", sentence_type="transition"),
+        SentenceNarration(text="Second sentence.", sentence_type="transition"),
+        SentenceNarration(text="Third sentence.", sentence_type="transition"),
+    ])]
+    html = synthesize_short_html(make_plan(), narration)
+    hook_screen = html.split('<div id="hook"')[1].split('<div id="setup"')[0] if '<div id="setup"' in html else html.split('<div id="hook"')[1]
+    assert hook_screen.count('class="short-beat"') == 3
+    assert "First sentence." in hook_screen
+    assert "Second sentence." in hook_screen
+    assert "Third sentence." in hook_screen
+
+
+def test_beat_bar_width_reflects_the_sentences_own_share_of_segment_words():
+    narration = [SceneNarration(scene_id="hook", sentences=[
+        SentenceNarration(text="one two three four five six seven eight nine ten", sentence_type="transition"),
+        SentenceNarration(text="one two", sentence_type="transition"),
+    ])]
+    html = synthesize_short_html(make_plan(), narration)
+    hook_screen = html.split('<div id="hook"')[1]
+    # first sentence carries 10/12 of the words -> ~83% width; second carries 2/12 -> ~17%
+    assert 'width:83%' in hook_screen
+    assert 'width:17%' in hook_screen
+
+
+def test_each_screen_shows_its_own_estimated_duration():
+    narration = [SceneNarration(
+        scene_id="hook", sentences=[SentenceNarration(text="x y z", sentence_type="transition")],
+        est_seconds=12.3,
+    )]
+    html = synthesize_short_html(make_plan(), narration)
+    assert '~12s' in html
+
+
+def test_onscreen_bridge_cta_text_renders_on_the_payoff_screen():
+    """2026-09-16, found on review: `narration/short_generator.py`'s own prompt has
+    always told the model ONSCREEN/PLATFORM_LINK mean "the bridge itself will render as
+    on-screen text elsewhere, not spoken" -- but nothing here ever rendered it, so a
+    short assigned either mode shipped with the CTA withheld from narration AND never
+    shown anywhere else."""
+    from planning.shorts_models import ShortBridge
+
+    plan = make_plan()
+    plan.bridge = ShortBridge(mode="ONSCREEN", cta_text="Follow for part 2")
+    html = synthesize_short_html(plan, make_narration())
+    payoff_screen = html.split('<div id="payoff"')[1]
+    assert 'class="short-cta"' in payoff_screen
+    assert "Follow for part 2" in payoff_screen
+
+
+def test_spoken_bridge_renders_no_separate_cta_badge():
+    """SPOKEN bakes the follow-up line directly into the payoff's own narration text --
+    a separate on-screen badge would be a redundant second bridge."""
+    from planning.shorts_models import ShortBridge
+
+    plan = make_plan()
+    plan.bridge = ShortBridge(mode="SPOKEN", cta_text="")
+    html = synthesize_short_html(plan, make_narration())
+    assert 'class="short-cta"' not in html
+
+
+def test_onscreen_bridge_with_empty_cta_text_renders_nothing_not_a_crash():
+    from planning.shorts_models import ShortBridge
+
+    plan = make_plan()
+    plan.bridge = ShortBridge(mode="ONSCREEN", cta_text="")
+    html = synthesize_short_html(plan, make_narration())
+    assert 'class="short-cta"' not in html
+
+
+def test_cta_text_is_html_escaped():
+    from planning.shorts_models import ShortBridge
+
+    plan = make_plan()
+    plan.bridge = ShortBridge(mode="ONSCREEN", cta_text="<b>x</b>")
+    html = synthesize_short_html(plan, make_narration())
+    assert "<b>x</b>" not in html
+    assert "&lt;b&gt;x&lt;/b&gt;" in html
+
+
 def test_narration_containing_script_close_tag_cannot_break_out_of_the_script_block():
     """Real gap found while writing this test: narration text containing
     the literal substring "</script>" (e.g. a sentence discussing HTML

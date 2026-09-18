@@ -30,7 +30,7 @@ from __future__ import annotations
 from planning.archetypes import get_archetype_spec
 from planning.models import SourceBrief, StoryPlan
 from review.models import DiagnosticResult
-from verification.hard.text_overlap import overlap as _content_overlap
+from verification.hard.text_overlap import content_words, overlap as _content_overlap
 
 PLANNING_WPM = 167
 PAYOFF_GAP_SECONDS = 90.0  # plan §10.2: "payoff gap > ~75-90s with no state change"
@@ -39,6 +39,21 @@ VALLEY_BEAT_COUNT = 2  # plan §10.2: "valley = consecutive beats with [no obser
 # word-overlap heuristic shouldn't block a run on its own (STORY_IMPROVEMENT_PLAN.md
 # Phase 8.3). Reuses the same threshold check_promise_chain already uses for the same reason.
 NOVELTY_OVERLAP_THRESHOLD = 0.15
+# STORY_IMPROVEMENT_PLAN.md Phase 25 item 3: a real chosen title shared no content with
+# roughly half of scope_contract.must_cover's own items (masking, multi-head, cross-
+# attention, quadratic cost were all real must_cover items with real beats built for
+# them) -- the only existing safety net (C1's own LLM-judged "TITLE_TOO_NARROW" category)
+# missed it live. Deliberately generous, same philosophy as every other overlap check in
+# this module (false negatives acceptable, false positives on a legitimately broad title
+# would be worse) -- a majority of must_cover items sharing zero title content is the
+# signal, not any single item.
+TITLE_SCOPE_COVERAGE_THRESHOLD = 0.5  # fraction of must_cover items that may go unreflected
+# A must_cover item is short (2-4 words) and often shares the video's own single overall
+# topic word with the title (e.g. both mention "attention") without the title actually
+# reflecting THIS item specifically -- NOVELTY_OVERLAP_THRESHOLD (0.15) is too lenient
+# here (one incidental shared word already clears it for a 2-word item). Require a real
+# fraction of the item's own words to show up in the title, not just one.
+TITLE_ITEM_OVERLAP_THRESHOLD = 0.5
 
 
 def _beat_seconds(plan: StoryPlan) -> dict[str, float]:
@@ -200,6 +215,50 @@ def check_novelty_coverage(plan: StoryPlan, source_brief: SourceBrief) -> Diagno
             "beat's learning_objective" if covered else
             f"no beat's learning_objective shares real content with novelty_statement="
             f"{source_brief.novelty_statement!r} -- the plan may not actually teach the stated novelty"
+        ),
+    )
+
+
+def _item_reflected_in_title(title: str, item: str) -> bool:
+    """PIPELINE_AUDIT_2026-09-17.md finding #3: `overlap()` divides by the SHORTER of the
+    two texts' word counts -- fine when the must_cover ITEM is the shorter side (the normal
+    case this module's other checks assume), but titles are often 2-4 words, shorter than a
+    must_cover item's own phrase. Verified directly: title="Self-Attention" (2 words) vs.
+    item="the quadratic cost of attention over sequence length" (6 words) scores
+    overlap=1/min(2,6)=0.5 -- clearing the 0.5 threshold on ONE shared word (the video's
+    overall topic word), exactly the failure mode that threshold was raised to prevent.
+    This computes containment against the ITEM's own word count specifically, regardless of
+    which text is shorter."""
+    item_words = content_words(item)
+    if not item_words:
+        return True  # nothing to reflect
+    return len(content_words(title) & item_words) / len(item_words) >= TITLE_ITEM_OVERLAP_THRESHOLD
+
+
+def check_title_scope_coverage(plan: StoryPlan) -> DiagnosticResult:
+    """STORY_IMPROVEMENT_PLAN.md Phase 25 item 3: `StoryScopeContract` (Phase 11) was built
+    specifically because a real title once turned out narrower than the story it actually
+    told -- but nothing ever checked the FINAL chosen title against `scope_contract.
+    must_cover` mechanically; the only safety net was C1's own LLM-judged "TITLE_TOO_NARROW"
+    category, which missed a real recurrence of the exact same bug. Advisory, not a hard
+    gate (mirrors `check_novelty_coverage`'s own reasoning) -- a word-overlap heuristic can
+    only approximate "does the title reflect what's covered," never replace C1's judgment."""
+    must_cover = plan.scope_contract.must_cover
+    if not must_cover:
+        return DiagnosticResult(
+            dimension="retention.title_scope_coverage", band="GREEN",
+            evidence="no scope_contract.must_cover items given -- nothing to check the title against",
+        )
+    uncovered = [item for item in must_cover if not _item_reflected_in_title(plan.title.chosen, item)]
+    ratio = len(uncovered) / len(must_cover)
+    band = "AMBER" if ratio > TITLE_SCOPE_COVERAGE_THRESHOLD else "GREEN"
+    return DiagnosticResult(
+        dimension="retention.title_scope_coverage", band=band, value=round(ratio, 2),
+        target=f"<= {TITLE_SCOPE_COVERAGE_THRESHOLD:.0%} of must_cover items unreflected in the title",
+        evidence=(
+            f"title.chosen={plan.title.chosen!r} shares no real content with {len(uncovered)}/"
+            f"{len(must_cover)} must_cover items: {uncovered}" if band == "AMBER" else
+            f"title.chosen={plan.title.chosen!r} reflects most of scope_contract.must_cover"
         ),
     )
 

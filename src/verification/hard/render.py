@@ -247,6 +247,34 @@ def check_component_slots_filled(beat_visuals: list[BeatVisual]) -> list[RenderI
                         # must have at least ONE non-blank card slot.
                         if not any(not _is_blank_slot_value(item.get(slot)) for slot in component_slots("card")):
                             blank_fields.append("item_entirely_empty")
+                        # STORY_IMPROVEMENT_PLAN.md Phase 25 item 6, found live: a title
+                        # alone (no key for "value"/"desc" at all, not just present-but-
+                        # blank) renders as a floating heading with nothing underneath --
+                        # visibly broken, but distinct from the legitimate desc-only or
+                        # value-only minimal shapes `render_component()` explicitly
+                        # supports (mirroring the plain-string grid item fallback above).
+                        # The `item.items()` scan only ever flags a key that's PRESENT, so
+                        # a "value"/"desc" key that's simply MISSING (not blank) from the
+                        # item dict was never caught -- a real title-only comparison card
+                        # slipped through this way, unlike the top-level `data` scan above
+                        # (which checks every slot via `.get()` regardless of whether the
+                        # key exists at all).
+                        title_filled = not _is_blank_slot_value(item.get("title"))
+                        value_filled = not _is_blank_slot_value(item.get("value"))
+                        desc_filled = not _is_blank_slot_value(item.get("desc"))
+                        if title_filled and not value_filled and not desc_filled:
+                            blank_fields.append("title_only_no_supporting_content")
+                    elif isinstance(item, str):
+                        # PIPELINE_AUDIT_2026-09-17.md finding #6, sibling gap to the dict-item
+                        # checks just above: `_render_grid_item()` (component_library.py)
+                        # explicitly supports a plain string as a "just a description" grid
+                        # item -- a legitimate shape, but only every branch above ever entered
+                        # `if isinstance(item, dict):`, so a genuinely blank string ("" or
+                        # whitespace-only) rendered its own empty <div class="card-desc"></div>
+                        # -- the exact "visibly broken empty box" this whole function exists
+                        # to catch -- and passed silently.
+                        if _is_blank_slot_value(item):
+                            blank_fields.append("blank_string_item")
             if blank_fields:
                 issues.append(RenderIssue(
                     "component_slot_blank",

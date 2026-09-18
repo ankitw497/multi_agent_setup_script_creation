@@ -1,9 +1,10 @@
 """TTS preview + measured-duration gate (plan §17, §20.4, V1C).
 
 Replaces the WPM-based duration ESTIMATE (`narration/short_generator.py`'s
-`PLANNING_WPM`) with a real measured spoken duration for shorts, where the
-45-60s target is tight enough that an estimate's error margin genuinely
-matters. Uses `edge-tts` (Microsoft Edge's free, keyless TTS service) with
+`PLANNING_WPM`) with a real measured spoken duration for shorts, where an
+estimate's own error margin genuinely matters against a hard duration cap
+(up to 120s, plan §20.4). Uses `edge-tts` (Microsoft Edge's free, keyless
+TTS service) with
 the `en-IN-PrabhatNeural` voice, chosen deliberately (user decision,
 2026-09-11) over a paid provider -- no new credential, no per-short cost.
 

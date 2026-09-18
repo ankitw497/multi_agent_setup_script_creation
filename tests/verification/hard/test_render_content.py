@@ -161,6 +161,20 @@ def test_grid_items_as_plain_strings_are_not_flagged():
     assert check_component_slots_filled(beats) == []
 
 
+def test_a_blank_string_grid_item_is_flagged():
+    """PIPELINE_AUDIT_2026-09-17.md finding #6: `_render_grid_item()` explicitly supports a
+    plain string as a "just a description" item -- a legitimate shape -- but a genuinely
+    blank string renders its own empty <div class="card-desc"></div>, the exact "visibly
+    broken empty box" this check exists to catch. The dict-item branch already caught this
+    class of defect (item_entirely_empty); the string-item branch never did."""
+    beats = [BeatVisual(beat_id="B01", heading="h", scenes=[SceneVisual(
+        scene_id="s1", screen_prose="x", component_id="grid_3",
+        component_data={"items": ["a real observation", "   "]},
+    )])]
+    issues = check_component_slots_filled(beats)
+    assert any("blank_string_item" in i.detail for i in issues)
+
+
 def test_a_completely_empty_grid_item_is_flagged():
     """Real bug found live 2026-09-14: a dict item with NO keys at all
     (or every key blank) renders as a totally empty <div class="card">
@@ -179,6 +193,31 @@ def test_a_grid_item_with_at_least_one_real_field_is_not_flagged_as_empty():
     beats = [BeatVisual(beat_id="B01", heading="h", scenes=[SceneVisual(
         scene_id="s1", screen_prose="x", component_id="grid_3",
         component_data={"items": [{"desc": "just a description, no title or value"}]},
+    )])]
+    assert check_component_slots_filled(beats) == []
+
+
+def test_a_title_only_grid_item_with_no_value_or_desc_key_at_all_is_flagged():
+    """STORY_IMPROVEMENT_PLAN.md Phase 25 item 6, found live: a real "Short source
+    sentence" / "Long source sentence" comparison card pair rendered as a title-only box
+    with nothing underneath -- the item dicts simply never included a "value"/"desc" key
+    at all (not present-but-blank), so the old `item.items()` scan (which only checks keys
+    that ARE present) never caught it, unlike the top-level per-scene scan which correctly
+    checks every slot via `.get()` regardless of whether the key exists."""
+    beats = [BeatVisual(beat_id="B01", heading="h", scenes=[SceneVisual(
+        scene_id="s1", screen_prose="x", component_id="grid_2",
+        component_data={"items": [{"title": "Short source sentence"}, {"title": "Long source sentence"}]},
+    )])]
+    issues = check_component_slots_filled(beats)
+    assert any("title_only_no_supporting_content" in i.detail for i in issues)
+
+
+def test_a_title_plus_desc_grid_item_is_not_flagged():
+    """A title with real supporting content is a legitimate, complete card shape --
+    only a bare title with NOTHING underneath is the defect."""
+    beats = [BeatVisual(beat_id="B01", heading="h", scenes=[SceneVisual(
+        scene_id="s1", screen_prose="x", component_id="grid_2",
+        component_data={"items": [{"title": "Short sentence", "desc": "10 tokens"}]},
     )])]
     assert check_component_slots_filled(beats) == []
 
