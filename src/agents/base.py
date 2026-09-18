@@ -47,6 +47,7 @@ class Agent:
         timeout_s: int | None = None,
         max_tokens: int | None = None,
         images: list[str] | None = None,
+        enable_web_search: bool = False,
     ) -> T:
         reasoning_effort = reasoning_effort if reasoning_effort is not None else self.default_reasoning_effort
         max_tokens = max_tokens if max_tokens is not None else self.default_max_tokens
@@ -59,6 +60,16 @@ class Agent:
                     f"{self.name}.{pass_id}: images given for a subscription-lane call -- "
                     "the Claude CLI backend has no multimodal support (V1C's C3 visual "
                     "critic is paid_api/Gemini-lane only)"
+                )
+            if enable_web_search:
+                # 2026-09-16, Phase 23: the Claude CLI backend passes a bare `--tools` flag
+                # but also `--max-turns 1`, which leaves no room for the round-trip a real
+                # web search needs -- not actually functional as invoked, so refuse rather
+                # than silently no-op a caller's real request for grounded evidence.
+                raise ValueError(
+                    f"{self.name}.{pass_id}: enable_web_search given for a subscription-lane "
+                    "call -- the Claude CLI backend's --max-turns 1 makes real tool use "
+                    "non-functional (paid_api/Gemini-lane only)"
                 )
             result: StructuredCallResult = self.client.call_structured_subscription(
                 agent=self.name, pass_id=pass_id, mode=mode,
@@ -76,5 +87,6 @@ class Agent:
                 schema=schema, budget=budget, estimated_usd=estimated_usd,
                 revision_cycle=revision_cycle, reasoning_effort=reasoning_effort,
                 max_tokens=max_tokens, images=images, timeout_s=timeout_s,
+                enable_web_search=enable_web_search,
             )
         return result.value  # type: ignore[return-value]

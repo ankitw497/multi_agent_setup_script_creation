@@ -1,6 +1,6 @@
-"""agents — plan §2 (Phase 4+).
+"""agents — plan §2.
 
 5 agent identities: story_lead, narration_lead, review_lead, html_author, worker.
-
-Not yet implemented. See IMPLEMENTATION_PLAN.md §2 and the phase table (§17).
+`cm_agent` (claim mapping, style critique) is not a 6th identity -- it resolves to
+`review_lead` at the flash tier (see `orchestration/pipeline.py::PipelineAgents`).
 """

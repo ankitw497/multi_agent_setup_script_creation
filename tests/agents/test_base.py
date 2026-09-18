@@ -143,3 +143,43 @@ def test_a_subscription_agent_rejects_images():
     with pytest.raises(ValueError, match="multimodal"):
         agent.run(pass_id="S2b", mode="EXTRACT", task_prompt="x", payload={}, schema=Toy,
                   images=["data:image/png;base64,AAAA"])
+
+
+def test_enable_web_search_is_forwarded_to_the_paid_backend_only():
+    """STORY_IMPROVEMENT_PLAN.md Phase 23: C2a needs real web search reaching
+    call_structured_paid untouched, the same forwarding pattern already proven for images."""
+    client = FakeClient()
+    agent = Agent(name="review_lead", lane="paid_api", client=client, model_alias="gemini_review_strong",
+                  model_resolved="gemini/gemini-3.1-pro-preview", base_system_prompt="review")
+    budget = BudgetCounter(tier=DEFAULT_TIERS["longform"])
+
+    agent.run(pass_id="C2a", mode="VERIFY_SOURCE_CLAIMS", task_prompt="x", payload={}, schema=Toy,
+              budget=budget, enable_web_search=True)
+
+    assert client.paid_calls[0]["enable_web_search"] is True
+
+
+def test_enable_web_search_defaults_to_false():
+    client = FakeClient()
+    agent = Agent(name="review_lead", lane="paid_api", client=client, model_alias="gemini_review_strong",
+                  model_resolved="gemini/gemini-3.1-pro-preview", base_system_prompt="review")
+    budget = BudgetCounter(tier=DEFAULT_TIERS["longform"])
+
+    agent.run(pass_id="C1", mode="STORY_CRITIC", task_prompt="x", payload={}, schema=Toy, budget=budget)
+
+    assert client.paid_calls[0]["enable_web_search"] is False
+
+
+def test_a_subscription_agent_rejects_enable_web_search():
+    """The Claude CLI backend's --max-turns 1 makes real tool use non-functional -- a
+    caller enabling web search on a subscription-lane agent must fail loudly, the same
+    treatment as images."""
+    import pytest
+
+    client = FakeClient()
+    agent = Agent(name="worker", lane="subscription", client=client, model_alias="haiku",
+                  model_resolved="claude-haiku-4-5-20251001", base_system_prompt="be terse")
+
+    with pytest.raises(ValueError, match="max-turns"):
+        agent.run(pass_id="S2b", mode="EXTRACT", task_prompt="x", payload={}, schema=Toy,
+                  enable_web_search=True)

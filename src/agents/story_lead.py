@@ -27,11 +27,19 @@ BASE_SYSTEM_PROMPT = (
 
 def make_story_lead(client: LLMClient, tier: str = "strong", alias_override: str | None = None) -> Agent:
     """`alias_override` lets a caller pin a specific `paid_api_lane` alias
-    directly (e.g. `openai_story_strong_gpt56` for a live model-tier
-    comparison, STORY_IMPROVEMENT_PLAN.md Phase 4) instead of the
-    tier-based default -- never adopted as the default itself without a
-    real live comparison first."""
-    alias = alias_override or ("openai_story_strong" if tier == "strong" else "openai_story_mini")
+    directly, overriding even this tier-based default.
+
+    2026-09-16 (explicit user decision, STORY_IMPROVEMENT_PLAN.md Phase 4): the "strong"
+    tier now resolves to `openai_story_strong_gpt56` (gpt-5.6-sol) -- previously
+    `openai_story_strong` (gpt-4o). This OVERRIDES Phase 4's own completed A2/A2b
+    comparison, which found gpt-5.6-sol produced a structurally LESS coherent plan (2
+    genuine story-coherence hard failures gpt-4o didn't have) for 65% MORE cost, and
+    explicitly recommended against promoting it. The user was shown that finding
+    directly and chose to proceed anyway. `openai_story_strong` (gpt-4o) remains a
+    live, fully-configured alias in `models.yaml` -- pass
+    `alias_override="openai_story_strong"` to roll back to it for any run
+    without touching this default."""
+    alias = alias_override or ("openai_story_strong_gpt56" if tier == "strong" else "openai_story_mini")
     model_resolved, reasoning_effort, max_tokens = resolve_model("paid_api_lane", alias)
     return Agent(
         name="story_lead", lane="paid_api", client=client,
