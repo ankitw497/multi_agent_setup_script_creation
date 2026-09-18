@@ -2071,8 +2071,1485 @@ actually reduced with the fix in place.
 
 ---
 
+## ERR-059 — CM/C2b silently treated a missing verdict as "checked and clean" (confirmed via code review, not a live run)
+
+**Date:** 2026-09-15 · **Severity:** critical (a truncated/incomplete structured response was
+indistinguishable from a genuinely clean check) · **Status:** fixed · **Component:**
+`review/claim_mapper.py`, `review/grounding_verifier.py`
+
+**Where:** flagged by an external review document (`multi_agent_pipeline_deep_improvement_plan.md`)
+describing exactly this failure shape in two independent live GPT-4o/gpt-5.6-sol A/B runs — a
+factual sentence with `grounding_required=false` appearing *later* in the script than earlier,
+reproducing across two different Story Lead models (ruling out a Story-Lead-specific cause).
+Verified against this codebase's actual code (not taken on the doc's word): `claim_mapper.py`'s
+`map_claims()` keyed CM's response by `(scene_id, sentence_index)`, and a sentence the response
+omitted a verdict for fell through to `if m is None: new_sentences.append(sentence)` — silently
+keeping the pydantic default `grounding_required=False`. `grounding_verifier.py`'s C2b returned
+only a sparse `CritiqueIssue[]`, so "no issue" was indistinguishable from "every sentence was
+actually checked" — there was no positive record C2b had looked at any given sentence at all.
+
+**Fix (STORY_IMPROVEMENT_PLAN.md Phase 10):** both passes now key verdicts to a stable
+`sentence_id` (`narration/models.py::stamp_sentence_ids`, `f"{scene_id}:{index}"`, applied
+defensively inside CM/C2b rather than trusted to every narration-producing call site) and
+**fail closed** — a new `review.models.ReviewCoverageError` is raised, naming the exact missing
+sentence ids, whenever a response doesn't cover every sentence given. CM also gained a third
+verdict state (`UNCERTAIN`, treated as `grounding_required=True`, never silently dropped either
+way) and batches large sentence counts into fixed 20-sentence chunks (`CM_BATCH_SIZE`) to lower
+truncation risk on any single call — both CM and C2b skip the call entirely when a narration has
+zero sentences (a real cost saving found while implementing this, not just a test convenience).
+C2b's `GroundingReview.issues` became `GroundingReview.verdicts` (one dense `GroundingVerdict`
+per sentence: `factual`/`supported`/`verified_claim_ids`/`qualifier_preserved`/
+`scope_preserved`/`violation_code`), with `grounding_verdicts_to_issues()` deriving the same
+kind of `CritiqueIssue`s the rest of the pipeline already routes on. `facts/models.py::Claim`
+gained `required_qualifiers` (populated by C2a) so `qualifier_preserved` has something real to
+check against. New `apply_grounding_metadata_repairs()` implements the doc's own correct
+observation that a CM false negative C2b disproves (the sentence IS factual and IS supported)
+is a metadata correction, not a narration defect — it patches the sentence directly rather than
+routing an unnecessary rewrite through A3/B2, and runs before the deterministic
+`check_grounding_policy`/`check_numeric_fidelity` checks so a since-corrected sentence never
+trips a false hard failure.
+
+**Two secondary bugs caught by the new tests before they ever shipped** (worth recording since
+they're the kind of thing that would have silently misfired in production otherwise): (1) an
+early version of `grounding_verdicts_to_issues()` emitted a *second*, redundant issue whenever a
+verdict had both `supported=false` and a `violation_code` set, double-counting one real problem
+as two — fixed by deriving exactly one issue per sentence in priority order (unsupported >
+qualifier dropped > scope broadened > named `violation_code`) instead of checking each dimension
+independently. (2) `apply_grounding_metadata_repairs()` initially matched verdicts against the
+CALLER's narration object, which is never the same (already-stamped) object `verify_grounding`
+built internally — pydantic's `model_copy` makes stamping non-mutating, so the caller's original
+sentences still had blank `sentence_id`s and every lookup silently missed. Fixed by having
+`apply_grounding_metadata_repairs()` (and `grounding_verdicts_to_issues()`) call
+`stamp_sentence_ids()` defensively themselves, the same way `verify_grounding`/`map_claims` do,
+rather than trusting call order.
+
+**Tests:** `tests/review/test_claim_mapper.py` and `tests/review/test_grounding_verifier.py`
+fully rewritten for the new schema — coverage-invariant fail-closed for both passes (exact
+missing `sentence_id` asserted), `UNCERTAIN` handling, CM batching across multiple calls,
+qualifier-drop/scope-broadened/named-violation severity mapping, and both metadata-repair paths
+(a CM false negative silently corrected with no issue; a real C2b-confirmed defect left alone
+and still flagged). `tests/orchestration/test_pipeline.py` (3 tests) and
+`tests/orchestration/test_shorts_pipeline.py` (default fixtures + 1 override) updated so every
+existing multi-cycle/real-sentence fixture supplies full coverage instead of an empty
+placeholder. Full suite: **924 passed, 16 deselected** (up from 916).
+
+**Not yet live-verified**: every change above is exercised via fake-agent unit tests with
+deterministic fixtures, not a real model call — a live run was deliberately deferred (per this
+session's cost-minimization instruction) until Phases 11-13 also land, so one combined e2e run
+can verify all four together instead of four separate paid runs.
+
+---
+
+## ERR-060 — no contract declared what a video was allowed to promise vs. merely touch on (confirmed via code review, not a live run)
+
+**Date:** 2026-09-15 · **Severity:** major (title/story scope drift, confirmed in an external
+A/B review, not yet independently reproduced live in this codebase) · **Status:** fixed ·
+**Component:** `planning/story_planner.py`, `verification/hard/structure.py`,
+`review/story_critic.py`
+
+**Where:** the same external review document that surfaced ERR-059 (`multi_agent_pipeline_
+deep_improvement_plan.md`) reported its own headline finding: a live `gpt-5.6-sol` A2 run
+produced a title that promised only the hook's concrete illustration (a pronoun-resolution
+example) while the beats it planned went on to teach the full underlying mechanism plus
+several supporting topics -- the generated title ended up narrower than the story actually
+told. Verified against this codebase's real code: `verification/hard/structure.py`'s
+`check_source_coverage()` was a **hard failure** if any source unit was never referenced by
+some beat, with no escape valve for legitimately peripheral content -- confirming the
+external doc's second claim, that the pipeline had no way to deliberately defer a real topic
+without either dropping it silently or cramming it into a beat it didn't belong in. Nothing in
+`StoryStructure`/`StoryPlan` declared, up front, what the video was committing to promise
+versus what it was allowed to merely touch on -- so neither the title-writing step nor C1's
+review had anything concrete to check title scope against.
+
+**Fix (STORY_IMPROVEMENT_PLAN.md Phase 11):** new `planning/models.py::StoryScopeContract`
+(`title_promise`, `central_question`, `must_cover`, `supporting`, `deferred`,
+`title_must_not_imply`) and `SourceCoverageDecision` (`source_unit_id`, `disposition` ∈
+`{MUST_COVER, SUPPORTING, DEFERRED, REDUNDANT, META_ONLY}`, `reason`), both populated by A2
+before beats are built. `check_source_coverage` replaced with `check_source_disposition`:
+every source unit must receive an explicit disposition (still a hard gate -- nothing is
+silently dropped without a stated reason), but only `MUST_COVER`/`SUPPORTING` units actually
+require a beat; `DEFERRED`/`REDUNDANT`/`META_ONLY` are legitimate outcomes on their own. C1
+gained a new numbered PROMISE/SCOPE check (`TITLE_TOO_NARROW`, `BEAT_OUT_OF_SCOPE`,
+`IMPORTANT_SOURCE_CONTENT_DROPPED`, `SUPPORTING_BEAT_TOO_LONG`), with a new `"scope"`
+`CritiqueIssue` category (no existing category fit).
+
+**Related, smaller fix bundled into the same phase**: `facts/models.py::SourceUnit` gained a
+`kind` field (`CONTENT`/`PRODUCTION_META`/`VISUAL_GUIDANCE`/`REFERENCE`/`OTHER`), and
+`facts/claim_extract.py` (S2b) now deterministically filters to `kind == "CONTENT"` before a
+unit ever reaches the worker -- closing a real, if narrower, contamination path the same
+external doc named (its own §30.8 example: a production note like "Show Q/K/V before 0:30"
+must never become a technical Claim about the subject matter). Only `CONTENT` and
+`PRODUCTION_META` are actually set anywhere in this codebase today
+(`extraction/html_parser.py::_extract_production_notes`, the one real,
+already-structurally-distinguished site) -- the other three `kind` values are declared for the
+same three-way split the doc calls for, but nothing here extracts a unit that would need them
+yet, so no speculative classifier was built ahead of a real case.
+
+**Tests:** `tests/verification/hard/test_structure.py` rewritten for the disposition
+semantics (missing-disposition flagged, a MUST_COVER unit left uncovered flagged, a DEFERRED
+unit correctly passing with no beat at all, full coverage passing) -- plus every fixture in
+that file and in `tests/orchestration/test_pipeline.py` updated to carry a matching
+`source_coverage` (confirmed the hard way: running the suite before the fixture fix showed 16
+tests failing in `test_pipeline.py` alone, since every one of them exercises the full
+`check_structure()` aggregate). New `tests/review/test_story_critic.py` tests confirm the
+PROMISE/SCOPE prompt text is present, the payload carries `title`/`scope_contract`/
+`source_coverage`, and a fake `category="scope"` finding (replaying the doc's own
+title-narrowing example) routes through cleanly. New `tests/extraction/test_html_parser.py`
+and `tests/facts/test_claim_extract.py` tests confirm a production note is classified
+`PRODUCTION_META` and never reaches the claim-extraction worker at all (zero calls, not just
+zero claims returned). Full suite: **931 passed, 16 deselected** (up from 924).
+
+**Not yet live-verified**: like ERR-059, every change here is exercised via fake-agent/fixture
+unit tests, not a real model call -- deferred until Phases 12-13 also land, so one combined e2e
+run can check whether A2 actually uses `scope_contract`/`source_coverage` usefully in practice
+and whether C1's new check fires on a real title-narrowing case, rather than spending a
+separate paid run per phase.
+
+---
+
+## ERR-061 — B1 could invent an unplanned CTA on the final scene; B2/shorts had no factual-invariant language at all
+
+**Date:** 2026-09-15 · **Severity:** major (CTA ownership) / minor-to-major (drift risk, not
+yet observed live) · **Status:** fixed · **Component:** `narration/generator.py`,
+`editing/targeted_rewrite.py`, `narration/short_generator.py`, `planning/scene_expander.py`,
+`planning/beat_word_budget.py`
+
+**Where:** the same external review document (`multi_agent_pipeline_deep_improvement_plan.md`)
+flagged two more confirmed-in-code issues. (1) `narration/generator.py`'s own `TASK_PROMPT`
+literally said a scene becomes the CTA scene "if it matches `plan.cta.primary_after_beat` OR
+is the final scene" -- the second clause let the narrator (B1), not the planner (A2), decide
+to add a CTA to whatever scene happened to be last, independent of what the plan actually
+placed. (2) `editing/targeted_rewrite.py` (B2) and `narration/short_generator.py` had no
+hedging/overclaim language at all, while `narration/generator.py` (B1) carried a detailed one
+-- a targeted rewrite or a short's own narrator could freely reintroduce exactly the kind of
+overclaim B1 was told to avoid, since nothing told them not to. Separately, the same document's
+§30.6 scenario (a simple beat given more `target_words` than it has real content for) had no
+outlet in `planning/scene_expander.py` (A2b) other than padding -- confirmed by reading its
+prompt, which asked for "within about 15% of target_words" with no escape valve.
+
+**Fix (STORY_IMPROVEMENT_PLAN.md Phase 12):** B1's prompt now says a scene is the CTA scene
+ONLY when it matches `primary_after_beat`, full stop; a new `CTAContract.final_enabled` flag
+(default `true`) separately allows the true final scene, when it's a DIFFERENT scene, to add
+one short soft closing line -- never a second full CTA ask, and settable to `false` for a
+video that should end with zero CTA-adjacent language. A new shared
+`narration/factual_invariants.py::NARRATION_FACTUAL_INVARIANTS` (the NEVER UPGRADE table --
+`possible→actual`, `weighted→selected`, `conditional→universal`, etc. -- plus "any factual
+sentence needs `claim_refs` regardless of `sentence_type`") is now injected into all three of
+B1, B2, and the shorts narrator, so fixing an overclaim pattern here fixes it everywhere at
+once. A2b's `ExpandedScene`/`ScenePlan` gained `needs_rebudget: bool`; its prompt now asks for
+the minimum words the content actually supports, signaling `needs_rebudget=true` instead of
+padding when a target can't be filled honestly. A new deterministic
+`planning/beat_word_budget.py::redistribute_rebudgeted_words()` (wired into
+`story_planner.py::plan_story()` right after the per-beat A2b loop) redistributes the resulting
+deficit to scenes in beats that did NOT flag it, each capped at `ScenePlan.word_budget`'s own
+30-100 hard bound -- no second LLM call, pure Python, same waterfilling shape as the module's
+existing retention-deadline redistribution logic.
+
+**Tests:** `tests/planning/test_beat_word_budget.py` gained 6 fully deterministic tests for the
+new redistribution function (no-op cases, the real redistribution case, the 100-word hard cap,
+no-eligible-recipient). `tests/planning/test_scene_expander.py` and
+`tests/planning/test_story_planner.py` (a true end-to-end integration test via the existing
+`SequencedStoryLead` harness) confirm the whole path from A2b's signal through to the final
+`scene_plan`. `tests/narration/test_generator.py` confirms `final_enabled` reaches the payload
+and the old automatic-final-scene clause is gone from the prompt. All three narration-writing
+test files confirm `NARRATION_FACTUAL_INVARIANTS` appears verbatim in their prompts. Full
+suite: **945 passed, 16 deselected** (up from 931).
+
+**Not yet live-verified**: like ERR-059/060, deferred until a combined live run across Phases
+10-12 (now ready to run).
+
+---
+
+## ERR-062 — C2b needed the same batching fix CM got in Phase 10 (found live, first real Phase 10-12 verification run)
+
+**Date:** 2026-09-15 · **Severity:** critical (blocked every run past a moderate-sized script)
+· **Status:** fixed · **Component:** `review/grounding_verifier.py`
+
+**Where:** the first live run against `video-01-attention-coherent-story` after implementing
+Phases 10-12 (`video-01-attention-phase10-12-verify/runs/v01`) crashed immediately, exactly as
+Phase 10's fail-closed design intends -- but on a REAL call, not a test fixture:
+`ReviewCoverageError: C2b did not return a verdict for 16/58 sentence(s)`. C2b's single,
+unbatched call (58 sentences in one structured output) genuinely came back incomplete from
+Gemini strong, the same shape of failure CM used to have before Phase 10 gave it
+`CM_BATCH_SIZE`-based batching -- C2b was never given the same fix, because the original phase
+plan's own text only called out batching for CM (§4.4), not C2b. This is exactly what live
+verification is for: the fail-closed check did its job (caught a real incomplete response
+instead of silently trusting it), but a fail-closed check with no way to actually succeed on
+real input just makes the pipeline permanently unable to progress once a script crosses some
+sentence-count threshold.
+
+**Fix:** added `C2B_BATCH_SIZE = 20` to `review/grounding_verifier.py`, mirroring CM's exact
+pattern -- `verify_grounding()` now batches the flattened sentence list into chunks, issuing
+one `review_lead.run()` call per batch instead of one call for the whole narration, then merges
+verdicts before the coverage check. No behavior change for a narration under 20 sentences
+(still one call, same as before).
+
+**Tests:** new `test_more_sentences_than_the_batch_size_are_split_across_multiple_calls` in
+`tests/review/test_grounding_verifier.py`, mirroring CM's own batching test exactly (a
+`C2B_BATCH_SIZE + 5`-sentence narration split across 2 calls, verdicts merged correctly). Full
+suite: **946 passed, 16 deselected** (up from 945).
+
+**Confirmed by the next two live-run attempts on the same source, after this fix:**
+- `runs/v02`: got past C2b cleanly (no coverage error), advanced into C1, then hit a
+  legitimate `BudgetExceeded` at the default $1.00 longform hard cap -- not a bug, the same
+  known, correctly-functioning safety mechanism noted elsewhere in this log. Relaunched with
+  `--loop-budget-usd 1.5`.
+- `runs/v03`: **completed end to end**, `final_status=FAIL`, total cost $1.1467. The FAIL
+  itself is the system working correctly, not a bug -- see the Phase 10-12 live-verification
+  summary immediately below for the full breakdown of what this run actually confirmed.
+
+---
+
+## Phase 10-12 live-verification summary (`video-01-attention-phase10-12-verify/runs/v03`, 2026-09-15)
+
+The first real run to exercise Phases 10, 11, and 12 together end to end (after the ERR-062
+batching fix above). `final_status=FAIL` -- a legitimate outcome, not a bug, explained below.
+Total cost across all attempts on this verification (two failed fast, one completed):
+~$2.28 -- see ERR-062 for why the first two didn't reach the end.
+
+**Phase 10 (grounding) -- confirmed working, and confirmed VALUABLE, not just passing tests:**
+C2b's dense per-sentence verdicts produced two real, substantive `qualifier_dropped` findings
+against actual model-written narration -- one citing that "reaching forward only applies to
+unmasked (bidirectional) attention, not causal attention used in text generation" being
+dropped, the other that a claim's "zero-centered" condition was dropped while its
+"independent and unit-variance" part was kept. Both are exactly the class of defect
+`Claim.required_qualifiers` + `GroundingVerdict.qualifier_preserved` were built to catch, and
+neither is a check-passing formality -- they're real, technically specific, correctly-severed
+(`critical`) findings a human reviewer would also flag. The revision loop then behaved exactly
+per Phase 8.5's design: two targeted rewrites each made hard failures WORSE (2→6, then 2→4)
+and were correctly reverted each time, and once `MAX_MAJOR_REVISIONS` was exhausted the run
+correctly reported `FAIL` rather than quietly emitting a broken script as if it had passed.
+`entity_consistency` stayed GREEN throughout (Phase 6 machinery unaffected).
+
+**Phase 11 (scope contract) -- confirmed working, fully and sensibly populated:**
+`plan.json`'s `scope_contract` came back complete and coherent (`title_promise`,
+`central_question`, 6-item `must_cover`, 2-item `supporting`) and `source_coverage` classified
+all 13 real source units with real per-unit reasons -- including correctly marking
+`production_notes` as `META_ONLY` ("Provides pacing instructions and should not be included in
+the content directly"), confirming the `SourceUnit.kind="PRODUCTION_META"` classification from
+extraction correctly informed A2's own disposition judgement downstream. The
+`check_source_disposition` hard gate passed cleanly (neither of the run's 2 hard failures was a
+disposition/coverage issue). **One open, inconclusive item**: the chosen title ("How
+Transformers Use Attention to Resolve Pronouns") arguably reads narrower than `must_cover`
+(which includes the full QKV/scaling/multi-head/masking mechanism, not just pronoun
+resolution) -- the exact shape of finding C1's new PROMISE/SCOPE check exists to catch, but it
+did NOT fire this run. Genuinely ambiguous, not a confirmed miss: using the hook's concrete
+illustration as the title's framing device is a legitimate narrative technique, not
+automatically a scope violation, so this is flagged as unresolved rather than claimed as a bug
+in either direction -- worth watching on future runs, not yet acted on.
+
+**Phase 12 (narration invariants / CTA / word-budget) -- confirmed working:**
+`needs_rebudget` fired on 10 of 12 beats' final scenes on real A2b output -- strong evidence
+the model is genuinely using the new escape valve rather than padding, not a mechanism that
+looks fine in tests but never actually triggers live. The CTA sentence appeared exactly once,
+on `beat_recap_s02` (the scene matching `cta.primary_after_beat`), phrased as a real
+value-linked ask ("You now know how attention resolves 'it' -- subscribe to see this reasoning
+applied across full Transformer architectures") -- no second/invented CTA anywhere else in the
+35-scene narration. (This run's `primary_after_beat` beat happened to also be the video's last
+beat, so it didn't distinctly stress-test the new "different final scene" soft-closing-line
+branch -- that specific path remains unexercised live.)
+
+**Not investigated further, unrelated to Phases 10-12**: two `reader_standalone_word_count_
+out_of_band` render issues (3613 and 3549 words vs. the existing 2000-3200 band) -- a
+pre-existing V1B check, already noted elsewhere in this log as "a real, legitimately strict
+gate in practice."
+
+**Follow-up finding from manually reading the actual rendered HTML output** (not just the JSON
+artifacts) of this same run, after the user asked directly whether Phase 10-12 changes were
+reflected in the final HTML: they mostly were, but one real gap turned up -- see ERR-063 below.
+
+---
+
+## ERR-063 — Phase 10's qualifier-preservation checking never reached H's screen prose or C3
+
+**Date:** 2026-09-15 · **Severity:** major (a defect the pipeline explicitly blocks promotion
+for on the narration side can reach the viewer unblocked on the screen side) · **Status:**
+fixed · **Component:** `html_synth/synthesizer.py`, `editing/html_repair.py`,
+`review/visual_critic.py`, `orchestration/html_pipeline.py`
+
+**Where:** found by directly reading the rendered `video_script.html` from
+`video-01-attention-phase10-12-verify/runs/v03` (the same run summarized above), not just its
+JSON artifacts -- the user asked directly whether Phase 10-12 changes were actually reflected
+in the final HTML. C2b had flagged `beat_preview_s03`'s spoken narration as a **critical**
+`qualifier_dropped` finding: it stated attention "can reach forward into the sentence" without
+noting this only applies to unmasked/bidirectional attention, not the causal attention used in
+text generation. Checking the ACTUAL on-screen prose for that same scene: *"Because every
+position can attend to every other position, 'it' can query words that appear later in the
+sentence..."*, with a diagram captioned *"Unrestricted attention lets a position look both..."*
+-- the identical unqualified claim, independently written by H, completely unflagged. Root
+cause, confirmed in code: `html_synth/synthesizer.py::_claim_payload()` sent H only
+`{claim_id, claim, numbers}` -- no `required_qualifiers`, no `scope` -- and
+`review/visual_critic.py::scene_payload()` never included claim data of any kind. Phase 10's
+whole qualifier-checking mechanism (`Claim.required_qualifiers`, `GroundingVerdict.
+qualifier_preserved`) was wired into C2b (spoken narration) only; H and C3 (the screen-prose
+side) had no access to it at all, by construction, not by an oversight in a check that ran and
+missed it.
+
+Notably, this wasn't systematic: `beat_scaling_s02`'s screen prose independently got the
+"zero-centered" qualifier right even though B1's narration for the same claim dropped it --
+confirming this is inconsistent luck depending on what H happened to write, not any real
+protection.
+
+**Fix:** `html_synth/synthesizer.py::_claim_payload()` and `editing/html_repair.py::
+_claim_payload()` now both include `scope`/`required_qualifiers`, with a matching instruction
+added to `synthesizer.py`'s `TASK_PROMPT` and `html_repair.py`'s `REPAIR_TASK_PROMPT` to
+preserve them. `review/visual_critic.py::scene_payload()` gained a `required_qualifiers`
+parameter, and its existing OVERCLAIM check (the same one this codebase already uses for
+screen-prose repetition/overclaim, `category: clarity`, `layer: NARRATION`,
+`repair_owner: html_author`) now explicitly treats stating a qualified mechanism without its
+condition as a CONFIRMED overclaim when `required_qualifiers` is given, same severity
+convention as the existing check (major/minor, never critical -- H-repair can fix screen prose,
+so this was never a candidate for the critical/narration_lead "genuine contradiction" bucket).
+`orchestration/html_pipeline.py`'s C3 wiring now aggregates `required_qualifiers` per beat
+(same `beat.source_unit_ids` scoping H's own `available_claims` already uses) and passes it
+into each scene's `scene_payload()` call.
+
+**Tests:** new tests in `tests/html_synth/test_synthesizer.py`, `tests/editing/
+test_html_repair.py`, `tests/review/test_visual_critic.py`, and `tests/orchestration/
+test_html_repair_loop.py` confirm `required_qualifiers`/`scope` reach each payload correctly
+(H's first pass, H-repair, and C3's real beat-scoped wiring through the full
+`synthesize_and_repair_video_html()` loop) and that all three task prompts mention
+`required_qualifiers`. Full suite: **952 passed, 16 deselected** (up from 946).
+
+**Not yet live-verified**: the wiring itself (data reaching the right payload) is fully
+covered by unit tests; whether C3 actually raises a finding for a real dropped qualifier on
+screen prose is a live model-judgment question, deferred to the next live run rather than
+spending another paid run on a change that unit tests already confirm is wired correctly.
+
+---
+
+## ERR-064 — Even a bounded ~20-sentence batch can still drop exactly one CM/C2b verdict (found live, Phase 13-15 gpt-4o/gpt-5.6-sol comparison)
+
+**Date:** 2026-09-15 · **Severity:** major (crashed 2 of 2 live-verification attempts) ·
+**Status:** fixed · **Component:** `review/claim_mapper.py`, `review/grounding_verifier.py`
+
+**Where:** launching the requested gpt-4o vs. gpt-5.6-sol comparison (with shorts enabled)
+against `video-01-attention-coherent-story`, the gpt-4o run crashed with
+`ReviewCoverageError: C2b did not return a verdict for 1/57 sentence(s)`. Relaunching fresh
+(a new run, new claims, new narration -- not a retry of the same content) crashed again, this
+time at CM: `did not return a verdict for 1/71 sentence(s)`. Both are the exact same failure
+shape ERR-062 fixed (a coverage gap Phase 10's fail-closed check correctly caught rather than
+silently trusting), but ERR-062's fix -- bounding batches to `CM_BATCH_SIZE`/`C2B_BATCH_SIZE`
+(20 sentences) -- reduces the failure rate without eliminating it: two independent live runs
+each dropped exactly 1 sentence out of a ~20-sentence batch, a real, repeatable ~5%-per-batch
+miss rate, not a one-off fluke tied to one run's specific content.
+
+**Fix:** both `map_claims()` and `verify_grounding()` now retry ONCE, with only the missing
+sentence(s), before failing closed -- if the initial round of batches leaves any
+`sentence_id`s uncovered, one small follow-up call carrying just those sentences (same claim
+registry) is made, and only if THAT still leaves gaps does `ReviewCoverageError` fire. This
+resolves an isolated, apparently-stochastic miss without paying to redo whole batches or
+failing an entire run over one sentence, while still failing closed (never silently trusting
+an incomplete response) if the retry itself comes back incomplete too.
+
+**Tests:** new tests in `tests/review/test_claim_mapper.py` and `tests/review/
+test_grounding_verifier.py` confirm (a) a missing sentence recovered by the retry never
+raises and the retry payload contains only the missing sentence(s), and (b) the existing
+fail-closed test now explicitly asserts exactly 2 calls happen (initial + one retry) before
+raising, not that it fails on the very first miss. Full suite: **990 passed, 16 deselected**
+(up from 988).
+
+**Not fully live-reverified yet**: the gpt-4o run was relaunched with this fix in place as
+part of the same verification session; results pending at time of writing. If the same
+~5%-per-batch rate holds, a two-batch call (40 sentences, ~2 batches) has roughly a
+1-in-10ish chance of needing the retry at least once -- worth watching whether this stays a
+rare, cheap escape valve or whether it starts firing on nearly every run, which would suggest
+the miss rate is closer to systematic than stochastic and the batch size itself may need
+revisiting.
+
+---
+
+## ERR-065 — Even a 300s B2 timeout wasn't enough once ERR-064's CM/C2b retry got a run past coverage errors (found live, Phase 13-15 gpt-5.6-sol comparison)
+
+**Date:** 2026-09-15 · **Severity:** critical (crashed the live gpt-5.6-sol comparison run
+outright, no partial output saved) · **Status:** fixed · **Component:** `editing/targeted_rewrite.py`
+
+**Where:** after ERR-064's retry fix let the gpt-5.6-sol run past the coverage-gap crashes,
+it ran further and hit a NEW failure: `subprocess.TimeoutExpired: ... timed out after 300s`
+inside a B2 targeted-rewrite call. The traceback's payload showed **16 scenes** named in one
+revision cycle (a mix of `rewrite_beats` and `technical_fixes` findings across several beats),
+each carrying its own `visual_description` and full `available_claims` list serialized into a
+single JSON payload.
+
+**Root cause:** ERR-051 raised B2's `timeout_s` from 180 to 300 and explicitly flagged itself
+as "not yet live-verified: needs a fresh run that actually exercises a `rewrite_beats` cycle to
+confirm 300s is sufficient in practice." This run supplied that missing live verification, and
+the answer is no — `apply_targeted_rewrite()` had no upper bound on how many scenes could be
+crammed into one call; a revision plan naming 16 scenes (plausible once a story critique finds
+several unrelated issues across the video, not a contrived edge case) produces a payload large
+enough that even 300s isn't enough. Raising the timeout again would only move the same failure
+to a slightly larger revision plan next time, with no ceiling.
+
+**Fix:** chunk `apply_targeted_rewrite()`'s scenes into batches of `B2_BATCH_SIZE = 5` (chosen
+conservatively — each B2 scene payload is far heavier per-item than a CM sentence, which
+batches at 20), issuing one `narration_lead.run()` call per batch and merging the rewritten
+scenes by `scene_id`, mirroring the batching precedent already established in
+`review/claim_mapper.py`/`review/grounding_verifier.py`. This bounds every call's payload size
+regardless of how large a single revision plan gets, rather than chasing the timeout ceiling
+upward indefinitely.
+
+**Tests:** `tests/editing/test_targeted_rewrite.py` — a revision plan spanning
+`B2_BATCH_SIZE * 2 + 1` scenes is split into 3 calls of sizes 5/5/1 and every scene still gets
+rewritten regardless of which batch it lands in; a small revision plan (all existing tests)
+still makes exactly one call, confirming no regression for the common case. Full suite: **1001
+passed, 16 deselected** (up from 999).
+
+**Not yet live-reverified**: per explicit user instruction, no fresh comparison run was
+launched to confirm this in production — the gpt-5.6-sol run that hit this was not relaunched.
+Worth watching on the next live run whether 5 scenes/batch reliably stays under 300s, or
+whether an individual scene's own claim list can still be large enough to need a smaller batch
+or a per-scene claim cap.
+
+**Also observed, not a code bug:** the parallel gpt-4o run (`v04`, $3.00 cap) in this same
+live-verification round got much further — S0/S2/C2a/A1 all completed, the story+narration
+loop finished with `final_status=FAIL` (exhausted its revision cycles without clearing the
+quality bar, a legitimate outcome, not a crash), H/HV completed (5 beats, 4 render issues, 2
+repairs), and shorts selection found 4 candidates — then crashed with
+`litellm.exceptions.ServiceUnavailableError` (Gemini `503`, "This model is currently
+experiencing high demand") during a short's own CM claim-mapping call. This is the exact
+failure class ERR-032 already added `num_retries=3` for; the traceback confirms litellm
+actually retried 4 total attempts (1 + 3 retries) and every one hit the same 503 — a sustained
+provider-side outage that outlasted the existing backoff window, not a gap in our retry logic.
+Matches ERR-051's own precedent ("simply re-running is the correct response to this class of
+failure"). Total spend before the crash: $1.354 of the $3.00 cap. **Note:** this run (PID
+42744) was already in-flight before Phase 17.1's checkpointing code landed in this same
+session, so it wrote no `checkpoint.json` and `--resume` cannot recover it — a run started
+after Phase 17.1 landed would have checkpointed past claims/A1/story_loop and only needed to
+redo H+HV and shorts on a retry.
+
+---
+
+## ERR-066 — Missing cross-attention content + systematic budget overshoot, root-caused via a full cross-run survey (user-reported, 2026-09-15)
+
+**Date:** 2026-09-15 · **Severity:** major (a real deliverable could ship missing whole
+sections; the default model now crashes on its own default budget) · **Status:** fixed ·
+**Component:** `orchestration/pipeline.py`, `orchestration/run_pipeline.py`, `llm/budget.py`,
+`src/config/budget.yaml`, `review/claim_mapper.py`, `review/grounding_verifier.py`,
+`llm/concurrency.py` (new), `llm/usage.py`
+
+**Where:** user reported the final HTML from today's gpt-4o comparison run
+(`video-01-attention-phase13-15-verify-gpt4o/runs/v04`) had no mention of cross-attention,
+and separately reported "multiple errors and budget overshoot" since Phase 10, asking for a
+deep analysis rather than a guess. Investigated with real evidence, not speculation:
+
+1. **Missing content.** The source's own production notes explicitly plan an 11:25
+   "Multiple heads + cross-attention" beat. Surveyed every `plan.json` written since
+   2026-09-11 (18 runs) for source-unit coverage against each unit's own
+   `SourceCoverageDecision.disposition` — 17 of 18 have complete coverage, including a run
+   from this morning (`phase10-12-verify`) launched *after* Phase 10-12 landed. Only today's
+   `v04` is missing anything, and it's missing three whole sections (`heads`, `origin`,
+   `recap`), not just cross-attention. This is NOT a systemic Phase 10-17 content-generation
+   regression. Root cause: A2's first attempt AND its one-and-only replan (`MAX_STORY_REPLANS
+   = 1`) both left the same three sections uncovered; `check_source_disposition`'s
+   `required_source_unit_uncovered` hard-check correctly caught this and was correctly never
+   dismissed by A3, but once the sole replan was spent, the loop had zero recourse and fell
+   through to `"replan budget exhausted -> FAIL"` — which still ran full H/HV and shorts
+   generation (real $ spent) and produced a complete-looking HTML draft that could be mistaken
+   for a real deliverable, even though it was correctly excluded from `promote_to_final()`.
+
+2. **Budget overshoot.** Computed real per-run cost from every `usage.jsonl` since 2026-09-11.
+   C2b's own cost jumped from $0.08-$0.20/run (pre-Phase-10) to $0.46-$0.79/run (post-Phase-10)
+   — a deliberate, documented ~3-5x increase from Phase 10's sparse-issues -> dense
+   per-sentence verdict redesign, compounded by Phase 13's C4d (a second full cold/continuing-
+   viewer cascade). Neither change was reconciled against `DEFAULT_TIERS["longform"].hard_cap_usd
+   = 1.00`, a constant ERR-046 (2026-09-12, *before* either phase) had already flagged as tight
+   for reasoning-tier models but explicitly kept for the default gpt-4o path because it "still
+   completes fine" — no longer true: today's default gpt-4o loop cost $1.2604, 26% over the
+   unmodified default hard cap. This is why every live-verification run this session needed a
+   manually-raised `--loop-budget-usd` just to complete at all, even on the default model.
+
+**Fix:**
+- `llm/budget.py`/`src/config/budget.yaml`: `DEFAULT_TIERS["longform"]` raised 2x
+  (target/warning/hard_cap: 0.40/0.60/1.00 -> 0.80/1.20/2.00), giving headroom above the
+  observed $1.0-$1.6 range without a manual override on every run.
+- `orchestration/pipeline.py`: `MAX_STORY_REPLANS` raised 1 -> 2 -- a coverage-type hard
+  failure can ONLY be fixed by a replan (`apply_targeted_rewrite` never adds a new beat), so
+  one bad replan used to be a dead end.
+- `orchestration/run_pipeline.py`: new structural-coverage gate right after the story loop --
+  if `final_status == "FAIL"` AND a `required_source_unit_uncovered`/
+  `source_unit_missing_disposition` hard failure survived, skip H/HV and shorts entirely
+  (nothing downstream can fix content that was never planned) instead of spending on them
+  before failing to promote anyway. `PipelineRunOutput.html_result` is now `HtmlSynthesisResult
+  | None` to represent this skipped-entirely case honestly, rather than fabricating a fake
+  result object.
+- New `llm/concurrency.py::run_concurrently()`: CM's and C2b's batch loops (the biggest,
+  slowest structured-output calls in a review cycle, and the ones the user specifically named
+  as "taking a huge time") now dispatch their independent batches concurrently via a
+  `ThreadPoolExecutor` instead of sequentially, cutting wall-clock time roughly by the number
+  of batches without changing $ cost or the per-sentence correctness guarantee (see
+  "Considered and rejected" below). `BudgetCounter` (`llm/budget.py`) and `UsageLedger`
+  (`llm/usage.py`) both gained an internal lock around their small bookkeeping sections (the
+  actual slow I/O runs unlocked and fully concurrent) so sharing one budget/ledger across
+  threads is safe -- confirmed by a dedicated concurrent-`record_spend` test that would have
+  caught the un-locked race (a lost update silently undercounting real spend past hard_cap).
+
+**Considered and rejected:** coarsening C2b/CM from per-sentence to per-scene/per-beat
+granularity, which the user explicitly floated as a way to cut cost/time further. Rejected for
+now: Phase 10's per-sentence dense verdict is what already caught 2 real, live, critical
+`qualifier_dropped` findings that a sparser check would have missed by construction (the whole
+reason Phase 10 exists — "no issue" used to be indistinguishable from "never actually
+checked"). Parallelizing the existing per-sentence batches gets the same wall-clock win without
+that regression risk. Revisit only if concurrency alone proves insufficient on a live run.
+
+**Tests:** `tests/llm/test_budget.py` (tier values), `tests/llm/test_concurrency.py` (new --
+result ordering, genuine wall-clock overlap, single-item bypass, exception propagation,
+concurrent `record_spend` never loses an update, concurrent `UsageLedger.append` never
+corrupts a line), `tests/orchestration/test_pipeline.py` (replan-exhaustion test extended to 2
+replans), `tests/orchestration/test_run_pipeline.py` (new: uncovered-source-content skips
+H/HV+shorts entirely; an ordinary non-coverage FAIL still runs H/HV as before), `tests/review/
+test_claim_mapper.py`/`test_grounding_verifier.py` (batch-order assertions changed to
+order-independent multiset checks now that batches dispatch concurrently; the shared
+`FakeReviewLead` test double made thread-safe and content-matching for genuinely concurrent
+calls, falling back to position for the deliberately-partial responses the retry tests rely
+on). Full suite: **1012 passed, 16 deselected** (up from 1001), re-run 15x to confirm the new
+real-thread tests aren't flaky.
+
+**Not yet live-verified**: no fresh run was launched as part of this fix (matching the
+standing "don't start a fresh run" instruction) -- the actual wall-clock speedup and the new
+$2.00 default cap's sufficiency are confirmed by unit test and cost-survey math, not yet by a
+real end-to-end run.
+
+---
+
+## ERR-067 — Shorts pipeline: 3 systematic bugs found by generating all 5 real candidates and persisting each one's actual review findings
+
+**Date:** 2026-09-15 · **Severity:** critical (100% of shorts failed, 0 ever promotable) ·
+**Status:** fixed · **Component:** `review/short_critic.py`, `narration/short_generator.py`,
+`planning/shorts_models.py`, `orchestration/shorts_pipeline.py`
+
+**Where:** Phase 18's new `save_short_debug()` (this same day, ERR-066) finally made a FAILed
+short's actual `hard_failures`/`issues` inspectable after the run instead of vanishing with the
+process. Used it on all 5 real candidates from a `--resume`'d run (`--shorts-count 0`, one per
+candidate found) — every one FAILed, and unlike the earlier single-short run, the pattern
+across 5 independent generations was too consistent to be model randomness:
+
+1. **5 of 5** flagged `critical/ending [RESERVED_OUTRO]` for a spoken follow-up line.
+2. **4 of 5** flagged `critical/micro_arc` for a `problem_fix` short skipping the required
+   naive-attempt step.
+3. **4 of 5** flagged `measured_duration_exceeds_max` (61.7-76.4s against the 60s hard cap).
+
+**Root causes, one per bug, all the same shape — a critic enforcing a rule the generator was
+never told:**
+
+1. `review/short_critic.py::critique_short()` never received `plan.bridge.mode` at all. Its
+   "no reserved outro" rule unconditionally flagged ANY spoken follow-up line as a critical
+   defect — even though `narration/short_generator.py`'s own prompt explicitly REQUIRES
+   exactly one such line when `bridge.mode == "SPOKEN"`. The generator was correctly obeying
+   its own instructions; the critic was rejecting correct behavior because it lacked the one
+   piece of context (`bridge_mode`) needed to judge it.
+2. `short_critic.py`'s prompt already lists structural requirements per `micro_arc` (a naive
+   attempt for `problem_fix`, a stated myth for `myth_correction`, ...), but
+   `short_generator.py`'s own prompt never mentioned ANY of these — it just says "write hook/
+   setup/mechanism/payoff," generic across all 7 arc types, with no idea what its own chosen
+   arc structurally requires.
+3. `ShortNarration.word_band` (default `(120, 165)`) and `target_duration_seconds` (default
+   `52.0`, `le=60.0`) were calibrated against an assumed ~167 words/minute -- but `word_band`
+   was never actually sent to the model at all (`generate_short_narration()`'s payload only
+   ever included the bare `target_duration_seconds` number, with a vague "45-60 seconds"
+   prompt phrase). Back-computing from the worst overrun (165 words measuring 76.4s) implies
+   real edge-tts speech runs closer to ~130 words/minute, not 167.
+
+**Fix:**
+- `critique_short()` gained a `bridge_mode` parameter, included in its payload; the prompt's
+  rule 3 now explicitly says a single required line under `bridge_mode="SPOKEN"` is NOT a
+  violation, only a second one/a longer paragraph is. `orchestration/shorts_pipeline.py`'s
+  `run_short()` now passes `plan.bridge.mode` through.
+- `short_generator.py`'s `TASK_PROMPT` gained explicit structural guidance for all 7
+  `MicroArc` values (not just the 2 that happened to fail in this one run — the same "critic
+  knows a rule the generator doesn't" bug would recur for the other 5 the next time one of
+  them gets picked).
+- `ShortNarration.word_band` is now sent to the model (`generate_short_narration()`'s payload),
+  with prompt language treating it as a real ceiling, not the old vague seconds-based hint.
+  Both `word_band` (120-165 -> 90-115) and `target_duration_seconds` (`le` 60.0 -> 55.0,
+  default 52.0 -> 45.0) recalibrated against the ~130wpm real-speech evidence, with real
+  margin left below the 60s hard cap rather than aiming at it exactly (an LLM's own word count
+  is itself unreliable, the same reasoning that motivated long-form's deterministic per-beat
+  word budgets).
+
+**Tests:** `tests/review/test_short_critic.py` (bridge_mode defaults to NONE, is passed
+through, prompt explains the conditional rule), `tests/orchestration/test_shorts_pipeline.py`
+(`run_short()` forwards `plan.bridge.mode` to C1s), `tests/narration/test_short_generator.py`
+(word_band reaches the payload, prompt has ceiling language, all 7 `MicroArc` values have
+structural guidance in the prompt). Full suite: **1024 passed, 16 deselected** (up from 1017).
+
+**Not yet live-verified**: no fresh shorts run was launched to confirm these 3 fixes actually
+produce a passing short — the next `--resume ... --shorts-count 0` run against this same
+checkpoint is the natural way to check, since it's nearly free (~$0.07, ~17 min, per ERR-066's
+own resume timing).
+
+**Update (same day, live-verified after two more rounds):** re-ran 3 more times after each
+fix. Round 1 (bridge_mode + word_band only): reserved-outro 5/5->0/5, duration 4/5->1/5 --
+confirmed. Naive-attempt stayed 4/5 unchanged, revealing the fix was at the wrong layer (B1s
+narration) when the real gap was one level up (A2s planning never checked whether a naive
+attempt was actually groundable before choosing `problem_fix`). Round 2 (A2s-level arc-content
+requirement + title-reuse instruction) found a NEW bug the same live data surfaced: 2 of 5
+shorts had a completely empty hook segment (`hook.narration` blank by valid design, and B1s
+never being told a hook must have SOME spoken words regardless), which also explained why the
+title check kept failing -- it fell back to comparing against `hook.visual` (a diagram
+description) for exactly those shorts, a vocabulary domain no title could match. Fixed:
+`narration/short_generator.py` now requires the hook segment to never be empty;
+`verification/hard/shorts.py::check_title_hook_payoff_alignment` now also accepts a match
+against `central_insight` (always populated) so a visual-only hook's diagram-description text
+isn't the only anchor available; `short_planner.py`'s title guidance was also toned down after
+its first version overcorrected into copying whole sentences as "titles." Round 3 (all 5
+fixes): **2 of 5 shorts PASS_WARN with zero hard failures** -- the first passing shorts this
+entire session. Reserved-outro/duration/empty-hook/title-mismatch: 0/5 each, fully confirmed
+gone. Naive-attempt: 1/5 (down from 4/5) -- genuinely improved, not eliminated, consistent with
+it being a probabilistic model-compliance issue rather than a wiring gap. The 3 remaining
+failures were distinct, previously-unseen issues (a verbatim mechanism/payoff repetition, a
+payoff that reads as a full recap, and legitimate `qualifier_dropped` catches -- the last one
+not a bug, C2b correctly catching a real overclaim), not a recurrence of any of the 5 fixed
+bugs. Full suite held at 1024-1034 passed throughout (new tests added each round). Total spend
+across all 3 verification rounds: ~$0.21 (all near-free resumes reusing the same $2.30
+checkpoint).
+
+**Second gap found immediately after, from the user asking to actually see the passing
+shorts:** `final/shorts/<i>/` (and its `short.html`) is gated on the OVERALL run's combined
+`final_status`, not each short's own -- confirmed live that short #2/#4's PASS_WARN with zero
+hard failures never got written anywhere, because the unrelated parent story loop's own FAIL
+made the whole promotion block skip, and `synthesize_short_html()`'s in-memory result was
+discarded when the process exited with nothing to show for a short that had actually passed.
+Fixed: `save_short_debug()` now also always writes `plan.json`, `narration.json`, and (when
+given) `short.html` to `shorts/<i>/`, independent of the overall run's status -- the same
+"always written, unlike promotion-gated final/" pattern the status.json half of this function
+already established. Tests: `tests/orchestration/test_shorts_pipeline.py` (html/plan/narration
+written when given, html skipped when not), `tests/orchestration/test_run_pipeline.py`
+(`save_short_debug` receives the real generated html even when the overall run doesn't
+promote). Full suite: **1034 passed, 16 deselected**. Not yet live-verified with a real run.
+
+**Third update, deeper analysis after a live-verify of all 5 fixes above:** re-ran once more
+-- title-mismatch/duration/reserved-outro/empty-hook confirmed at 0/5, **2 of 5 shorts
+PASS_WARN with zero hard failures** (the first passing shorts this session). But
+`critical/micro_arc` (naive-attempt) was still 1/5, and a full failure-code trend across all 6
+generation rounds showed `critical/ending` hadn't gone away either -- it had changed shape
+(100% "reserved outro" -> fixed -> reappeared as verbatim mechanism-repetition or full-recap
+payoffs). Both are judgment-quality problems a single-shot generation's prompt can keep
+improving but not fully close, the same signature that made long-form itself outgrow pure
+prompting (ERR-022 through ERR-026). Built the bounded revision cycle
+`orchestration/shorts_pipeline.py`'s own module docstring had pre-committed to -- see
+STORY_IMPROVEMENT_PLAN.md's new **Phase 20** for the full design and change list. Not yet
+live-verified.
+
+---
+
+## ERR-068 — Deep dive on shorts visuals: duration cap raised to 120s, and 3 real bugs found in the HTML/CSS layer (never investigated until now)
+
+**Date:** 2026-09-16 · **Severity:** major (one bug had been silently dropping a CSS
+property in every H/short render this whole session) · **Status:** fixed · **Component:**
+`verification/hard/shorts.py`, `planning/shorts_models.py`, `narration/short_generator.py`,
+`planning/short_planner.py`, `html_synth/component_library.py`, new `verification/hard/
+css_lint.py`, `verification/diagnostics/shorts.py`, `orchestration/run_pipeline.py`
+
+**Where:** user reported the actual `short.html` looked sparse ("just two or three lines, no
+script like we have long form html") and asked for a deep dive, having only looked at the
+narration/critique layer until now. Two real findings, neither previously investigated:
+
+1. **Duration cap raised 60s -> 120s (user decision).** The tight 60s budget was itself a
+   likely contributing factor to several of ERR-067's failures beyond direct duration
+   overruns -- `setup` had to fit BOTH its original "minimum context" job AND its new
+   per-micro_arc required beat (Phase 20) in the same ~90-115 word allowance as everything
+   else. Raised `verification/hard/shorts.py`'s `MAX_SHORT_SECONDS` (62.0 -> 122.0) and
+   `MAX_MEASURED_SHORT_SECONDS` (60.0 -> 120.0); recalibrated `ShortNarration.
+   target_duration_seconds` (default 45.0 -> 95.0, bounds 45-55 -> 60-110) and `word_band`
+   (90-115 -> 160-210) against the same ~130wpm real-speech evidence, scaled up.
+
+2. **`plan.visual.states` was empty in 5 of 5 real shorts across a full run** -- likely every
+   short ever generated by this pipeline. `html_synth/vertical_assembler.py`'s flow-diagram
+   renderer only draws anything on the mechanism screen when `states` is non-empty; A2s
+   reliably filled `dominant_object` (self-explanatory) but never `states`, because
+   `planning/short_planner.py`'s prompt described it in one throwaway clause ("its states")
+   with no explanation of what a "state" actually is, unlike every other field. This is why
+   every short's HTML has been plain text only, with the diagram capability completely dead
+   in practice. Fixed: prompt now explains states as 2-4 short labels naming the sequential
+   stages the object moves through, with concrete examples, and states plainly that an empty
+   list is a real content gap, not a valid "no diagram" signal. Added `verification/
+   diagnostics/shorts.py::check_visual_states_present` (AMBER when empty, never a hard gate)
+   so this can never go silently dead again without at least a visible signal.
+
+3. **Found while reading the actual generated `short.html` byte-for-byte** (not just JSON
+   artifacts -- same investigative discipline as ERR-063's own long-form finding):
+   `html_synth/component_library.py`'s shared `BASE_STYLESHEET` (used by BOTH long-form H and
+   shorts) had `.math-block{...border-radius:var(--r_sm)...}` -- underscore -- while
+   `css_tokens()` only ever emits `--r-sm` -- hyphen (`name.replace('_', '-')`). This exact
+   bug was already identified in the `video_script_6_html_finetuning_feedback.md` review
+   earlier this session (item #20) but never actually fixed at the time, only logged as a
+   real, confirmed finding. Fixed the typo, and built the CSS-variable-lint check that same
+   review recommended (item #21): new `verification/hard/css_lint.py::
+   check_css_variable_references()`, a generic `var(--x)` vs `--x:` declaration check, wired
+   into `verification/hard/vertical.py::check_vertical_short()` for shorts (long-form's
+   `render.py` is a natural next place to wire the same shared check, not yet done).
+
+4. **Structural gap found while wiring in the new CSS check**: `check_vertical_short()`'s
+   result had ALWAYS been computed and logged as a bare count in `run_pipeline.py`, never
+   actually consulted for a short's own pass/fail decision -- the exact same class of gap the
+   2026-09-11 long-form fix ("the combined status below is what actually gates promotion
+   now") already closed for H/HV, just never extended to shorts. A short with a real vertical
+   defect (a tampered narration hash, a missing safe zone, an undeclared CSS variable) could
+   PASS its narration review and still ship with a broken render, completely undetected.
+   Fixed: `run_pipeline.py` now downgrades a short's `final_status` (via the same
+   `apply_editorial_downgrade` long-form already uses) whenever `check_vertical_short` finds
+   anything, and folds the vertical issues into `short_result.hard_failures` so
+   `save_short_debug()`'s persisted `status.json` shows the complete picture.
+
+**Tests:** `tests/verification/hard/test_css_lint.py` (new, 7 tests -- undeclared variable
+flagged, the exact historical bug shape caught, declared+used is clean, declared-but-unused
+is not flagged, a `var(x, fallback)` doesn't suppress the check, multiple undeclared vars
+each reported, underscored names supported), `tests/verification/hard/test_vertical.py` (new
+regression test proving the wiring, not just the standalone function, catches the bug shape),
+`tests/verification/diagnostics/test_shorts.py` (visual-states AMBER/GREEN), `tests/planning/
+test_short_planner.py` (prompt requires states), `tests/orchestration/test_run_pipeline.py`
+(vertical issues downgrade final_status and populate hard_failures; no issues leaves it
+untouched), plus fixture updates across every shorts test file for the new duration/word
+bounds. Full suite: **1065 passed, 16 deselected** (up from 1052).
+
+**Not yet live-verified**: no fresh run was launched to confirm the 120s cap actually relieves
+the recurring failure categories, or that a real short's `visual.states` gets populated now.
+
+---
+
+## ERR-069 — Shorts never ran check_grounding_policy/check_numeric_fidelity at all (a real, undocumented gap vs. long-form)
+
+**Date:** 2026-09-16 · **Severity:** major (a whole class of factual-safety check was
+silently absent for every short ever generated) · **Status:** fixed · **Component:**
+`orchestration/shorts_pipeline.py`
+
+**Where:** a further review round, specifically looking for anything in the shorts pipeline
+never yet investigated. `orchestration/pipeline.py`'s own `_run_review_block` (long-form) has
+always run `check_grounding_policy` (catches a sentence marked `grounding_required=True` with
+no `grounding_refs` at all, or a claim narrated in violation of its own verification-status
+policy) and `check_numeric_fidelity` (catches a narrated number that drifted from the claim it
+cites, e.g. "256" spoken while the claim itself says "128") right after C2b's metadata repair.
+`orchestration/shorts_pipeline.py::run_short()` never called either -- confirmed by reading
+`verification/hard/shorts.py`'s own module docstring, which explicitly lists every long-form
+gate deliberately switched off for shorts (forward-driver continuity, payoff-gap valleys, the
+mid-video cold viewer, the CTA window, the >=1500-word gate) -- these two were never in that
+list, meaning this was an oversight, not a documented scope decision.
+
+**Fix:** `_run_review()` (the shared review helper used both for the initial pass and the
+post-rewrite re-review) now also calls both checks and returns the resulting
+`GroundingViolation`s alongside the existing critique issues; `_format_hard_failures()` folds
+them into `hard_failures` the same way long-form's `aggregate_review()` does
+(`f"{code} ({scene_id}): {detail}"`). Deliberately NOT yet fed into the Phase 20 targeted-
+rewrite mechanism (`GroundingViolation` has no `severity`/`scene_ids` of its own the way
+`CritiqueIssue` does) -- extend that once a live run actually shows one of these firing on a
+real short, not ahead of that evidence.
+
+**Tests:** `tests/orchestration/test_shorts_pipeline.py` -- a sentence marked FACTUAL with no
+`grounding_refs` at all is now a hard failure (`ungrounded_factual_sentence`); a sentence
+citing a claim but stating a different number than the claim's own is now a hard failure
+(`numeric_drift`). Full suite: **1067 passed, 16 deselected** (up from 1065).
+
+**Not yet live-verified**: no fresh run has confirmed how often either check actually fires on
+real shorts content -- both are legitimate correctness gates, and cited claims are already
+scoped to the parent's own `allowed_fact_ids` (mostly VERIFIED by the time they reach a
+short), so a flood of new failures isn't expected, but this is not yet confirmed live.
+
+---
+
+## ERR-070 — Three more shorts bugs found on a dedicated 3-round static review, requested specifically to gate whether another live run was warranted
+
+**Date:** 2026-09-16 · **Severity:** major (one silently defeated the documented cold-hook
+"never a hard gate" design; one silently made every pre-TTS duration estimate ~28% optimistic
+all session; one was the exact same silent-drop class of bug already fixed once elsewhere) ·
+**Status:** fixed · **Component:** `review/cold_hook_critic.py`,
+`editing/short_targeted_rewrite.py`, `narration/short_generator.py`,
+`verification/diagnostics/shorts.py`
+
+**Where:** requested explicitly as 3 rounds of static review, one bug budgeted per round, with
+the user's own stated condition that another live run should only follow if a round turned up
+nothing. All three rounds found a real bug.
+
+**Round 1 — `cold_hook_critic.py`'s Gemini escalation had no severity constraint.**
+`_GEMINI_PROMPT` never told the model what severity to use, unlike every other critic in this
+codebase, and nothing in code prevented a "critical" cold-hook finding from silently becoming a
+hard gate (or, since Phase 20, a targeted-rewrite trigger) -- contradicting the documented
+design that cold-hook is feedback, never a mechanical hard gate (plan §20.10). Fixed both ways:
+strengthened the prompt to say `severity="major"` explicitly, AND forced it in code
+(`[i.model_copy(update={"severity": "major"}) for i in gemini_result.issues]`) so a model that
+ignores the prompt anyway still can't produce a "critical" cold-hook issue.
+
+**Round 2 — two related bugs in `editing/short_targeted_rewrite.py`.** (a) Its prompt carried
+zero word-budget context, unlike the original B1s generation prompt -- a live, real
+contributor to the Phase 20 verification run's own finding that a rewrite could be "kept, not
+worse" by hard-failure count yet still measure over the duration cap once real TTS ran, because
+nothing ever told the rewrite it had a ceiling to respect. Fixed by adding `word_band` and
+`untouched_neighbors_word_count` to both the prompt and the payload. (b) Investigating that fix
+surfaced a deeper, pre-existing inconsistency: `PLANNING_WPM = 167` (long-form's own
+assumption) was still being used in `narration/short_generator.py` and
+`editing/short_targeted_rewrite.py` to compute `est_seconds`, even though `word_band` itself had
+already been recalibrated against confirmed ~130wpm real edge-tts evidence
+(`planning/shorts_models.py`'s own comment on `ShortNarration`). The cheap pre-TTS duration
+estimate that both `check_duration_estimate` and this round's own rewrite decision lean on has
+therefore been silently ~28% optimistic (167/130) the entire session, with real TTS being the
+only thing that ever caught the gap. Fixed both occurrences to `PLANNING_WPM = 130`. A third
+occurrence, in `verification/diagnostics/shorts.py`, was found to be entirely unused dead code
+(never referenced) and was deleted rather than "fixed."
+
+**Round 3 — `RewrittenSegment.segment` was an unconstrained `str`.** The exact same class of
+bug already fixed once in `narration/short_generator.py::GeneratedSegment` (constraining it to
+`Literal["hook", "setup", "mechanism", "payoff"]`, ERR-067) was never applied to
+`editing/short_targeted_rewrite.py::RewrittenSegment`, built the following day. An invalid or
+typo'd segment name would silently fail to match any real `scene_id` in
+`rewritten_by_id.get(...)`, silently dropping the requested fix with the original, unfixed text
+surviving byte-for-byte and no error anywhere -- exactly the failure mode a targeted rewrite
+exists to prevent, happening invisibly inside the rewrite mechanism itself. Fixed with the same
+`Literal` constraint.
+
+**Tests:** one new test per bug --
+`test_a_critical_severity_from_gemini_is_forced_down_to_major`
+(`tests/review/test_cold_hook_critic.py`),
+`test_an_invalid_segment_name_is_rejected_not_silently_dropped`,
+`test_prompt_requires_staying_within_the_overall_word_band`, and
+`test_word_band_and_neighbor_word_count_reach_the_payload`
+(`tests/editing/test_short_targeted_rewrite.py`). Full suite: **1071 passed, 16 deselected**
+(up from 1067).
+
+**Not yet live-verified**: per the user's own explicit "confirm before another run" instruction
+from earlier in this same investigative arc, no live run has followed these fixes yet -- and
+per the user's own stated condition for this review ("if we don't find any more bugs then we
+can do another run"), that condition was not met (all 3 rounds found a real bug), so a run was
+deliberately not launched off the back of this round without checking back first.
+
+**Follow-up round (same day):** given a choice between running immediately, another 3 rounds,
+or one more focused round, the user chose one more round. It covered
+`verification/hard/shorts.py` (duration-gate logic itself, confirmed it never had its own stale
+WPM constant to begin with), `planning/shorts_models.py` (word_band/target_duration/130wpm
+arithmetic cross-checked and consistent), `html_synth/vertical_assembler.py` (CSS custom
+properties all resolve against real `design_system.yaml` tokens, no orphaned `var()`),
+`review/short_critic.py` (bridge_mode/scene_ids handling matches the generator and rewrite
+modules), and `voice/tts_preview.py` (verified against the installed `edge_tts` package's own
+source that `Communicate`'s boundary mode defaults to `"SentenceBoundary"` and that the emitted
+chunk `type` string matches exactly what this module checks for -- the one place a silent
+"always measures ~0s, never trips the duration gate" failure could have hidden). Found no new
+bug; full suite still **1071 passed, 16 deselected**, unchanged from the round above.
+
+---
+
+## ERR-071 — A short's own TTS degradation could silently force PASS_WARN with zero visible reason anywhere (found live, v08 verification run)
+
+**Date:** 2026-09-16 · **Severity:** major (defeats the exact "a FAILed/downgraded short's own
+reasons are still inspectable" guarantee `save_short_debug()`'s own module docstring commits
+to, ERR-formatting precedent from 2026-09-15) · **Status:** fixed · **Component:**
+`orchestration/shorts_pipeline.py`
+
+**Where:** the v08 live verification run launched after ERR-070's fixes (`--resume` against the
+same v01 checkpoint, 5 candidates). Short #2 came back `PASS_WARN` with `hard_failures: []` and
+only two `major` (non-critical) critique issues -- `compute_final_status` (`policy_gate.py`)
+never looks at critique issues at all, only `hard_failures` and diagnostic RED/AMBER bands, and
+short #2's one diagnostic band (`setup_length` AMBER, 18.9s) is within the default
+`pass_amber_allowance=3`, which computes to a plain `PASS`. Yet the persisted status was
+`PASS_WARN` -- the only mechanism in `run_short()` that can move a computed `PASS` to
+`PASS_WARN` is `apply_editorial_downgrade(status, "PASS_WARN")`, gated on
+`degraded_capabilities` being non-empty. Cross-checked against short #4 in the same run (which
+DID get a real TTS measurement, confirmed by its own `"TTS preview: measured 87.9s"` log line)
+to rule out a diagnostics-driven explanation instead. Conclusion: TTS synthesis genuinely failed
+for short #2 (real edge-tts flakiness, most likely), correctly forced the safety-conscious
+downgrade (never PASS a short whose real duration was never measured) -- but the reason was
+completely invisible: `run_short()`'s two `except` branches around the TTS call only appended to
+`degraded_capabilities`, never to `log`, and `save_short_debug()`'s status.json write (added
+2026-09-15 specifically so a short's own reasons survive the process exiting) never included the
+`degraded_capabilities` field in the first place. Someone reading short #2's real status.json
+after the run had no way to learn that its own real spoken duration was never actually measured.
+
+**Fix:** both `except` branches in `run_short()` now also `log.append(...)` the same reason
+already recorded in `degraded_capabilities` (`"TTS preview: degraded (edge-tts not installed)"`
+/ `"TTS preview: degraded (synthesis failed: {e})"`); `save_short_debug()`'s status.json write
+now includes `"degraded_capabilities": result.degraded_capabilities` alongside the other
+always-written fields.
+
+**Tests:** extended `test_a_tts_synthesis_failure_degrades_visibly_and_falls_back_to_the_estimate`
+to assert the failure reason reaches `result.log`, and
+`test_save_short_debug_writes_status_regardless_of_pass_or_fail` to assert
+`degraded_capabilities` round-trips through the persisted JSON. Full suite: **1071 passed, 16
+deselected** (same count -- both were new assertions on existing tests, not new test functions).
+
+**Live re-verification of the shorts pipeline itself (not just this fix), from the same v08
+run:** 3 of 5 shorts landed `PASS_WARN` (up from Phase 20's own 2/5), 2 `FAIL`. The bounded
+revision cycle (Phase 20) worked exactly as designed on all three shorts it fired for -- kept a
+rewrite that took short #3 from 2 hard failures/4 issues to 0/1 (a clean PASS_WARN), reverted a
+rewrite on short #5 that would have made things worse (4 -> 5 hard failures), and kept a
+rewrite on short #1 that was real, measured progress (3 -> 2 hard failures) without being
+enough to clear FAIL. No duration-cap overruns anywhere in this run (measured 87.9-102.0s, all
+comfortably under the 120s cap) -- direct confirmation that ERR-070's word-budget-aware rewrite
+fix closed the exact gap that caused one. Short #5's FAIL is `check_grounding_policy` (ERR-069)
+firing for the first time on a real run: two sentences made unsupported technical claims not in
+the claim registry -- the check working as intended, not a pipeline bug. Short #1's FAIL is a
+genuine micro_arc mismatch (declared `contradiction_resolution`, actually enacted
+`problem_fix`) -- a real story-planning judgment-quality miss from A2s/SC, not yet investigated
+further.
+
+---
+
+## ERR-072 — Shorts read as "just a few sentences" (visual-density gap) and 5/5 landed goal=DISCOVERY/bridge=NONE (both user-reported, v08 run)
+
+**Date:** 2026-09-16 · **Severity:** major (works directly against a short's stated purpose --
+"should help me get more subscribers" -- even though neither is a hard-failure-level defect) ·
+**Status:** fixed · **Component:** `html_synth/vertical_assembler.py`, `planning/short_planner.py`
+
+**Where:** the user opened all 5 real `short.html` files from the v08 run directly and reported
+they looked incomplete, "just a few sentences." Direct inspection of `narration.json` for all 5
+showed the underlying scripts were NOT thin (176-209 words each, ~90-100s measured, a complete
+hook/setup/mechanism/payoff arc) -- the actual cause was the RENDERED layout: each segment drew
+as one merged `<p>` paragraph, vertically centered in a full 1080x1920 screen. A hook's ~40
+words at 58px font fills roughly 300-400px of a 1920px screen -- 75-85% blank -- and only
+`mechanism` ever got any visual (the existing flow diagram); `hook`/`setup`/`payoff` were bare
+centered text the whole time, with no visual change for the entire length of a segment (short
+#2's mechanism: 47.5s of continuous narration against one unchanging static screen). Separately,
+checking `plan.json` for all 5 shorts in the same run found `goal=DISCOVERY` and
+`bridge.mode=NONE` in all 5 of 5 -- not one of them gave a viewer a follow-up ask or pointed back
+to the parent video, directly undercutting the user's stated goal for these shorts.
+
+**Fix:**
+1. `html_synth/vertical_assembler.py`: each sentence now renders as its own visually distinct
+   "beat" (`_render_beats`) -- a colored bar sized to that sentence's own share of the segment's
+   total words (a real pacing cue, not decoration), above its own text block, with a short
+   staggered fade-in on load. A `~Ns` duration badge (from the segment's already-computed
+   `est_seconds` -- no new LLM call, no new data) now sits next to each screen's label. Rendered
+   short #2 through Playwright before/after: the mechanism screen went from one flat paragraph to
+   a diagram plus 5 distinct beats filling most of the frame.
+2. `planning/short_planner.py`'s A2s `TASK_PROMPT`: the `goal` bullet now names the live
+   100%-DISCOVERY evidence directly and asks the model to honestly check whether a candidate's
+   own payoff already gestures at a bigger question or a next piece before defaulting to
+   DISCOVERY. The `bridge` bullet now explicitly names NONE-for-every-short-in-a-batch as its own
+   bias (mirroring the existing, still-correct "don't force a bridge that weakens the ending"
+   principle) and encourages a single <=8-word SPOKEN/ONSCREEN follow line whenever the payoff
+   genuinely supports it -- plan §20.1 already allows subscribe to be "earned... only after
+   value" here; nothing forced it, so nothing had ever pointed the model at using it.
+
+**Tests:** `tests/html_synth/test_vertical_assembler.py` (3 new -- each sentence renders as its
+own beat rather than one merged paragraph; a beat's bar width reflects its own real share of the
+segment's words; each screen shows its own estimated duration), `tests/planning/test_short_planner.py`
+(2 new -- the 100%-DISCOVERY evidence and "two of three growth levers" framing reach the prompt;
+the follow-line encouragement and its 8-word cap reach the prompt). Full suite: **1076 passed, 16
+deselected** (up from 1071).
+
+**Not yet live-verified**: no run has followed these fixes yet. The prompt change in particular
+is a judgment nudge, not a hard rule -- the next `--resume` run is the natural way to confirm it
+actually produces goal/bridge variety across a real batch rather than just reading as a
+plausible prompt edit.
+
+---
+
+## ERR-073 — 3 rounds of review requested specifically to find bugs preventing good shorts scripts; found one signal-loss bug per round
+
+**Date:** 2026-09-16 · **Severity:** major (all three directly undercut the same
+subscriber-growth goal ERR-072 was fixed for, one of them completely -- not narration-quality
+bugs in the usual "the model wrote something wrong" sense, but pipeline-plumbing bugs where a
+real, already-computed signal or field never reached the place that needed it) · **Status:**
+fixed · **Component:** `planning/short_planner.py`, `planning/candidate_finder.py`,
+`planning/shorts_models.py`, `html_synth/vertical_assembler.py`, `verification/diagnostics/shorts.py`
+
+**Round 1 — `ShortsCandidate.bridge_question` was computed by SC and then silently discarded.**
+`planning/candidate_finder.py`'s own SC prompt spends a real LLM call producing
+`bridge_question` specifically described as "the larger question this candidate's payoff could
+naturally open onto... for a BRIDGE-goal short later." That field reaches A2s only as raw JSON
+in the candidate payload (`_candidate_payload(c) -> candidate.model_dump()`) -- A2s's own
+`TASK_PROMPT` never named it once. The one upstream signal purpose-built to fix exactly the
+100%-DISCOVERY bias ERR-072 documents was being computed and then thrown away. **Fix:** the
+`goal` bullet in `short_planner.py`'s `TASK_PROMPT` now explicitly names `bridge_question` and
+tells the model a non-empty one is a real, already-judged signal, not something to silently
+ignore.
+
+**Round 2 — SC's own `micro_arc_suggestion` had the same `problem_fix`-over-selection bias A2s's
+prompt already had to be fixed for, one stage earlier.** A2s's prompt (fixed 2026-09-15, ERR-067)
+already warns against defaulting to `problem_fix` for any problem-then-mechanism candidate
+"(almost every candidate does)" -- but SC's own prompt, one stage upstream, produces
+`micro_arc_suggestion` with zero such caution, and "A2s may override this" doesn't fully
+neutralize the anchoring effect of a biased suggestion already sitting in context. **Fix:**
+`planning/candidate_finder.py`'s `TASK_PROMPT` now carries the same caution SC's own downstream
+consumer already needed, closing the anchoring loop at its source rather than only correcting it
+one stage later.
+
+**Round 3 — ONSCREEN/PLATFORM_LINK bridges rendered nothing anywhere; the biggest finding of the
+three.** `narration/short_generator.py`'s own prompt has always told the model these two modes
+mean "the bridge itself will render as on-screen text elsewhere, not spoken" -- correctly
+withholding it from the spoken narration. But `ShortBridge` had no field to capture what that
+on-screen text actually says, and `html_synth/vertical_assembler.py` never referenced
+`plan.bridge` at all. A short assigned either mode shipped with its CTA correctly absent from
+narration and never shown anywhere in its place -- a silent, total loss of the one thing those
+two modes exist for, worse than picking NONE. This directly undercuts today's own ERR-072 fix,
+which now actively encourages the model toward ONSCREEN as one of two good options alongside
+SPOKEN -- without this fix, that encouragement would have made things worse, not better, every
+time the model actually took it. **Fix:** added `ShortBridge.cta_text: str = ""` (A2s's own
+authored short line, <=8 words, same convention as the SPOKEN case); `short_planner.py`'s
+`TASK_PROMPT` now requires filling it in for ONSCREEN/PLATFORM_LINK; `vertical_assembler.py`
+now renders it as a real on-screen badge on the payoff screen when present; a new advisory
+diagnostic (`check_bridge_cta_present`, AMBER not a hard gate, mirrors the existing
+`check_visual_states_present` pattern) flags an ONSCREEN/PLATFORM_LINK short that still shipped
+with an empty `cta_text`.
+
+**Tests:** `tests/planning/test_short_planner.py` (2 new -- `bridge_question` reaches the
+prompt; `cta_text` is required for ONSCREEN/PLATFORM_LINK), `tests/planning/test_candidate_finder.py`
+(1 new -- the `problem_fix` caution reaches SC's own prompt), `tests/html_synth/test_vertical_assembler.py`
+(4 new -- `cta_text` renders on the payoff screen for ONSCREEN; SPOKEN renders no separate
+badge; an empty `cta_text` renders nothing, not a crash; `cta_text` is HTML-escaped),
+`tests/verification/diagnostics/test_shorts.py` (3 new -- NONE/SPOKEN never need `cta_text`;
+ONSCREEN with an empty one is AMBER; PLATFORM_LINK with one filled in is GREEN). Full suite:
+**1086 passed, 16 deselected** (up from 1076).
+
+**Isolation check (user-requested):** confirmed none of today's shorts-pipeline changes touch
+long-form. `html_synth/vertical_assembler.py` is imported only by shorts-specific code
+(`verification/hard/vertical.py`, `verification/diagnostics/shorts.py`, the shorts branch of
+`run_pipeline.py`); long-form's own HTML pipeline uses the separate `html_synth/synthesizer.py`.
+`planning/short_planner.py`/`plan_shorts` is called only inside `run_pipeline.py`'s shorts
+block; long-form planning lives entirely in `planning/story_planner.py`. The one file genuinely
+shared between both (`html_synth/component_library.py`) has zero changes from this session's
+shorts work. Long-form's own test suites (`test_synthesizer.py`, `test_html_repair_loop.py`,
+`test_pipeline.py`, `test_story_planner.py`) all pass unchanged.
+
+**Not yet live-verified**: no run has followed any of today's fixes yet (ERR-072's included).
+
+---
+
+## ERR-074 — 3 more rounds of review, requested to find bugs blocking good shorts scripts; found one real content-quality gap per round
+
+**Date:** 2026-09-16 · **Severity:** major (Round 3 is a documented-vs-actual mismatch: a
+module's own docstring claimed a gap was already closed when it wasn't) · **Status:** fixed ·
+**Component:** `review/grounding_verifier.py`, `narration/short_generator.py`,
+`narration/factual_invariants.py`
+
+**Round 1 — C2b-sourced issues gave the shorts rewrite one vague, three-option instruction no
+matter which specific problem actually fired.** `grounding_verdicts_to_issues()` set
+`recommended_intent` to one fixed sentence ("ground this sentence in a real verified claim,
+restore the dropped qualifier, or narrow the claim back to its real scope") regardless of
+whether the real problem was `unsupported`, `qualifier_dropped`, or `scope_broadened`. Harmless
+for long-form: `editing/revision_planner.py`'s A3 re-synthesizes its own plan from the full
+issue (problem + recommended_intent + scene_ids) via its own LLM call, so a more specific
+`recommended_intent` can only help it, never hurt it. But shorts' B2s
+(`editing/short_targeted_rewrite.py`) has no such intermediate step -- its own docstring says
+`recommended_intent` verbatim IS the plan -- so a vague three-option instruction there left the
+rewrite genuinely not knowing which of the three to actually do. **Fix:** each of the three
+paths (plus the free-text `violation_code` path) now gets its own specific, actionable
+`recommended_intent`.
+
+**Round 2 — `micro_payoffs` reached B1s as raw payload data with zero instructions on where it
+belongs.** `narration/short_generator.py`'s payload has always included `plan.micro_payoffs`,
+but the `TASK_PROMPT` text never mentioned it once -- no guidance on whether to weave it into
+`mechanism` (as plan §20.4 intends: "an intermediate micro-payoff is allowed" during the
+mechanism beat) or say nothing about it at all. A model given a list of "smaller payoffs" with
+zero placement guidance could easily tack them onto the end after the central payoff -- exactly
+the recap/reserved-outro failure shape this pipeline has repeatedly had to fight (the entire
+motivation for Phase 20's bounded rewrite cycle). **Fix:** the `mechanism` bullet now explicitly
+says to weave `micro_payoffs` in there, as intermediate wins, never saved up for the end.
+
+**Round 3 — the shared factual-invariants fragment only delivers half of what its own docstring
+claims.** `narration/factual_invariants.py`'s module docstring says the shared
+`NARRATION_FACTUAL_INVARIANTS` fragment gives B2 and the shorts narrator "equivalent language"
+to long-form B1's own "detailed hedge/verification-status rules" -- but the actual fragment only
+ever ported HALF of B1's rules: the "never upgrade a claim's certainty" (overclaim) direction.
+B1's other, equally important rule -- "never hedge a verified technical claim with 'is believed
+to' / 'is thought to' / 'seems to'" -- was never carried over at all, despite the docstring's own
+claim that it was. This is the exact wishy-washy, underclaiming prose that works directly
+against the punchy, confident delivery a short needs, and nothing in B2 or the shorts narrator's
+own prompts guarded against it. **Fix:** added the missing hedge-on-a-verified-claim rule to
+the shared fragment, and corrected the module's own docstring to describe what was actually
+missing and now fixed.
+
+**Tests:** `tests/review/test_grounding_verifier.py` (1 new -- all three violation-type
+`recommended_intent`s are distinct and specific, none is the old generic catch-all),
+`tests/narration/test_short_generator.py` (1 new -- `micro_payoffs` placement guidance reaches
+the prompt), `tests/narration/test_factual_invariants.py` (new file, 2 tests -- both the
+overclaim and the hedge directions are covered). Full suite: **1090 passed, 16 deselected** (up
+from 1086).
+
+**Isolation:** `grounding_verifier.py` and `factual_invariants.py` are genuinely shared with
+long-form (unlike ERR-072/073's shorts-only files) -- confirmed both changes are safe there:
+the `recommended_intent` change only ever helps long-form's A3 (which re-synthesizes its own
+plan regardless of the exact wording it's given), and the added hedge rule is purely additive
+guidance matching what long-form's own B1 already enforces separately. Full suite green,
+including `tests/editing/test_targeted_rewrite.py` and `tests/narration/test_generator.py`
+(long-form's own B1/B2 tests), unchanged.
+
+**Not yet live-verified**: no run has followed any of today's fixes yet (ERR-072/073 included).
+
+---
+
+## ERR-075 — `check_grounding_policy`'s "UNVERIFIED never in the hook/ending" rule was silently disabled everywhere, not just for shorts
+
+**Date:** 2026-09-16 · **Severity:** major (a named, documented, unit-tested policy rule that
+has never actually fired once in the entire pipeline's real history, on either format) ·
+**Status:** fixed for shorts, confirmed but NOT fixed for long-form (see below) · **Component:**
+`orchestration/shorts_pipeline.py`
+
+**Where:** requested as one more thorough review round. `verification/hard/grounding.py`'s own
+module docstring states the real policy: "`always -> REJECTED is never narrated; UNVERIFIED
+never in the hook / central insight / a payoff / the ending / an important numeric result`" --
+and `check_grounding_policy(narration, claims, hook_scene_ids=None, ending_scene_ids=None)`
+genuinely implements the hook/ending half of that as real, working, unit-tested logic
+(`tests/verification/hard/test_grounding.py` exercises it directly and it works correctly).
+But EVERY call site in the entire codebase calls it with those two params left at their empty
+defaults: `orchestration/shorts_pipeline.py`'s own `_run_review()` (wired in only hours earlier,
+ERR-069), AND both of long-form's own call sites in `orchestration/pipeline.py`. An
+OPTIONAL-importance UNVERIFIED claim with a hedge is otherwise legitimately narratable
+(`_claim_allows_narration`'s own OPTIONAL+hedge exception) -- but the policy explicitly says
+never in the hook or the ending regardless, and nothing has ever enforced that, on any video,
+in this pipeline's history.
+
+**Fix (shorts only):** `orchestration/shorts_pipeline.py`'s `_run_review()` now calls
+`check_grounding_policy(narration, scoped_claims, hook_scene_ids={"hook"},
+ending_scene_ids={"payoff"})` -- unambiguous and free for shorts, since a short's segments are
+always exactly these four fixed ids, unlike long-form's dynamic beat/scene ids.
+
+**Deliberately NOT fixed for long-form in this pass:** the same gap is real at both of
+`orchestration/pipeline.py`'s call sites, but identifying "the hook scene(s)" and "the ending
+scene(s)" for a long-form video requires real lookup logic against `StoryBeat`/`ScenePlan`
+(there's a `first_beat_id`-based pattern already used for `_hook_context()` that could inform
+this, but getting the ending scene(s) right needs its own care) -- a bigger, separate change
+better done as its own reviewed pass with its own live verification, not folded into a
+shorts-focused review. Flagged as an open item below rather than guessed at here.
+
+**Deeper, still-open gap, not fixed:** the module's own docstring names FIVE protected
+locations (hook, central insight, a payoff, the ending, an important numeric result) but
+`check_grounding_policy`'s actual signature only ever had parameters for two of them (hook,
+ending) -- "central insight" and "important numeric result" have no corresponding parameter or
+enforcement anywhere, and never did. Also an open item below.
+
+**Tests:** `tests/orchestration/test_shorts_pipeline.py` (1 new -- an UNVERIFIED+OPTIONAL claim
+with a hedge in the hook segment, which `_claim_allows_narration` alone would permit, is now a
+hard failure via `unverified_in_hook_or_ending`). Full suite: **1091 passed, 16 deselected**
+(up from 1090).
+
+**Not yet live-verified**: no run has followed this fix yet.
+
+---
+
+## ERR-076 — Long-form video: `check_grounding_policy`'s "UNVERIFIED never in the hook/ending" rule is still unenforced (confirmed in ERR-075, not yet fixed for this format)
+
+**Date:** 2026-09-16 · **Severity:** major (same real gap as ERR-075, on the format that
+actually ships as the primary video, not the derived shorts) · **Status:** OPEN, not fixed ·
+**Component:** `orchestration/pipeline.py`
+
+**Where:** `verification/hard/grounding.py::check_grounding_policy(narration, claims,
+hook_scene_ids=None, ending_scene_ids=None)` correctly implements "an UNVERIFIED claim must
+never be narrated in the hook or the ending, even one that would otherwise be legitimately
+narratable with a hedge" -- real, working, unit-tested logic
+(`tests/verification/hard/test_grounding.py`). ERR-075 fixed this for shorts (an unambiguous
+one-line change, since a short's segments are always exactly `hook`/`setup`/`mechanism`/
+`payoff`) but found the identical gap at BOTH of `orchestration/pipeline.py`'s own call sites
+for long-form:
+- `_run_review_block()`'s own `grounding_violations = check_grounding_policy(narration,
+  claims) + check_numeric_fidelity(narration, claims)`
+- the post-REVISE branch's own `grounding_violations = check_grounding_policy(narration,
+  claims)` (used to build the `RevisionPlan` via A3)
+
+Neither passes `hook_scene_ids`/`ending_scene_ids`, so an UNVERIFIED-but-hedged claim can
+legitimately land in a long-form video's own hook or ending today, with nothing catching it --
+the exact placement plan §9's Factual gate exists to forbid.
+
+**Why not fixed alongside ERR-075:** unlike a short's fixed four segment ids, long-form's
+scene ids are dynamic per video. This module already has the right building block, though:
+`_hook_context()` (same file, `orchestration/pipeline.py`) computes `hook_scene_ids` exactly
+this way -- `{s.scene_id for s in plan.scene_plan if s.beat_id == plan.beats[0].beat_id}` --
+on the reasoning that "the first-positioned beat IS the opening by construction" (matches
+`verification/diagnostics/pacing.py`'s own first-beat fallback). The symmetric case for
+`ending_scene_ids` is plausibly `plan.beats[-1].beat_id` (the last-positioned beat is the
+ending by the same construction argument) -- but this hasn't been verified against a real
+`StoryPlan`/`ScenePlan` (e.g. whether a CTA-only trailing beat should count as "the ending" for
+this rule's purposes, or whether the actual payoff beat sits one before it), so it's proposed
+here as the likely shape of the fix, not implemented.
+
+**Fix (not yet applied):** thread real `hook_scene_ids`/`ending_scene_ids` (likely via a small
+shared helper next to `_hook_context()`) into both call sites above, mirroring ERR-075's shorts
+fix exactly once the ending-beat identification is confirmed correct against real long-form
+plans.
+
+**Tests:** none yet -- no code changed for long-form in this entry, logged for tracking only,
+per explicit request to keep this as its own reviewed, live-verified pass rather than bundled
+into a shorts-focused session.
+
+---
+
+## ERR-077 — Grounding-policy hard failures never reached the shorts targeted-rewrite mechanism at all (found live, v10 verification run)
+
+**Date:** 2026-09-16 · **Severity:** major (a FAILed short with a real, nameable defect had
+zero chance of being fixed by the one mechanism that exists to fix it) · **Status:** fixed ·
+**Component:** `orchestration/shorts_pipeline.py`
+
+**Where:** the v10 live verification run (`--resume` against the v01 checkpoint, after
+ERR-072 through ERR-076). Short #1 FAILed with 4 `ungrounded_factual_sentence` hard failures
+(2 in `hook`, 1 each in `setup`/`mechanism`) but `revisions_used: 0` -- the bounded
+targeted-rewrite cycle (Phase 20) never even attempted a fix. Root cause: `_run_review()`
+computed `check_grounding_policy`/`check_numeric_fidelity`'s `GroundingViolation`s (a plain
+dataclass: `scene_id`, `sentence_index`, `code`, `detail` -- no `severity`, no `scene_ids`
+list) and returned them as a THIRD, separate value alongside `critique_issues`, formatted
+directly into `hard_failures` by `_format_hard_failures`. But `run_short()`'s rewrite trigger
+(`critical_issues = [i for i in critique_issues if i.severity == "critical"]`) only ever
+looks at `critique_issues` -- `GroundingViolation`s, never being `CritiqueIssue`s, could never
+appear there, no matter how many piled up. This exact gap was already named in this module's
+own docstring history (ERR-069, ERR-075): *"Deliberately NOT yet fed into the Phase 20
+targeted-rewrite mechanism... extend that once a live run actually shows one of these firing
+on a real short, not ahead of that evidence."* v10 is that evidence.
+
+**Fix:** added `_grounding_violation_to_issue()`, converting each `GroundingViolation` into a
+real `CritiqueIssue` (`severity="critical"`, `scene_ids=[v.scene_id]`, a per-code
+`recommended_intent` -- `ungrounded_factual_sentence`/`grounding_ref_unknown_claim`/
+`unverified_in_hook_or_ending`/`numeric_drift` each get their own specific actionable
+instruction; `grounding_policy_violation` reuses its own already-specific `detail` text rather
+than a second static sentence, matching ERR-074's own "give the rewrite something concrete"
+principle). `_run_review()` now folds these into the single `critique_issues` list it returns
+(matching its own type hint, `tuple[list[SceneNarration], list[CritiqueIssue]]`, for the first
+time -- it previously returned a 3-tuple despite the 2-tuple hint). `_format_hard_failures()`
+no longer takes a separate `grounding_violations` parameter, since these defects now reach
+`hard_failures` via the existing critical-severity `critique_issues` path instead of a
+redundant, now-removed direct-formatting line.
+
+**Tests:** `tests/orchestration/test_shorts_pipeline.py` -- the 4 existing grounding-hard-failure
+tests (`test_grounding_scope_violation_is_a_hard_failure`,
+`test_an_ungrounded_factual_sentence_is_a_hard_failure`,
+`test_a_drifted_number_against_the_cited_claim_is_a_hard_failure`,
+`test_an_unverified_claim_in_the_hook_is_a_hard_failure_even_with_a_hedge`) now correctly
+trigger a real rewrite cycle (previously impossible) -- updated with a no-op rewrite response
+and doubled CM entries for the resulting re-review, plus one new assertion
+(`result.revisions_used == 1`) directly proving the fix. `make_agents()`'s own defaults for
+C2b/C1s/C4s-escalation were also doubled (matching the existing `ColdHookVerdict` x2
+precedent) since any grounding violation now triggers a real second `_run_review()` pass, even
+in tests that never touch grounding directly. Full suite: **1092 passed, 16 deselected**
+(same count as before -- fixes to existing tests, no new test functions needed since the new
+assertion was added to an existing test).
+
+**Not yet live-verified**: no run has followed this fix yet.
+
+---
+
+## ERR-078 — A call that exceeded the budget hard cap vanished from usage.jsonl entirely (found live, Phase 17 interrupt-and-resume verification)
+
+**Date:** 2026-09-16 · **Severity:** major (the single most expensive call in a crashed run was
+silently missing from its own cost audit trail -- directly undermines the accuracy Phase 17's
+own resume feature and Phase 18's own budget hardening both depend on) · **Status:** fixed ·
+**Component:** `llm/client.py`
+
+**Where:** live-verifying Phase 17.1 (deliberately interrupting a real run via a tight
+`--loop-budget-usd`, then `--resume`-ing it). The first interrupt (`--loop-budget-usd 0.15`)
+correctly raised `BudgetExceeded` with a real gpt-5.6-sol A2 call reported at $0.266102 -- but
+`usage.jsonl` showed only the 3 calls before it, totaling $0.1656. Root cause:
+`call_structured_paid()` called `budget.record_spend(result.billed_microusd)` (which raises
+`BudgetExceeded` past the hard cap) BEFORE constructing and appending the `UsageRecord` to the
+ledger -- so the exact call that crashed the run never reached `self.ledger.append(record)` at
+all. The cost was real (billed by the provider) and briefly visible in the exception's own
+message text, but nowhere else -- not in `usage.jsonl`, not in `PipelineState.loop_spent_microusd`
+(which also never got the chance to persist it, since the crash is an uncaught exception, not a
+graceful checkpoint-then-exit).
+
+**Fix:** reordered `call_structured_paid()` to build and append the `UsageRecord` immediately
+after the real API result is known, unconditionally, before `budget.record_spend()` gets a
+chance to raise and lose it. A call that pushes spend over the cap still really happened and
+really cost money; the ledger's job is to be the accurate record of that, not just of calls
+that stayed under budget.
+
+**Tests:** `tests/llm/test_client.py` (1 new -- a call configured to exceed a deliberately tiny
+hard cap still appears in `ledger.read_all()` with its real `billed_microusd`, even though the
+call itself raises `BudgetExceeded`). Full suite: **1093 passed, 16 deselected** (up from 1092).
+
+**Live-verified the same day**: a second real interrupt (`--loop-budget-usd 2.0`, this time
+crashing inside a C2b call at $2.050487 cumulative) confirmed the fix directly -- `usage.jsonl`'s
+own total ($2.0505) now exactly matches the exception's own reported cumulative spend, unlike
+the first crash where they diverged by the missing call's cost.
+
+**Not fixed as part of this entry, deliberately out of scope**: `PipelineState.loop_spent_microusd`
+still isn't updated on an uncaught mid-loop crash (only `usage.jsonl` is now accurate) -- a
+resumed run's own budget bookkeeping still starts the loop's `BudgetCounter` at whatever the
+last successful checkpoint recorded (0, if the crash happened before any stage-boundary
+checkpoint), not the true amount spent on the failed attempt's own partial loop work. This is
+the same gap Phase 17.2 (STORY_IMPROVEMENT_PLAN.md) already covers under "cycle-level
+checkpoint inside the story+narration loop" -- the live-verify that surfaced this bug is also
+the evidence informing that phase's own build-or-defer decision, not a reason to patch it here
+ahead of that decision.
+
+---
+
+## ERR-079 — C2a claim verification never had a real evidence source; native Gemini web search wired in, one real "empty content" bug found in the smoke test itself
+
+**Date:** 2026-09-16 · **Severity:** major (an entire verification tier -- the local/web
+evidence broker -- has been non-functional on every real run in this project's history) ·
+**Status:** fixed · **Component:** `llm/backends/litellm_backend.py`, `llm/client.py`,
+`agents/base.py`, `facts/verify.py`
+
+**Where:** while investigating why claim C040 ("self-attention without positional information
+is permutation equivariant" -- `provenance_status=SOURCE_EXPLICIT`, `evidence=[]`) stayed
+UNVERIFIED despite being a well-documented mathematical fact (STORY_IMPROVEMENT_PLAN.md
+Phase 23's own open question). Traced the real cause: `facts/verify.py`'s evidence broker
+tries `references_dir` first (confirmed empty -- `src/config/references/` has zero real
+files) then an optional `web_backend` that `run_pipeline.py`'s CLI never actually passes
+(`None` on every real invocation, confirmed by direct read). Checked whether either LLM
+backend could do this natively instead: `llm/backends/claude_cli.py` passes a bare `--tools`
+flag but also `--max-turns 1`, leaving no room for a real search round-trip -- not functional
+as invoked. `llm/backends/litellm_backend.py` passed no `tools=` at all. But
+`litellm.supports_web_search()` (confirmed by direct call) returns `True` for both Gemini
+models this pipeline already uses (`gemini-3.1-pro-preview`, `gemini-3.6-flash`) -- the exact
+model C2a's own `review_lead_strong` already runs on -- via a real, provider-hosted, single-
+call tool (no multi-turn orchestration needed), schema confirmed by reading litellm's own
+Gemini tool-transformation source: `tools=[{"googleSearch": {}}]`.
+
+**Fix:** `LiteLLMBackend.call()` gained `enable_web_search: bool = False`, passing
+`tools=[{"googleSearch": {}}]` when set; threaded up through `LLMClient.call_structured_paid()`
+and `Agent.run()` (which raises `ValueError` if set on a subscription-lane agent, matching the
+existing `images` guard, since Claude CLI's `--max-turns 1` makes it genuinely non-functional
+there). `facts/verify.py`'s own first-pass C2a verdict call now sets it, with `TASK_PROMPT`
+updated to tell the model it has a real search tool and should use it rather than guessing
+from internal recall.
+
+**Real bug found BY the live smoke test itself, before this ever reached the real pipeline:**
+the first smoke-test run (`max_tokens=200`, an ad-hoc guess) came back with completely EMPTY
+content -- 382 of 386 output tokens went to hidden reasoning. The exact same "reasoning eats
+the whole token budget" failure mode already documented elsewhere in this project (ERR-021's
+gpt-5.6-sol A2 bug) recurring here on Gemini's strong tier once search is added on top of
+reasoning. Re-ran with the REAL production config (`max_tokens` left at the backend's actual
+default of 4096, `reasoning_effort="low"` -- the exact value `gemini_review_strong` sets in
+`config/models.yaml`) and it worked correctly: `2026-09-16.` came back for "what's today's
+exact date" -- a question the model cannot answer from training data alone, real proof the
+search actually happened, not a plausible-sounding guess. Cost: $0.0188 for that one call
+(278 in / 357 out, 333 of which were reasoning) -- confirms the real, separate per-search
+billing is small but real, as the plan anticipated.
+
+**Tests:** `tests/llm/test_litellm_backend.py` (2 new mocked -- default sends no `tools` key,
+`enable_web_search=True` sends the exact right schema; 1 new `@pytest.mark.integration` live
+smoke test, not run by default), `tests/agents/test_base.py` (3 new -- forwards to the paid
+backend only, defaults to `False`, a subscription-lane agent raises on `enable_web_search=True`
+the same way it does for `images`), `tests/llm/test_client.py` (2 new -- reaches the paid
+backend, defaults to `False`), `tests/facts/test_verify.py` (1 new -- the initial C2a verdict
+call sets it). Full suite: **1122 passed, 17 deselected** (up from 1114).
+
+**Not yet live-verified against the full pipeline**: the smoke test confirms the mechanism
+works in isolation; a real C2a run against the actual source (checking whether C040 or an
+equivalent claim actually moves from UNVERIFIED to VERIFIED with real evidence attached) is
+still pending.
+
+---
+
+## ERR-080 — Shorts repeat the exact same template transition phrase ("the real fix is/works") across DIFFERENT shorts, in DIFFERENT runs
+
+**Date:** 2026-09-16 · **Severity:** minor (a repetition tell, not a factual or structural
+defect) · **Status:** fixed · **Component:** `narration/short_generator.py`
+
+**Where:** while planning STORY_IMPROVEMENT_PLAN.md Phase 23's shorts-quality continuation,
+read 6 real shorts across two separate runs (v08, v10). 4 of them -- all `problem_fix`
+micro-arc -- use "the real fix is..." / "the real fix works..." as the transition into the
+actual mechanism, verbatim or near-verbatim, across shorts about completely unrelated topics
+(encoder-decoder attention, positional encoding, causal masking). This is a more damaging
+version of the causal-connector/repeated-device tell already fixed earlier in this same phase
+(which caps repetition only *within* one script) -- this repeats *across* a channel's own
+output, which a real viewer who watches more than one short is more likely to notice than a
+single video's internal repetition, and nothing in the prompt named this specific phrase as
+something to avoid.
+
+**Fix:** `short_generator.py`'s `problem_fix` arc-specific guidance now names "the real fix
+is/works" directly as a phrase the model has been observed defaulting to, and instructs it to
+vary the transition into the mechanism every time (naming the mechanism directly, stating what
+changes, or asking what the fix would need to do) -- the same "name the specific confirmed
+pattern" style already used for this file's jargon-hook and empty-hook fixes.
+
+**Tests:** `tests/narration/test_short_generator.py::test_prompt_warns_against_the_real_fix_template_phrase`.
+
+**Live-verified 2026-09-16** (`video-01-attention-phase23-verify/runs/v03`): confirmed fixed --
+checked all 5 shorts produced in that run's mechanism transitions, zero instances of "the real
+fix is/works." The same run's bridge/goal selection also showed partial movement (see Phase 23
+section E): `goal` stayed 100% DISCOVERY, but `bridge.mode` moved off 100% NONE to 100% SPOKEN,
+a real change from the two prior 0%-variation runs.
+
+---
+
+## ERR-081 — Native web search (ERR-079's own fix) silently dropped 21/80 claims from C2a verification via response truncation
+
+**Date:** 2026-09-16 · **Severity:** major (defeats the exact fix ERR-079 shipped -- claims
+came back UNVERIFIED again, now for a NEW reason) · **Status:** fixed · **Component:**
+`facts/verify.py`
+
+**Where:** live-verifying Phase 23 (`video-01-attention-phase23-verify/runs/v03`). C2a batches
+claims 40 at a time (`DEFAULT_BATCH_SIZE`) to `gemini_review_strong`. ERR-079 enabled native
+web search on this call, which makes each claim's verdict far more verbose (a real search plus
+reasoning per claim, not just a judgement). Both real batch calls in this run came back at
+`output_tokens=4092` -- 4 tokens short of `LiteLLMBackend`'s hardcoded `max_tokens=4096`
+default -- truncating the JSON response before the model finished writing verdicts for the
+tail of each batch. Confirmed via the claim registry directly: batch 1 (claims C001-C040) lost
+its last 4 (C037-C040); batch 2 (C041-C080) lost its LAST 17 (C064-C080). **21 of 80 claims
+(26%) got zero real verification**, silently falling back to `Claim`'s own pristine defaults
+(`verification_status="UNVERIFIED"`, `evidence=[]`) -- indistinguishable, with no error and no
+log line, from a claim the model genuinely couldn't verify. This directly explains most of that
+run's 12 hard failures and made the run's true technical-grounding score unmeasurable.
+
+**Fix:** `verify_claims_with_llm`'s two `review_lead.run()` calls (the initial verdict pass and
+the evidence re-verify pass) now pass an explicit `max_tokens=12000`, mirroring
+`openai_story_strong_gpt56`'s own precedent (`config/models.yaml`) that for a reasoning model
+`max_tokens` is a combined ceiling over hidden reasoning + visible output, not just the visible
+JSON -- confirmed the override chain already existed end to end
+(`Agent.run()` → `LLMClient.call_structured_paid()` → `LiteLLMBackend.call()`), this was a
+config gap at one call site, not a missing capability. Also added
+`find_claims_with_no_verdict(claims)`: every arithmetic-resolved AND every LLM-resolved claim
+(including a legitimate UNVERIFIED verdict) always gets at least one `VerificationEvidence`
+attached, so a claim reaching the final registry with BOTH fields still at their untouched
+defaults can only mean no verdict was ever recorded for it -- for whatever reason, not just
+this specific 4096 ceiling. Wired into `run_pipeline.py` right after `_build_claim_registry`,
+logging any dropped claim ids by name instead of silently degrading (same "measure and
+surface" precedent as ERR-078's ledger-logging fix).
+
+**Tests:** `tests/facts/test_verify.py` -- 2 new confirming both calls pass the raised
+`max_tokens`, 4 new for `find_claims_with_no_verdict` (a dropped claim is found; a legitimate
+UNVERIFIED verdict is not flagged; a verified claim is not flagged; empty input). Full suite:
+**1157 passed, 17 deselected** (up from 1149).
+
+**Not yet live-verified against the full pipeline**: needs one more live run (resumed from
+`v03`'s own checkpoint, per this project's "resume, don't restart" cost discipline) to confirm
+`usage.jsonl` shows no more dropped-claim warnings and the true grounding hard-failure count.
+
+---
+
+## ERR-082 — B1's narration call timed out at 300s, twice in a row, on the session's own final live-verify run
+
+**Date:** 2026-09-17 · **Severity:** major (blocked the final live-verify run entirely, twice)
+· **Status:** fixed · **Component:** `narration/generator.py`
+
+**Where:** the Phase 26/27/28 final live-verify run (`video-01-attention-phase23-verify`).
+`generate_narration` (B1) makes exactly ONE `claude -p` subscription-CLI call for the WHOLE
+script's narration, by design (the module's own docstring: "batch, don't loop"). Both a fresh
+run (`v06`) and its resume (`v07`, same source/topic, skipping only the already-checkpointed
+claims/source_brief stages) hit the identical failure at the identical call site
+(`narration/generator.py:195`): `llm.backends.claude_cli.ClaudeCliInvocationError: claude -p
+timed out after 300s`, each time only after `claude_cli.py`'s own 3-attempt tenacity retry was
+fully exhausted (so not a single transient blip -- 3 real attempts per run, 2 runs, 6 total
+timeouts at the same 300s ceiling). Confirmed by direct traceback inspection this was B1
+specifically, not A2/A2b (which succeeded both times before B1 failed).
+
+**Fix:** raised B1's own `timeout_s` override from 300 to 600 in `generate_narration`'s
+`narration_lead.run(...)` call -- a full-script one-shot narration generation is exactly the
+"potentially large call" the existing test for this line already names, and 300s had real,
+repeated (not speculative) evidence of being too tight for it. Left `short_generator.py`'s own
+180s (a much smaller single-short output, never implicated) and every other call site
+unchanged -- scoped to the one call site with real evidence, not a blanket timeout increase.
+
+**Tests:** `tests/narration/test_generator.py::test_uses_a_longer_timeout_for_this_potentially_large_call`
+updated to assert 600. Full suite: **1240 passed, 17 deselected** (unchanged count, one
+assertion updated).
+
+**Update 2026-09-18, partially re-verified live:** the 600s fix worked -- the resumed run's
+B1 call succeeded on the next attempt (`v08`), progressing well past it (into `run_short`
+territory) before hitting a DIFFERENT, unrelated failure (`claude -p failed (exit 1)`, empty
+stderr -- already a known, previously-documented-as-transient CLI failure signature per
+`claude_cli.py`'s own 2026-09-11 comment, not a new bug; resolved by resuming again with no
+code change). The NEXT resume (`v09`) then got further still (full story+narration loop,
+H/HV, SC, 2 shorts all completed) before hitting a THIRD, structurally identical timeout: `B2s`
+(`editing/short_targeted_rewrite.py:175`) timed out at its own 120s ceiling, again only after
+all 3 retries exhausted. Same root cause as the original finding, different call site --
+raised this call's `timeout_s` from 120 to 300 too, matching long-form's own analogous B2
+rewrite call (`editing/targeted_rewrite.py`), which already sits at 300s for the identical
+reason. Test: `tests/editing/test_short_targeted_rewrite.py::test_uses_a_300s_timeout_matching_long_forms_own_analogous_rewrite_call`.
+Full suite: **1241 passed, 17 deselected**. Each failed attempt from `v06`'s checkpoint
+re-spends the loop's own real cost (~$1.77 for the story+narration loop alone, confirmed from
+`v09`'s own log) since only `claims`/`source_brief` are checkpointed -- the loop/H/HV/shorts
+sequence is not resumable mid-way, so a persistent timeout at any call site inside it forces a
+full, real-money replay of everything after it on every retry. Still not fully clean end to
+end; the next resume is the real test of whether both fixes together get a run all the way to
+promotion.
+
+---
+
 ## Open items (not yet bugs, flagged for future attention)
 
+- **`check_grounding_policy`'s docstring names 5 protected locations, the function only
+  ever implemented 2** (see ERR-075) -- "UNVERIFIED never in... central insight... an
+  important numeric result" has no corresponding parameter or enforcement anywhere in the
+  function, for either format. Needs a real design pass on how to identify "the central
+  insight sentence(s)" or "an important numeric result" mechanically before this can be
+  implemented, not a quick parameter addition.
 - **A2b's per-beat expansion doesn't always self-track its own new concepts within one
   call** (see the V2 Phase 3 entry above) -- a beat's own multiple scenes can still repeat
   a concept introduced earlier in the SAME beat's expansion, even though the ledger
@@ -2116,3 +3593,11 @@ actually reduced with the fix in place.
   own docstring) — it's always executed as a scoped compress-rewrite, never an actual
   removal from `plan.scene_plan`, to avoid leaving the plan's own word-budget target
   inconsistent with what was actually narrated.
+- **Only CM/C2b's batch loops were parallelized (ERR-066), not the cold/continuing-viewer
+  cascade (C4a-d)** — that cascade is Haiku-CLI-subprocess-based, not paid-API/HTTP, and this
+  session's own earlier latency investigation found real subprocess contention when two full
+  pipelines ran in parallel; parallelizing a local subprocess cascade carries more contention
+  risk than parallelizing HTTP calls, so it was deliberately left sequential pending evidence
+  CM/C2b's fix alone isn't enough. `MAX_STORY_REPLANS=2` (raised from 1, ERR-066) is still a
+  finite bound, not a guarantee — a systematically bad A2 could in principle exhaust it again;
+  no live evidence yet that 2 is insufficient.
