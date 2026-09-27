@@ -3328,6 +3328,502 @@ check) precedes the live-verify run.
 
 ---
 
+## Phase 29 — Opus 5.5 story_lead comparison: rendering, component variety, and narration voice (P1)
+
+**Status: all 4 items complete, 2026-09-24.** Triggered by adding `claude-opus-5-5` as an
+interchangeable `story_lead` "strong"-tier alias (`--story-lead-alias opus`) and running a
+real side-by-side comparison against the existing `openai_story_strong_gpt56` (gpt-5.6-sol)
+default, both against the identical source (`video-01-attention-coherent-story.html`), same
+downstream code. Opus's script was substantially more technically complete (mentions "dot
+product" and the √d_k scaling; gpt-5.6-sol's mentions neither, and C1 flagged it as a
+critical "vacuous teasers, no payoff" failure) but scored worse on 3 dimensions -- this
+phase root-caused and fixed each one. Consulted the bundled `claude-api` skill's Opus 5.5
+migration guide for model-specific guidance; its one directly load-bearing finding: Opus
+5.5 "responds well to instructions that name specific patterns to avoid" rather than vague
+ones (its own example: "avoid a generic AI look" doesn't work; naming exact patterns does)
+-- informed items 3 and 4 below.
+
+### Findings and fixes
+
+1. **Visual component variety -- root cause confirmed, fixed.** Opus's plan tagged 6 of 13
+   beats (46%) `archetype_role="problem_fix"`, and `problem_fix` in
+   `config/design_system.yaml`'s `story_roles` allowed only `[step_list, callout_warn]` --
+   zero diagram-capable options, the one role Phase 27 item 1's own `diagram_card` widening
+   missed. A build-archetype video's problem->fix chain is very often itself a mechanism/
+   pipeline/equation -- exactly Phase 27's own reasoning, just for a role it didn't reach.
+   Fix: added `diagram_card` to `problem_fix`. Test:
+   `tests/html_synth/test_component_library.py::test_diagram_card_is_available_to_problem_fix_too`.
+2. **Formula-stage carry-forward (render issues) -- root cause confirmed, fixed.** H
+   (`html_synth/synthesizer.py::synthesize_beat_visual`) never received `formula_stages` or
+   any scene's `formula_stage_id` in its payload at all -- `verification/hard/
+   formula_consistency.py` checks the rendered content for an earlier-registered stage's
+   exact `expression`/`values` afterward, but nothing ever told H what that check would
+   require. Not Opus-specific (a latent gap for any story_lead), just exercised harder by a
+   plan that engages the running formula more. Fix: `_expected_formula_stage_by_scene()`
+   computes the SAME "most advanced stage reached so far" the check itself computes,
+   deterministically (duplicated rather than imported -- `formula_consistency.py` already
+   imports `BeatVisual` from `synthesizer.py`, so the reverse import would cycle); threaded
+   into each scene's payload as `required_formula_stage`, plus an explicit prompt
+   instruction to include it verbatim. Tests: 4 new in `tests/html_synth/test_synthesizer.py`.
+3. **Rendered page over the word-count band -- root cause confirmed, fixed.** Opus's spoken
+   narration (2,249 words) was actually comfortably WITHIN its own deterministic per-scene
+   word budgets (90% of the 2,501-word allocation, only 2 scenes >30% over); gpt-5.6-sol's
+   narration used only 56% of the identical budget (1,402 words) -- consistent with finding
+   1's "vacuous teasers" critique. The render-side word-count band
+   (`verification/hard/render.py::READER_STANDALONE_WORD_BAND`, 2000-3200) was tuned against
+   scripts shaped like gpt-5.6-sol's thinner ones; H (a stateless per-beat call) had zero
+   numeric awareness of that whole-page ceiling at all, only qualitative "minimum needed"
+   language. Fix: `_screen_text_word_budget_by_beat()`, a deterministic proportional
+   allocator mirroring `planning/beat_word_budget.py`'s own pattern (proportional to scene
+   count, band midpoint 2,600 as target), threaded into the payload as
+   `beat_screen_text_word_budget` with an explicit prompt instruction to treat it as a hard
+   ceiling. Tests: 2 new in `tests/html_synth/test_synthesizer.py`.
+4. **Narration voice repetition ("so"-opener chaining) -- confirmed NOT Opus-specific,
+   tightened.** Both the Opus run (major: causal_flow + repetition) and the gpt-5.6-sol run
+   (major: recurring "so"-openers) hit this -- `narration_lead` is unchanged Sonnet in both,
+   so this is a shared `narration/generator.py::TASK_PROMPT` gap, not a story_lead effect.
+   The existing instruction ("a script where 'so' opens several sentences in a row reads as
+   formulaic") is qualitative and had already proven insufficient on two independent real
+   runs. Fix: added a hard numeric cap (no more than 2 "so"-openers and no more than 2
+   "because"/"since"-openers across the WHOLE narration, no two consecutive sentences
+   sharing a connector or rhetorical device) plus a concrete rewrite example. Test:
+   `tests/narration/test_generator.py::test_prompt_gives_a_hard_numeric_cap_on_connector_repetition`.
+
+**Full suite: 1261 passed, 17 deselected** (up from 1253 before this phase). Not yet
+live-verified against a real run -- the next comparison run (either alias) is the real test
+of whether all 4 fixes hold together.
+
+**Live-verify update, 2026-09-25:** a fresh Opus 5.5 run (`v05`) confirmed all 4 fixes hold
+together against a real run: 0 render issues (was 4), 3006 words (was 3377, over the 3200
+cap), `diagram-card` usage doubled (30 vs. 15, `problem_fix` beats now use it), and only 1
+"so"-opener across 138 sentences (was a flagged major issue). The story loop still FAILed,
+but for an unrelated, pre-existing reason (~100 `grounding_policy_violation`s against claims
+already sitting UNVERIFIED in the checkpoint's claim registry -- confirmed NOT a regression
+from these fixes: both this run and the earlier comparison run resumed the identical,
+unchanged claims checkpoint, so the difference is which claims THIS run's plan happened to
+cite, not the verification data itself). A genuine, unrelated finding, not yet investigated.
+
+### Item 5 (found via section-by-section scoring, not part of the original 4): hook open_loop
+
+A full section-by-section score of Opus vs. gpt-5.6-sol's real output (12 sections, both
+videos) found `hook.open_loop` (set by A2, `planning/story_planner.py`) was never once
+referenced by either `planning/scene_expander.py` or `narration/generator.py` -- a real
+"computed, never consumed" gap distinct from the report-emission version of this bug class
+already fixed 4 times elsewhere this session. One real script happened to close its hook on
+the literal `open_loop` question (the stronger hook craft -- ends on real, unresolved
+curiosity); the other closed on a declarative restatement of the answer instead, purely by
+chance, since nothing ever told the writer which to prefer. Fixed: `narration/generator.py`'s
+`TASK_PROMPT` now explicitly instructs the hook beat's last scene to end on `open_loop`,
+voiced as a genuine open question, never a resolved answer -- written generically (no
+topic-specific quotes baked in, matching this project's own overfitting-guard discipline).
+Test: `tests/narration/test_generator.py::test_prompt_instructs_ending_the_hook_on_its_own_open_loop_question`.
+Full suite: **1263 passed, 17 deselected.** Applies to either story_lead alias equally
+(narration_lead, not story_lead, owns this prompt) -- not Opus-specific, just found via the
+comparison. Not yet live-verified.
+
+---
+
+## Phase 30 — Critical review + root-cause plan: retention, content delivery, narration (all items implemented, 2026-09-25)
+
+**Status: all items implemented, 2026-09-25.** Triggered by a critical, evidence-based review of the
+real `v05` Opus 5.5 run's long-form video + all 5 shorts, scored for viewer retention,
+content delivery, and human narration. Every finding below was then root-caused by a
+dedicated investigation (4 parallel deep-dives + direct verification against the real code),
+not guessed at. Ordered by priority; each item names the exact fix, not just the symptom.
+
+### P0 -- blocks everything else, fix first
+
+**1. Silent partial-batch claim-verification loss.** Root cause, confirmed against real
+`usage.jsonl`/checkpoint data: `facts/verify.py::verify_claims_with_llm` sends a 40-claim
+batch (`DEFAULT_BATCH_SIZE`) to Gemini; a real batch1 call came back with only 10 of 40
+verdicts -- schema-valid (`ClaimVerdicts.verdicts` has no count constraint tying it to the
+batch sent), NOT truncated (completion tokens well under the 12000 ceiling that already
+fixed the unrelated ERR-081 truncation bug) -- Gemini just silently stopped early. The 30
+un-verdicted claims fall back to `Claim`'s pristine defaults (`UNVERIFIED`, `evidence=[]`).
+`find_claims_with_no_verdict` correctly DETECTS this (confirmed: it's wired into
+`run_pipeline.py:238-241` right after claim registry construction) but only logs a
+`WARNING` and continues -- the corrupted registry gets checkpointed as "claims" complete
+immediately after, riding along unchanged into every downstream stage and every future
+`--resume` off that checkpoint. This single upstream gap is the direct cause of ~100
+long-form `grounding_policy_violation` hard failures and blocked 3 of 5 shorts (2, 3, 4) in
+the real `v05` run.
+   - [x] `verify.py::_verify_batch_with_retry` (new): re-asks ONLY the missing subset,
+         up to `MAX_VERDICT_RETRIES=2` extra attempts (3 total), merging whatever verdicts
+         were actually returned across every attempt. Tests: 3 new in `tests/facts/
+         test_verify.py` (recovery on retry, the 2 pre-existing "never dropped silently"
+         tests updated to confirm the fallback still holds once retries are genuinely
+         exhausted, and a payload test confirming a retry only re-sends the missing ids).
+   - [x] `run_pipeline.py:238-241` now `raise ValueError(...)` when `find_claims_with_no_
+         verdict` is non-empty, instead of only logging -- by this point a claim has
+         already survived 3 real attempts, so this is a genuine, rare residual failure
+         worth stopping for. Test: `tests/orchestration/test_run_pipeline.py::
+         test_no_verdict_claims_now_raises_instead_of_only_logging`.
+   - [ ] `DEFAULT_BATCH_SIZE` left at 40, deliberately -- the retry mechanism directly
+         addresses the root cause (a batch that comes back incomplete now gets its missing
+         subset re-asked, which already shrinks the effective batch each retry), making a
+         separate batch-size reduction redundant defense-in-depth rather than a needed fix.
+   - [x] Folded into P2 item 5 below (`factual_invariants.py`'s importance-gating rule) --
+         same underlying fix, implemented there rather than duplicated here.
+
+### P1 -- structural gaps (a prompt instruction alone won't hold)
+
+**2. Shorts `problem_fix` micro-arc: A2s violates its own explicit instruction.** Not a
+writer-prompt weakness -- `narration/short_generator.py`'s writer prompt is already
+explicit and mature ("ENACT a failed attempt, don't explain it away conceptually"). The
+real bug is upstream: `planning/short_planner.py`'s own `TASK_PROMPT` explicitly requires
+`setup` to name a concrete naive attempt and states "if you cannot name that specific
+failed attempt... this candidate is NOT a `problem_fix` short" -- but for 3 of 4 real
+`problem_fix` shorts, `plan.setup` shipped as a bare rhetorical question (e.g. "What
+happens when you calculate softmax on scores from wide vectors?"), violating that
+instruction with nothing to catch it. `ShortPlan` (`planning/shorts_models.py`) has one
+overloaded `setup: str` field carrying both "context" and "the arc's required beat" -- no
+dedicated field. Direct precedent for the fix exists in the same file (`ShortBridge.cta_text`
+was added for the identical "no field ever captured what this actually is" reason).
+   - [x] Added `naive_attempt: str = ""` to `ShortPlan`/`ShortPlanDraft`.
+   - [x] `plan_shorts()` now drops (via `continue`, same style as the existing invalid-beat
+         check right above it) any `problem_fix` draft with a blank `naive_attempt`,
+         deterministically, before it can reach the writer.
+   - [x] `short_planner.py`'s `TASK_PROMPT` now requires `naive_attempt` as its own field,
+         reusing the writer's "ENACT, don't explain away" wording.
+   - [x] `short_generator.py`'s payload now sends `plan.naive_attempt` explicitly. Tests: 5
+         new across `tests/planning/test_short_planner.py` (drop-when-blank, kept-when-real,
+         non-problem_fix arcs never need it) and `tests/narration/test_short_generator.py`
+         (payload wiring).
+
+**3. Short titles: the concrete, clickable anchor is structurally unreachable.** The
+existing prompt already explicitly forbids topic-label titles pulled only from
+`central_insight`, with a documented prior failure example -- and it recurred anyway
+(`"Self-Attention and Permutation"`, pulled straight from `central_insight`). Root cause:
+the title's word-reuse pool is hook/payoff/`central_insight` text only; `ShortVisual.states`/
+`dominant_object` (the ACTUAL concrete anchor, e.g. `"'cat chased dog'"` / `"'dog chased
+cat'"`) is structurally excluded from that pool. The generator can't reach the good anchor
+even when the plan has one.
+   - [x] Widened the title's word-reuse pool in `short_planner.py`'s `TASK_PROMPT` to
+         explicitly include `visual.states`/`visual.dominant_object`, plus craft guidance
+         preferring a concrete visual anchor over an abstract `central_insight` restatement.
+   - [x] Also widened the actual mechanical hard-check, `verification/hard/
+         shorts.py::check_title_hook_payoff_alignment` -- it only ever compared the title
+         against `hook.narration`/`hook.visual` (a prose description) and `central_insight`;
+         `plan.visual.states`/`dominant_object` (the real concrete anchor, a DIFFERENT field
+         from `hook.visual`) was never in the pool even at the verification layer, not just
+         the prompt layer. Tests: `tests/verification/hard/test_shorts.py` (title matching
+         only the visual anchor now passes).
+
+### P2 -- prompt-text fixes (lower risk, already have the right precedent to copy)
+
+**4. Title/hook promise mismatch (`title_promise_unrelated_to_hook`).** The constraint is
+already documented as a code comment on `TitleContract.promise` in `planning/models.py`
+("must be contained in hook.promise") -- but that text was never added to `story_planner.py`'s
+actual `TASK_PROMPT`, so the model never sees it. A near-identical gate (`ending` must echo
+`hook.promise`'s own terms) was already fixed with explicit prompt language on 2026-09-16.
+This exact failure was ALSO seen once before (2026-09-11, different model) and "fixed" by
+switching models rather than fixing the prompt -- the gap has been known for two weeks.
+   - [x] Added to `story_planner.py`'s `TASK_PROMPT`, mirroring the already-shipped
+         ending↔hook fix's own phrasing and severity. Test: `tests/planning/
+         test_story_planner.py::test_prompt_requires_the_hook_to_echo_the_titles_own_concrete_terms`.
+
+**5. Hedge-phrase pileup (worst in shorts, ~200-word scripts make it far more visible).**
+`narration/factual_invariants.py` (shared by B1/B2/shorts) gives example hedge vocabulary
+but no cap or anti-repetition rule -- unlike the connector-repetition cap sitting right next
+to it in spirit. A real short used 6 different hedges in 209 words. Separately and more
+seriously: some of those hedges were applied to `UNVERIFIED`+`CORE` claims, which the
+EXISTING rule already says must be omitted, not hedged -- a compliance miss on top of the
+missing style rule.
+   - [x] Added the anti-repetition cap to `factual_invariants.py`, mirroring the connector
+         cap's own style.
+   - [x] Found the gap was bigger than scoped: the CORE/SUPPORTING-must-be-omitted rule
+         (this covers P0 item 4 too) EXISTED only in `generator.py`'s own separate copy --
+         the SHARED fragment (the only factual-safety text `short_generator.py` ever sees)
+         never had it at all, so shorts hadn't just under-followed the rule, they'd never
+         been told it. Ported the full CORE/SUPPORTING/OPTIONAL importance-gating rule into
+         the shared `NARRATION_FACTUAL_INVARIANTS` fragment. Tests: 2 new in `tests/
+         narration/test_factual_invariants.py`.
+
+**6. "The fix:" repetition in long-form (3 uses across 3 consecutive beats).** Same class of
+gap as the connector-repetition cap already shipped for causal connectors ("so"/"because"),
+just not extended to this specific transitional device.
+   - [x] Extended `generator.py`'s existing rhetorical-device-repetition guidance to
+         explicitly name "The fix:" (and "So the fix:") as capped under the SAME cap as
+         every other device. Test: `tests/narration/test_generator.py::
+         test_prompt_names_the_fix_opener_as_a_capped_device`.
+
+**7. Voice burstiness AMBER -- honest two-part answer, not a pure prompt fix.**
+`check_voice` is designed to never return RED (small 6-document fitted corpus) -- this has
+already been flagged twice before (Phase 23, Phase 24) as possibly structurally inherent,
+not a fresh finding. `generator.py`'s only rhythm guidance is "varied rhythm" as two words
+buried in a list, with no number or example -- unlike the connector cap, which only got a
+hard number after two live failures of qualitative-only guidance. Also found: Phase 24
+already root-caused a related, real propagation gap -- the connector cap's fix never made
+it into `editing/targeted_rewrite.py`, so a REVISED script isn't held to the same rhythm/
+repetition bar as a first-draft one.
+   - [x] Gave "varied rhythm" a concrete instruction in `generator.py`: "mix sentence
+         lengths within each scene -- at least one short (under 8 words) punch sentence
+         alongside longer explanatory ones," naming the "one idea per sentence" rule's own
+         side effect as the likely mechanism. Test: `tests/narration/test_generator.py::
+         test_prompt_gives_a_concrete_sentence_length_variety_instruction`.
+   - [x] Fixed the `targeted_rewrite.py` propagation gap -- it had the OLD, pre-hard-cap
+         connector guidance with no device naming and no sentence-length guidance at all;
+         both now added, scoped to what B2 can actually control (its own rewritten scenes).
+         Test: `tests/editing/test_targeted_rewrite.py::
+         test_prompt_names_the_fix_opener_and_sentence_length_variety`.
+   - [ ] Not attempted this phase: a targeted rhythm-focused revision pass keyed on AMBER
+         `voice` evidence. `check_voice` may remain AMBER-prone on a small corpus regardless
+         of prompt wording (per this project's own prior judgment, Phase 23/24) -- flagged
+         for a future pass once there's real post-fix data to judge against.
+
+### Not yet root-caused (real findings from the original critique, flagged for a future round)
+
+- **Short 5's `RESERVED_OUTRO_IN_PAYOFF`** (a recap/takeaway lands in the payoff segment
+  before the spoken bridge line -- a structural ordering bug, not investigated this round).
+- **CTA position at 30%/4.5 minutes into a 900s target** -- not a bug, a design/pacing
+  judgment call; worth a real retention-data check before changing the heuristic that
+  currently anchors CTA timing to the primary payoff beat.
+- **`rep_b6_scaling`** (a scene re-explains a concept its own `must_not_repeat` list already
+  named) -- possibly a recurrence/edge case of the sibling-concept propagation fix already
+  shipped in Phase 27; needs a direct check against that fix's own scope before concluding
+  it's a new gap.
+
+**Implementation order:** P0 -> P1 -> P2, as recommended, each item with its own test and a
+full-suite-green check before moving to the next. **Full suite: 1276 passed, 17 deselected**
+(up from 1263 before this phase). Not yet live-verified against a real run.
+
+---
+
+## Phase 31 — Reference-HTML gap analysis: page chrome, sustained narrative headings, richer components (items 1-3 implemented, 2026-09-26)
+
+**Status: items 1-3 implemented and tested; item 4 deliberately deferred (see its own
+section).** Triggered by a direct comparison against 3 real reference
+HTML pages the user supplied (`project/attention_series/input/video-1.1-the-crash-and-the-
+six-tenants.html`, `video-1.2-kv-cache-and-the-quadratic-blowup.html`, `video-1.32-watch-it-
+crash-live-final-story-connected.html` -- a GPU-memory/training-crash video series, sharing
+one reusable CSS design system across all 3). These are a genuinely higher tier of companion
+page than our own real output (`video-01-attention-opus55-lead/runs/v05`), and the gap is
+structural and narrative, not just polish -- confirmed by direct structural comparison (class
+vocabulary, section outlines, real prose) against our own generated HTML. Each item below is
+scoped to be directly reflected in the generated script/page itself, per explicit instruction
+-- not a design exercise that stops at documentation.
+
+### Item 1 -- page chrome: nav bar + progress tracker (P1, cheap, no LLM risk)
+
+Every reference page has a sticky nav with a progress-tracker row (one dot/label per
+chapter, current position highlighted, clickable to jump) plus episode chrome (`series-tag`,
+prev/next episode links) and a distinct "Next" bridge section separate from the CTA. Our own
+`html_synth/assembler.py::_render_page` (confirmed by direct read) renders only
+`hero_html + beats_html + narration_block` -- no nav, no wayfinding, no series-awareness.
+This is **entirely templatable from data we already have** (`plan.beats[i].heading`, already
+generated) -- no new LLM call, no new content-generation risk, pure deterministic Python +
+CSS/minimal JS, matching this project's own "deterministic where possible" precedent
+(`beat_word_budget.py`).
+   - [x] Added `_render_nav()` + CSS to `assembler.py`/`component_library.py`, built from
+         `beat_visuals`/`plan.title`, inserted right after `<body>` (before `hero_html`).
+         Each beat's own `<section>` now also carries `id="beat-{beat_id}"` as the anchor
+         target. Renders identically in both `video_script.html`/`page.html` (pure chrome,
+         no metadata) and renders nothing when there are no beats.
+   - [ ] `series_tag`/episode-position chrome still deferred until multi-video series
+         metadata exists on `StoryPlan` or its caller.
+   - [x] Tests: 5 new in `tests/html_synth/test_assembler.py` (one step per beat linking to
+         its section, anchor id present, identical nav in both files, no nav with no beats).
+
+### Item 2 -- sustained narrative headings, not just the hook (P1, cheap, real precedent to extend)
+
+Reference section titles read as the next beat of an unfolding investigation ("It must be a
+memory leak", "Six tenants. One of them is a mystery guest.", "Same error. Four different
+culprits.") -- narrative momentum sustained across EVERY heading. Our own headings
+(`synthesizer.py`'s own instruction: "a real `<h2>`... never generic like 'Section 3'") are
+accurate but description-toned ("Query, Key, Value: Splitting One Job Into Three") rather
+than narrative-toned. This is the same principle Phase 29's `hook.open_loop` fix already
+applied to the hook specifically -- this generalizes it to every heading, for the archetypes
+where it fits (`mystery`, `build`; NOT `foundation`/`framework`, where a descriptive heading
+is honest and a forced mystery tone would be a worse fit).
+   - [x] `synthesize_beat_visual()`'s payload now sends `archetype`, `viewer_question_before`,
+         `answer_or_payoff`, `next_question` (previously never sent to H at all), and
+         `synthesizer.py`'s `TASK_PROMPT` instructs mystery/build-archetype headings to read
+         as the next beat of an investigation using those fields -- every other archetype
+         keeps the descriptive instruction, explicitly told not to force a mystery tone.
+   - [x] The illustrative examples quoted ("It must be a memory leak.", etc.) are from the
+         REFERENCE video's own unrelated GPU-memory topic, not our test video -- safe against
+         the overfitting guard by construction (demonstrates the pattern without biasing
+         toward our own test topic's specific content).
+   - [x] Tests: 2 new in `tests/html_synth/test_synthesizer.py` (the 4 new payload fields
+         reach `synthesize_beat_visual`'s call; the prompt names both archetypes and the
+         non-forcing rule for others).
+
+### Item 3 -- 2-3 new components matching real devices these references use (P2, moderate effort, follows existing pattern exactly)
+
+Real, distinct devices our 9-component vocabulary (`design_system.yaml`) has no equivalent
+for: a "suspect board" (a lineup of candidate causes, each with a one-line description, for a
+sustained mystery/investigation format), a "solution grid" (N labeled fix-options compared
+side by side, for a payoff that resolves into multiple concrete options rather than one), a
+"case card" (a labeled concrete scenario/example block, for "here's a specific instance of
+the general rule"). Each maps to a real narrative shape our archetypes already support but
+currently render with a generic `card`/`grid_2`.
+   - [x] Added all 3 to `config/design_system.yaml` exactly as scoped: `suspect_board` for
+         `contradiction`/`investigation`, `solution_grid` for `payoff` only, `case_card` for
+         `observations`/`mechanism`.
+   - [x] Added dedicated rendering branches in `component_library.py::render_component`
+         (list-shaped `suspect_board`/`solution_grid` mirroring `step_list`'s blank-slot-
+         omission discipline; `case_card`'s two optional slots mirroring `card`'s own
+         conditional-block pattern) + matching CSS.
+   - [x] Updated `synthesizer.py`'s `TASK_PROMPT` with per-component guidance (when each
+         fits, exact slot shapes, explicit "never the reveal itself" guard on `suspect_board`
+         and "never pad one option to look like several" guard on `solution_grid`).
+   - [x] Tests: 10 new across `tests/html_synth/test_component_library.py` (rendering +
+         blank-slot omission for all 3, `story_roles` allowlist checks) and `tests/html_synth/
+         test_synthesizer.py` (prompt mentions all 3).
+
+**Full suite: 1292 passed, 17 deselected** (up from 1276 before this phase). Not yet
+live-verified against a real run.
+
+### Item 4 -- interactive, data-driven component (P3, largest scope, needs its own design pass before implementation)
+
+`video-1.1`'s mode-selector component (`Inference`/`LoRA`/`QLoRA`/`Full-Parameter Training`
+tabs, each live-recomputing a segmented bar chart + a full breakdown table with real
+formulas/values + a color-coded callout) is categorically different from anything we
+generate: real client-side interactivity driven by real embedded data, not a single static
+LLM-authored blob. This is the highest-payoff, highest-effort item and should NOT be
+attempted as a normal `component_data` LLM field -- it needs a templated JS component (fixed
+interaction logic, hand-authored once) that the PLAN supplies real scenario/formula data
+into, closer in spirit to `StoryPlan.formula_stages` (already a typed, plan-level, Python-
+verifiable structure) than to a per-scene visual component.
+   - [ ] Scope as its own design pass once items 1-3 land: what new `StoryPlan` field would
+         carry N named scenarios, each with a formula + named variable values (mirroring
+         `FormulaStage.values`'s own shape)? Which archetype_role/content shape actually has
+         multiple comparable scenarios worth toggling between (a real precondition -- most
+         videos won't have this; do not force it onto every plan)?
+   - [ ] Decide: does A2 populate this data (higher risk -- LLM-authored numbers need the
+         same claim-grounding discipline `formula_stages.values` already gets), or is it only
+         used when the SOURCE material itself already contains the comparable scenarios as
+         claims (lower risk, matches this project's "ground everything in a real claim"
+         discipline)?
+   - [ ] Not scheduled for implementation this phase -- flagged for a dedicated follow-up once
+         1-3 are live and there's a real plan to test it against.
+
+**Implementation order recommendation:** items 1-2 first (cheap, deterministic/prompt-only,
+directly and immediately visible in every future generated script). Item 3 next (moderate,
+same established pattern as every prior component addition this session). Item 4 last and
+separately scoped -- it's a real architecture decision, not a prompt tweak, and forcing it in
+before 1-3 are proven would risk the same "big scope change with no real plan to test it
+against" mistake this project's own YAGNI discipline already warns against elsewhere. Each
+item gets its own test + full-suite-green check before moving to the next, per this project's
+established discipline -- no item here has been implemented yet.
+
+---
+
+## Phase 32 — 3-round audit of the fixed pipeline: broken contracts, design gaps, diagnostic artifacts (P0/P1 implemented, 2026-09-26)
+
+**Status: P0 (all 3 items) and P1 (4 of 5 items) implemented and tested; 1 P1 item and all
+P2/P3 items deliberately deferred (see their own notes).** Triggered by a genuine apples-to-
+apples comparison (same source, same current pipeline, gpt-5.6-sol vs Opus 5.5 as
+`story_lead`) that showed a real, specific gap rather than the earlier pre-Phase-30 pipeline
+confound, followed by 3 rounds of critical review (4 parallel Round 1 investigations, Round 2
+direct code/data verification of the highest-severity claims, Round 3 synthesis) against the
+now-mature pipeline (Phase 29-31 + the voice/contraction fix already landed this session).
+
+### P0 — broken contracts: an instruction present in a prompt with no data or destination to obey it
+
+Found by the cross-file consistency audit and confirmed directly (`grep`) against every file
+named: the shared `NARRATION_FACTUAL_INVARIANTS` fragment's CORE/SUPPORTING/OPTIONAL
+importance-gating rule was included, verbatim, in B1s's (shorts) and B2's (targeted rewrite)
+prompts -- but neither pass's own `_claim_payload()` ever sent the `importance` field at all,
+making the instruction structurally impossible to follow. B2 additionally had zero access to
+`mechanism_scope`, `cta.primary_after_beat`/word-cap/no-second-CTA, or `hook.open_loop` --
+data B1's own first-draft prompt has hard rules keyed off, that a rewrite of exactly those
+scenes would have no way to honor. H (HTML synthesis) received claims with no
+`verification_status`/`importance` at all, unlike every narration-writing pass.
+   - [x] `narration/short_generator.py::_claim_payload` and
+         `editing/targeted_rewrite.py::_claim_payload` both now include `claim.importance`.
+   - [x] `editing/targeted_rewrite.py`: added `_hook_last_scene_id()`; each rewritten scene's
+         payload now carries `mechanism_scope`, `is_cta_beat`, `is_hook_last_scene`,
+         `is_true_final_scene`; the outer payload now carries `plan.cta`/`plan.hook`;
+         `TASK_PROMPT` gained the corresponding mechanism-scope/CTA/hook rules (mirroring
+         `generator.py`'s own, adapted to the per-scene boolean flags this pass actually has).
+   - [x] `html_synth/synthesizer.py::_claim_payload` now includes `verification_status` and
+         `importance`; `TASK_PROMPT` gained a REJECTED/UNVERIFIED gating rule for
+         `screen_prose`/`component_data`/`annotated_numbers`, mirroring narration's own rule.
+   - [x] Tests: 8 new across `tests/narration/test_short_generator.py`,
+         `tests/editing/test_targeted_rewrite.py` (5 new), `tests/html_synth/test_synthesizer.py`.
+
+### P1 — design/policy gaps affecting every run regardless of model
+
+Found by the retention/pacing and HTML-richness audits, each confirmed directly against real
+data from two comparable runs (Opus 5.5 and gpt-5.6-sol as `story_lead`, same source, same
+current pipeline).
+   - [x] **`problem_fix` component starvation**: the single most-repeated story_role in a real
+         build-archetype plan (3-4 of ~11-12 beats) could reach `diagram_card`/`step_list`/
+         `callout_warn` but not `case_card`, despite "here's a specific problem, here's its
+         specific fix" being a near-verbatim match for `case_card`'s own "specific instance of
+         the general rule" shape. Added `case_card` to `problem_fix`'s allow-list in
+         `config/design_system.yaml`. Test: `test_case_card_is_available_to_problem_fix_too`.
+   - [x] **`diagram_card` monopoly**: legal under nearly every role and picked in ~2 of every 3
+         components chosen across two real full pages, including `payoff` scenes that never
+         once used `solution_grid` despite it being offered. `synthesizer.py`'s `TASK_PROMPT`
+         used to only explain what the other components are FOR, never warn against
+         `diagram_card` becoming the reflexive default -- added that warning directly after
+         the existing three-component guidance. Test:
+         `test_prompt_warns_against_defaulting_to_diagram_card`.
+   - [x] **`retention.title_scope_coverage` near-unsatisfiable for technical titles**:
+         `text_overlap.py::content_words()`'s length filter (`len(w) > 2`) silently erased
+         exactly the shorthand a technical title reuses (Q, K, V, n2) -- confirmed live as the
+         actual reason two real titles from two different models both scored as failing to
+         reflect their own must_cover items, independent of title quality. `content_words()`
+         gained an overridable `min_length` parameter (default unchanged at 3, so every other
+         caller's behavior is untouched); `retention.py::_item_reflected_in_title` now calls it
+         with `min_length=1`. Tests: 2 new in `test_text_overlap.py`, 1 new in
+         `test_retention.py`.
+   - [x] **`pacing.beat_airtime_outliers` claim double-counting**: a deliberate callback beat
+         whose `source_unit_ids` overlap an earlier beat's had those units' claims counted
+         AGAIN toward its own words-per-claim ratio, deflating it and falsely flagging the
+         callback as an airtime outlier for doing exactly what a callback should (fewer new
+         words, because the claims aren't new) -- confirmed live on a real cross-attention
+         beat that scored 0.29x median purely from this double-count. Each source unit's
+         claims now count toward only the FIRST beat (in story order, including the hook) that
+         actually touches it. Test:
+         `test_a_callback_beat_reusing_earlier_source_units_is_not_double_counted`.
+   - [ ] **Deferred: diagnostic escalation counts bands, never magnitude**
+         (`orchestration/policy_gate.py::compute_final_status`). Confirmed live: gpt-5.6-sol's
+         run had 2 REDs, each roughly 2x its own target threshold (`cta.position` at 56% vs a
+         20-40% target; `pacing.time_to_primary_payoff` at 55% vs a <=35% target) -- the
+         current rule (`>=3 REDs, or a RED that survived a round, or >3 AMBERs`) never
+         escalates on a single first-pass RED regardless of how far past its threshold it
+         lands, by explicit design (documented in the function's own docstring as "plan §10").
+         This is a real cost, not a bug -- weighting escalation by magnitude, not just band
+         count, is a deliberate policy change affecting every run's `final_status`, not a
+         scoped fix, and needs an explicit decision before implementing (a stricter policy
+         raises revision cost/frequency across the board). Left for a dedicated decision, not
+         bundled into this phase's otherwise-scoped fixes.
+
+### P2/P3 — deliberately deferred, documented for a future round
+
+Real findings, lower severity or higher risk-to-fix-safely than P0/P1 above, not implemented
+this phase:
+- **Narration voice, round 2**: "That's X"/"It's X" as the default move to land any
+  definition or payoff (broader than the derivation-callback pattern already fixed this
+  session); a possible new tic from the short-punch-sentence fix (gpt-5.6-sol: 20% of
+  sentences are <=5-word verbless fragments); "Nothing ___" negation-openers and "X, not Y"
+  antithesis, both named in the prompt as cautionary examples already but with no hard
+  numeric cap (unlike so/because/"The fix:"); confirmed live, Opus's own v07 output still had
+  3 "so"-openers against its own stated cap of 2 -- the existing cap isn't 100% reliably
+  followed even now, worth a follow-up check rather than assuming the qualitative+numeric
+  instruction alone is sufficient.
+- **`payoff=True` self-labeling variance**: two structurally near-identical plans (same
+  source, same pipeline) landed different `pacing.time_to_primary_payoff` bands purely
+  because one model additionally flagged an earlier, lesser beat `payoff=True` (content-
+  equivalent to a beat the other model correctly left `payoff=False`) -- `check_payoff_beat_ratio`'s
+  own over-marking guard doesn't catch it because both ratios clear its 30% GREEN threshold.
+  No upstream planning-time guard exists (`retention_deadlines` is optional and
+  model-declared, not enforced). Needs either a stricter over-marking check or an explicit
+  planning-time rule, not a one-line fix.
+- **No design-system support at all for**: a running-total/escalating-ledger scoreboard
+  device (reference corpus uses this after every case in one series); real interactivity/
+  motion beyond a load-time fade (scroll-triggered reveals, clickable mode toggles); a
+  multi-step formula layout (`math_block`'s single-equation slot flattens a genuine
+  multi-line derivation onto one line); page-level footer/inter-episode-nav/bridge-transition
+  chrome. All confirmed via direct comparison against the 3 reference HTML files. Each is a
+  real design-system extension, not a prompt tweak -- scoped out of this phase's P0/P1 fixes.
+- **`plan_story()`'s fixed `estimated_usd=0.10` pre-flight budget guess** isn't scaled per
+  `--story-lead-alias` -- only affects a pre-flight admission check, not the hard cap itself,
+  so ranked below the items above.
+
 ## Open ERROR_LOG.md findings not yet scheduled into a phase
 
 Carried over from `ERROR_LOG.md` so they aren't lost between sessions. All predate most of

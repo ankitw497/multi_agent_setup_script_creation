@@ -108,6 +108,7 @@ def test_synthesize_beat_visual_scopes_scenes_to_the_beat():
     payload = agent.calls[0]["payload"]
     assert payload["scenes"] == [{
         "scene_id": "s1", "visual_description": "score distribution widening", "narration_text": "",
+        "required_formula_stage": None,
     }]
 
 
@@ -150,6 +151,133 @@ def test_scenes_own_actual_narration_text_reaches_the_beat_visual_payload():
     assert sent_scene["narration_text"] == "the score gap narrows here"
 
 
+def test_scene_with_no_formula_stage_id_gets_a_null_required_formula_stage():
+    plan = make_plan()
+    agent = FakeAgent(BeatVisual(beat_id="B01", heading="h", scenes=[{"scene_id": "s1"}]))
+
+    synthesize_beat_visual(plan.beats[0], plan, [], agent)
+
+    assert agent.calls[0]["payload"]["scenes"][0]["required_formula_stage"] is None
+
+
+def test_scenes_own_formula_stage_reaches_the_beat_visual_payload():
+    """2026-09-24: H used to never see formula_stages/formula_stage_id at all --
+    verification/hard/formula_consistency.py checks the rendered content for this
+    verbatim afterward, but nothing ever told H what it needed. Confirms the SAME
+    "most advanced stage reached so far" that check computes now reaches the payload."""
+    from planning.models import FormulaStage
+
+    plan = make_plan()
+    plan.formula_stages = [
+        FormulaStage(stage_id="raw", expression="QK^T", values={"cat": "1.2"}),
+        FormulaStage(stage_id="scaled", expression="QK^T / sqrt(d_k)", values={"cat": "0.4"}),
+    ]
+    plan.scene_plan = [
+        ScenePlan(scene_id="s1", beat_id="B01", visual_description="x", formula_stage_id="scaled"),
+    ]
+    agent = FakeAgent(BeatVisual(beat_id="B01", heading="h", scenes=[{"scene_id": "s1"}]))
+
+    synthesize_beat_visual(plan.beats[0], plan, [], agent)
+
+    required = agent.calls[0]["payload"]["scenes"][0]["required_formula_stage"]
+    assert required == {"stage_id": "scaled", "expression": "QK^T / sqrt(d_k)", "values": {"cat": "0.4"}}
+
+
+def test_a_later_scene_still_requires_the_most_advanced_stage_even_if_its_own_tag_is_earlier():
+    """Matches formula_consistency.py's own algorithm exactly: once a later stage has been
+    reached anywhere in scene_plan order, an earlier-tagged scene appearing after it must
+    still carry the MOST ADVANCED form, never regress to its own tag's simpler one."""
+    from planning.models import FormulaStage
+
+    plan = make_plan()
+    plan.formula_stages = [
+        FormulaStage(stage_id="raw", expression="QK^T", values={}),
+        FormulaStage(stage_id="scaled", expression="QK^T / sqrt(d_k)", values={}),
+    ]
+    plan.scene_plan = [
+        ScenePlan(scene_id="s1", beat_id="B01", visual_description="x", formula_stage_id="scaled"),
+        ScenePlan(scene_id="s2", beat_id="B01", visual_description="x", formula_stage_id="raw"),
+    ]
+    agent = FakeAgent(BeatVisual(beat_id="B01", heading="h", scenes=[{"scene_id": "s1"}, {"scene_id": "s2"}]))
+
+    synthesize_beat_visual(plan.beats[0], plan, [], agent)
+
+    scenes = agent.calls[0]["payload"]["scenes"]
+    assert scenes[1]["required_formula_stage"]["stage_id"] == "scaled"
+
+
+def test_prompt_instructs_including_the_required_formula_stage_verbatim():
+    from html_synth.synthesizer import TASK_PROMPT
+    assert "required_formula_stage" in TASK_PROMPT
+    assert "VERBATIM" in TASK_PROMPT
+
+
+def test_beat_screen_text_word_budget_reaches_the_payload_and_sums_to_the_target():
+    """2026-09-24: confirmed live a denser, more complete narration (Opus 5.5 story_lead)
+    pushed the rendered page's word count over verification/hard/render.py's own band --
+    H previously had zero numeric awareness of that ceiling. Confirms each beat now gets
+    its own real share of it, proportional to scene count, summing to the target."""
+    from html_synth.synthesizer import _SCREEN_TEXT_TARGET_WORDS
+
+    plan = make_plan()
+    plan.beats.append(StoryBeat(beat_id="B02", purpose="y", archetype_role="payoff", source_unit_ids=["u2"]))
+    plan.scene_plan += [
+        ScenePlan(scene_id="s2", beat_id="B02", visual_description="x"),
+        ScenePlan(scene_id="s3", beat_id="B02", visual_description="x"),
+    ]
+    agent_b1 = FakeAgent(BeatVisual(beat_id="B01", heading="h", scenes=[{"scene_id": "s1"}]))
+    agent_b2 = FakeAgent(BeatVisual(beat_id="B02", heading="h", scenes=[{"scene_id": "s2"}, {"scene_id": "s3"}]))
+
+    synthesize_beat_visual(plan.beats[0], plan, [], agent_b1)
+    synthesize_beat_visual(plan.beats[1], plan, [], agent_b2)
+
+    b1_budget = agent_b1.calls[0]["payload"]["beat_screen_text_word_budget"]
+    b2_budget = agent_b2.calls[0]["payload"]["beat_screen_text_word_budget"]
+    assert b1_budget is not None and b2_budget is not None
+    assert b1_budget + b2_budget == _SCREEN_TEXT_TARGET_WORDS
+    assert b2_budget > b1_budget  # B02 has 2 scenes vs B01's 1 -- proportionally more
+
+
+def test_beat_screen_text_word_budget_never_exceeds_the_target_even_with_a_20_word_floor():
+    """Real bug found live, 2026-09-27 audit: `allocated_so_far` used to accumulate the
+    pre-clamp `words` value, not the actual (possibly floor-boosted) allocation returned
+    for each beat. Whenever a non-last beat's proportional share rounds below the 20-word
+    floor, that shortfall was never charged against the running total, so the last beat's
+    "absorb the remainder" share silently absorbed too much and the SUM exceeded
+    _SCREEN_TEXT_TARGET_WORDS -- exactly the guardrail this function exists to provide.
+
+    Two 1-scene beats sandwiched between two 150-scene beats (total_scenes=302): each
+    1-scene beat's raw share is 2600*1/302=8.6 -- well below the 20-word floor, clamped up
+    by +11.4 each (22 total). The old, buggy bookkeeping let the last beat's remainder
+    silently absorb that whole 22-word overshoot; verified by hand, the buggy version
+    summed to 2622, the fixed version must sum to exactly 2600."""
+    from html_synth.synthesizer import _SCREEN_TEXT_TARGET_WORDS, _screen_text_word_budget_by_beat
+
+    plan = make_plan()
+    plan.beats = [
+        StoryBeat(beat_id="A", purpose="a", archetype_role="hook", source_unit_ids=["u1"]),
+        StoryBeat(beat_id="B", purpose="b", archetype_role="mechanism", source_unit_ids=["u2"]),
+        StoryBeat(beat_id="C", purpose="c", archetype_role="mechanism", source_unit_ids=["u3"]),
+        StoryBeat(beat_id="LAST", purpose="d", archetype_role="payoff", source_unit_ids=["u4"]),
+    ]
+    plan.scene_plan = (
+        [ScenePlan(scene_id=f"a{i}", beat_id="A", visual_description="x") for i in range(150)]
+        + [ScenePlan(scene_id="b0", beat_id="B", visual_description="x")]
+        + [ScenePlan(scene_id="c0", beat_id="C", visual_description="x")]
+        + [ScenePlan(scene_id=f"last{i}", beat_id="LAST", visual_description="x") for i in range(150)]
+    )
+
+    allocations = _screen_text_word_budget_by_beat(plan)
+
+    assert allocations["B"] == 20 and allocations["C"] == 20  # floor-clamped, as expected
+    assert sum(allocations.values()) == _SCREEN_TEXT_TARGET_WORDS
+
+
+def test_prompt_instructs_respecting_the_beat_screen_text_word_budget():
+    from html_synth.synthesizer import TASK_PROMPT
+    assert "beat_screen_text_word_budget" in TASK_PROMPT
+
+
 def test_no_narration_given_defaults_to_an_empty_narration_text():
     agent = FakeAgent(BeatVisual(beat_id="B01", heading="h", scenes=[{"scene_id": "s1"}]))
     synthesize_beat_visual(make_plan().beats[0], make_plan(), [], agent)
@@ -162,9 +290,57 @@ def test_prompt_instructs_illustrating_what_was_actually_narrated():
     assert "running_example" in TASK_PROMPT
 
 
+def test_archetype_and_beat_question_fields_reach_the_beat_visual_payload():
+    """STORY_IMPROVEMENT_PLAN.md Phase 31 item 2: previously never sent to H at all --
+    needed so a mystery/build-archetype heading can read as the next beat of an
+    unfolding investigation instead of a topic label."""
+    plan = make_plan()
+    plan.beats[0].viewer_question_before = "why does it point to cat?"
+    plan.beats[0].answer_or_payoff = "it retrieves from context"
+    plan.beats[0].next_question = "what happens with more words?"
+    agent = FakeAgent(BeatVisual(beat_id="B01", heading="h", scenes=[{"scene_id": "s1"}]))
+
+    synthesize_beat_visual(plan.beats[0], plan, [], agent)
+
+    payload = agent.calls[0]["payload"]
+    assert payload["archetype"] == "build"
+    assert payload["viewer_question_before"] == "why does it point to cat?"
+    assert payload["answer_or_payoff"] == "it retrieves from context"
+    assert payload["next_question"] == "what happens with more words?"
+
+
+def test_prompt_instructs_sustained_narrative_headings_for_mystery_and_build():
+    from html_synth.synthesizer import TASK_PROMPT
+    assert "mystery" in TASK_PROMPT and "`build`" in TASK_PROMPT
+    assert "viewer_question_before" in TASK_PROMPT
+    assert "honest, correct choice" in TASK_PROMPT
+
+
+def test_prompt_describes_the_three_new_components():
+    """STORY_IMPROVEMENT_PLAN.md Phase 31 item 3."""
+    from html_synth.synthesizer import TASK_PROMPT
+    assert "`suspect_board`" in TASK_PROMPT
+    assert "`solution_grid`" in TASK_PROMPT
+    assert "`case_card`" in TASK_PROMPT
+
+
 def test_hero_prompt_instructs_reusing_the_running_example():
     from html_synth.synthesizer import HERO_TASK_PROMPT
     assert "running_example" in HERO_TASK_PROMPT
+
+
+def test_beat_visual_beat_id_is_forced_from_the_input_never_trusted_from_the_model():
+    """Real crash, 2026-09-27: the payload never sends beat.beat_id at all, yet BeatVisual's
+    schema requires the model to invent one from context -- confirmed live, a real plan's
+    beat "B1_hook" came back from H with a different self-chosen beat_id, and
+    html_pipeline.py's `beat_visual_by_id[b.beat_id] for b in plan.beats` (keyed off the
+    model's own field) raised KeyError. This had silently worked by luck on every run that
+    never needed a repair pass."""
+    agent = FakeAgent(BeatVisual(beat_id="some_other_guessed_id", heading="h"))
+
+    result = synthesize_beat_visual(make_plan().beats[0], make_plan(), [], agent)
+
+    assert result.beat_id == "B01"
 
 
 def test_only_claims_from_the_beats_source_units_are_offered():
@@ -198,6 +374,51 @@ def test_prompt_instructs_preserving_required_qualifiers():
     from html_synth.synthesizer import TASK_PROMPT
 
     assert "required_qualifiers" in TASK_PROMPT
+
+
+def test_verification_status_and_importance_reach_the_beat_visual_payload():
+    """Phase 32 P0: H used to receive claims with no `verification_status`/`importance` at
+    all -- no REJECTED/UNVERIFIED gating for annotated_numbers/component_data, unlike every
+    narration-writing pass."""
+    agent = FakeAgent(BeatVisual(beat_id="B01", heading="h"))
+    claims = [Claim(
+        claim_id="C001", source_unit="u1", claim="x", type="mechanism",
+        verification_status="UNVERIFIED", importance="OPTIONAL",
+    )]
+    synthesize_beat_visual(make_plan().beats[0], make_plan(), claims, agent)
+    offered = agent.calls[0]["payload"]["available_claims"][0]
+    assert offered["verification_status"] == "UNVERIFIED"
+    assert offered["importance"] == "OPTIONAL"
+
+
+def test_prompt_instructs_gating_on_verification_status_and_importance():
+    from html_synth.synthesizer import TASK_PROMPT
+
+    assert "REJECTED" in TASK_PROMPT
+    assert "UNVERIFIED" in TASK_PROMPT
+
+
+def test_prompt_warns_against_defaulting_to_diagram_card():
+    """Phase 32 P1: confirmed live across two real full pages -- diagram_card (legal
+    under nearly every role) was picked in roughly 2 of every 3 components chosen,
+    including payoff scenes that never once used solution_grid despite it being offered.
+    The prompt used to only explain what the other components are FOR, never warn against
+    diagram_card becoming the reflexive safe default."""
+    from html_synth.synthesizer import TASK_PROMPT
+
+    assert "reflexive default" in TASK_PROMPT
+
+
+def test_prompt_documents_metric_tables_flat_row_shape():
+    """Found live, 2026-09-27 audit: metric_table's item shape was documented only in a
+    YAML comment, never sent to the model at all (component_slots() only returns bare
+    slot names) -- a real, reachable gap since metric_table IS offered under the
+    'comparison' story_role. A model guessing the same dict-per-item shape every sibling
+    component actually uses was a real, plausible failure mode."""
+    from html_synth.synthesizer import TASK_PROMPT
+
+    assert "metric_table" in TASK_PROMPT
+    assert "flat list" in TASK_PROMPT
 
 
 def test_allowed_components_matches_the_beats_archetype_role():

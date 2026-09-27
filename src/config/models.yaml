@@ -14,9 +14,41 @@ subscription_lane:
                             # the real resolved model from top-level usage token counts
                             # (not dict order), but the CLI must still be CALLED with
                             # this exact id for the pinning assertion to hold.
+    reasoning_effort: "high"  # 2026-09-24, explicit user decision -- maps to the claude
+                            # CLI's own `--effort` flag (llm/backends/claude_cli.py),
+                            # confirmed live against claude-sonnet-5 ($0.0129 for a trivial
+                            # one-word reply). Applies to every agent that resolves this
+                            # alias: narration_lead and html_author by default, story_lead
+                            # too if selected via `--story-lead-alias sonnet`.
   haiku:
     resolved: "claude-haiku-4-5-20251001"
     verified: true          # confirmed 2026-09-10 via llm/backends/claude_cli.py
+  opus:
+    resolved: "claude-opus-5-5"
+    verified: true          # confirmed 2026-09-24 via a real `claude -p --model
+                            # claude-opus-5-5` call, AFTER updating the local CLI to 2.1.281
+                            # (an EARLIER attempt on 2.1.224 returned a 400: "version 2.1.280
+                            # or newer is required" -- the standard Homebrew `claude-code`
+                            # cask tops out at 2.1.273, so this needed switching to the
+                            # `claude-code@latest` cask). Real result: is_error=false,
+                            # result="OK", modelUsage correctly attributed to claude-opus-5-5
+                            # (2 in / 4 out tokens, $0.0927 -- dominated by a one-time
+                            # ~10.9k-token cache-write, not per-call output). Same
+                            # co-logged-haiku-entry pattern already noted on `sonnet` above
+                            # was observed here too; the backend's own top-level-token-count
+                            # matching (not dict order) correctly picked claude-opus-5-5, no
+                            # ModelMismatch false positive. IMPORTANT for cost awareness: an
+                            # Opus call's baseline $ is meaningfully higher than sonnet/haiku
+                            # even for a trivial reply -- still notional-only here (billed
+                            # under the Claude subscription, not the paid_api_lane hard cap),
+                            # but worth watching via usage.jsonl on a real run. Story lead's
+                            # "strong" tier selects this via `--story-lead-alias opus`,
+                            # interchangeable with `openai_story_strong_gpt56`
+                            # (agents/story_lead.py).
+    reasoning_effort: "medium"  # maps to the claude CLI's own `--effort` flag
+                            # (llm/backends/claude_cli.py), confirmed live 2026-09-24 --
+                            # matches openai_story_strong_gpt56's own "medium" so the two
+                            # aliases stay comparable when swapped via --story-lead-alias.
 
 paid_api_lane:
   openai_story_strong:

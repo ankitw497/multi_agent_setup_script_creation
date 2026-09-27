@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import signal
 import subprocess
 import time
 from dataclasses import dataclass
@@ -82,8 +83,10 @@ class ClaudeCliBackend:
         env.pop("ANTHROPIC_API_KEY", None)
         return env
 
-    def _build_command(self, model_id: str, system_prompt: str, user_payload: str) -> list[str]:
-        return [
+    def _build_command(
+        self, model_id: str, system_prompt: str, user_payload: str, reasoning_effort: str | None = None,
+    ) -> list[str]:
+        cmd = [
             "claude", "-p", user_payload,
             "--model", model_id,
             "--system-prompt", system_prompt,
@@ -94,9 +97,17 @@ class ClaudeCliBackend:
             "--max-turns", "1",
             "--output-format", "json",
         ]
+        if reasoning_effort is not None:
+            # 2026-09-24: `--effort <low|medium|high|xhigh|max>`, confirmed live against
+            # claude-opus-5-5 (config/models.yaml's `opus` alias, "medium") -- sonnet/haiku
+            # carry no `reasoning_effort` in config, so this stays a no-op flag omission for
+            # them, matching the paid lane's own "None means backend/provider default" rule.
+            cmd += ["--effort", reasoning_effort]
+        return cmd
 
     def call(
-        self, model_id: str, system_prompt: str, user_payload: str, timeout_s: int | None = None,
+        self, model_id: str, system_prompt: str, user_payload: str,
+        timeout_s: int | None = None, reasoning_effort: str | None = None,
     ) -> CliCallResult:
         """Retries a transient `claude -p` subprocess failure (a real, live
         finding, 2026-09-11: a full pipeline run crashed on `exit 1` with
@@ -112,23 +123,50 @@ class ClaudeCliBackend:
             wait=tenacity.wait_exponential(multiplier=1, min=self.retry_wait_min_s, max=self.retry_wait_max_s),
             reraise=True,
         )
-        return retrying(self._call_once, model_id, system_prompt, user_payload, timeout_s)
+        return retrying(self._call_once, model_id, system_prompt, user_payload, timeout_s, reasoning_effort)
 
     def _call_once(
         self, model_id: str, system_prompt: str, user_payload: str, timeout_s: int | None,
+        reasoning_effort: str | None = None,
     ) -> CliCallResult:
         env = self._build_env()
         assert "ANTHROPIC_API_KEY" not in env, "ANTHROPIC_API_KEY leaked into the subscription lane"
 
-        cmd = self._build_command(model_id, system_prompt, user_payload)
+        cmd = self._build_command(model_id, system_prompt, user_payload, reasoning_effort)
         effective_timeout = timeout_s if timeout_s is not None else self.timeout_s
 
         start = time.monotonic()
+        # start_new_session=True (2026-09-25, found live): a real run's `claude -p`
+        # subprocess survived not just its own configured timeout but a SIGTERM to the
+        # whole recorded pipeline process tree, discovered 11.5 hours later still running
+        # as an orphan (`ps` showed it, matching this exact call's own payload). Plain
+        # `subprocess.run(..., timeout=...)` only kills the immediate child on timeout; if
+        # `claude` forks a detached grandchild that inherits the stdout pipe's write end
+        # (a real CLI does spawn subagents/background workers -- see the `subagent_stats`
+        # field in its own JSON envelope), the immediate child dying doesn't close that fd,
+        # so `communicate()` can hang indefinitely waiting for EOF that never comes -- past
+        # any timeout, past any retry, past the parent process's own death. Running the
+        # child in its own session (process group) lets a timeout kill that WHOLE group,
+        # not just the one process whose pid we happen to hold.
+        proc = subprocess.Popen(
+            cmd, env=env, cwd=self.cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, start_new_session=True,
+        )
         try:
-            proc = subprocess.run(
-                cmd, env=env, cwd=self.cwd, capture_output=True, text=True, timeout=effective_timeout,
-            )
+            stdout, stderr = proc.communicate(timeout=effective_timeout)
         except subprocess.TimeoutExpired as e:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except ProcessLookupError:
+                pass  # already gone
+            proc.wait()  # reap the now-dead immediate child; avoids a zombie
+            # Found live, 2026-09-27 audit: communicate() never completed (that's the whole
+            # point of this except branch), and only communicate()/an explicit close ever
+            # closes the PIPE file objects opened above -- proc.wait() alone does not. Each
+            # timeout without this leaked 2 open FDs; with retries across a full pipeline
+            # run's many calls, repeated timeouts could accumulate them.
+            proc.stdout.close()
+            proc.stderr.close()
             # Real bug found live 2026-09-12: a legitimately large B2
             # rewrite payload (a full beat's scenes/claims) took longer
             # than the default 300s timeout on a real run -- this used to
@@ -144,11 +182,11 @@ class ClaudeCliBackend:
 
         if proc.returncode != 0:
             raise ClaudeCliInvocationError(
-                f"claude -p failed (exit {proc.returncode}): {proc.stderr.strip()[:500]}"
+                f"claude -p failed (exit {proc.returncode}): {stderr.strip()[:500]}"
             )
 
         try:
-            envelope = json.loads(proc.stdout)
+            envelope = json.loads(stdout)
         except json.JSONDecodeError as e:
             raise ClaudeCliInvocationError(f"claude -p returned non-JSON stdout: {e}") from e
 

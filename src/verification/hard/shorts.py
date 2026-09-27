@@ -62,7 +62,14 @@ def check_title_hook_payoff_alignment(plan: ShortPlan) -> list[ShortHardIssue]:
     visual description this time."""
     issues: list[ShortHardIssue] = []
     hook_text = plan.hook.narration or plan.hook.visual or ""
-    hook_anchors = [t for t in (hook_text, plan.central_insight) if t]
+    # visual_anchor (2026-09-25, Phase 30 P1 item 3): `plan.visual.states`/`dominant_object`
+    # -- the SHORT's actual concrete visual anchor (e.g. two contrasted example states) --
+    # used to be entirely excluded from this check, distinct from `hook.visual` above (a
+    # prose description, not the concrete states list). Confirmed live: a real title
+    # ("Self-Attention and Permutation") passed this check against central_insight alone
+    # while a genuinely more concrete, memorable anchor sat in `visual.states` untouched.
+    visual_anchor = " ".join([plan.visual.dominant_object, *plan.visual.states]).strip()
+    hook_anchors = [t for t in (hook_text, plan.central_insight, visual_anchor) if t]
     if hook_anchors and not any(_overlap(plan.title, t) >= TITLE_ALIGNMENT_THRESHOLD for t in hook_anchors):
         issues.append(ShortHardIssue(
             "title_hook_mismatch",

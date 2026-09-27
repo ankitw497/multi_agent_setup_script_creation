@@ -73,9 +73,16 @@ class LLMClient:
         schema: type[T],
         revision_cycle: int = 0,
         timeout_s: int | None = None,
+        reasoning_effort: str | None = None,
     ) -> StructuredCallResult:
-        """sonnet | haiku — no budget check (quota, not dollars); still ledgered as notional cost."""
-        result = self.subscription_backend.call(model_resolved, system_prompt, user_payload, timeout_s=timeout_s)
+        """sonnet | haiku | opus — no budget check (quota, not dollars); still ledgered as
+        notional cost. `reasoning_effort` maps to the CLI's own `--effort` flag (2026-09-24,
+        confirmed live against claude-opus-5-5) -- None (sonnet/haiku's own config) omits
+        the flag entirely, same "unset means provider default" rule the paid lane uses."""
+        result = self.subscription_backend.call(
+            model_resolved, system_prompt, user_payload,
+            timeout_s=timeout_s, reasoning_effort=reasoning_effort,
+        )
         value = self._validate(result.content, schema)
         record = UsageRecord(
             run_id=self.run_id,

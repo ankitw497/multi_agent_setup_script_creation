@@ -52,6 +52,30 @@ def test_subscription_agent_calls_the_subscription_backend_and_needs_no_budget()
     assert "JSON Schema" in call["system_prompt"]  # schema_prompt() was embedded
 
 
+def test_subscription_agents_default_reasoning_effort_reaches_the_backend():
+    """2026-09-24: the opus alias (config/models.yaml) carries reasoning_effort: "medium",
+    mapped by claude_cli.py to the CLI's own `--effort` flag -- must actually reach
+    call_structured_subscription, not just sit unused on the Agent like it used to."""
+    client = FakeClient()
+    agent = Agent(name="story_lead", lane="subscription", client=client, model_alias="opus",
+                  model_resolved="claude-opus-5-5", base_system_prompt="reason about stories",
+                  default_reasoning_effort="medium")
+
+    agent.run(pass_id="A2", mode="PLAN", task_prompt="plan it", payload={"a": 1}, schema=Toy)
+
+    assert client.subscription_calls[0]["reasoning_effort"] == "medium"
+
+
+def test_subscription_agent_with_no_default_reasoning_effort_passes_none():
+    client = FakeClient()
+    agent = Agent(name="worker", lane="subscription", client=client, model_alias="haiku",
+                  model_resolved="claude-haiku-4-5-20251001", base_system_prompt="be terse")
+
+    agent.run(pass_id="S2b", mode="EXTRACT", task_prompt="extract things", payload={"a": 1}, schema=Toy)
+
+    assert client.subscription_calls[0]["reasoning_effort"] is None
+
+
 def test_paid_agent_requires_a_budget_counter():
     import pytest
 
@@ -183,3 +207,37 @@ def test_a_subscription_agent_rejects_enable_web_search():
     with pytest.raises(ValueError, match="max-turns"):
         agent.run(pass_id="S2b", mode="EXTRACT", task_prompt="x", payload={}, schema=Toy,
                   enable_web_search=True)
+
+
+def test_a_subscription_agent_rejects_max_tokens():
+    """Real gap found live, 2026-09-27 audit: `default_max_tokens`/`call_structured_
+    subscription` never actually forwarded this anywhere -- the Claude CLI backend has no
+    output-token-limiting flag at all (confirmed against `claude -p --help`), unlike the
+    paid-API lane. A caller (or a config default) setting max_tokens on a subscription-lane
+    agent must fail loudly, the same treatment as images/enable_web_search, rather than
+    silently do nothing."""
+    import pytest
+
+    client = FakeClient()
+    agent = Agent(name="worker", lane="subscription", client=client, model_alias="haiku",
+                  model_resolved="claude-haiku-4-5-20251001", base_system_prompt="be terse")
+
+    with pytest.raises(ValueError, match="output-token-limiting"):
+        agent.run(pass_id="S2b", mode="EXTRACT", task_prompt="x", payload={}, schema=Toy,
+                  max_tokens=4000)
+
+
+def test_a_subscription_agent_rejects_a_configured_default_max_tokens_too():
+    """Same rejection must apply when max_tokens comes from the agent's own
+    default_max_tokens (set from config/models.yaml), not just an explicit per-call
+    argument -- a config value that silently did nothing would be just as real a gap as a
+    caller's own argument being dropped."""
+    import pytest
+
+    client = FakeClient()
+    agent = Agent(name="worker", lane="subscription", client=client, model_alias="haiku",
+                  model_resolved="claude-haiku-4-5-20251001", base_system_prompt="be terse",
+                  default_max_tokens=4000)
+
+    with pytest.raises(ValueError, match="output-token-limiting"):
+        agent.run(pass_id="S2b", mode="EXTRACT", task_prompt="x", payload={}, schema=Toy)

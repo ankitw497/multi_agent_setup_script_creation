@@ -249,6 +249,17 @@ def test_prompt_requires_the_ending_to_echo_the_hooks_own_concrete_terms():
     assert "own concrete terms" in TASK_PROMPT
 
 
+def test_prompt_requires_the_hook_to_echo_the_titles_own_concrete_terms():
+    """STORY_IMPROVEMENT_PLAN.md Phase 30 P2 item 4, found live: a real plan's
+    title.promise and hook.promise shared almost no literal content -- the constraint was
+    already documented as a code comment on TitleContract.promise (planning/models.py)
+    but never made it into TASK_PROMPT, so the model never saw it. Mirrors the already-
+    shipped ending<->hook fix's own phrasing/severity."""
+    from planning.story_planner import TASK_PROMPT
+
+    assert "hook.promise` must reuse `title" in TASK_PROMPT
+
+
 def test_passes_target_duration_and_planning_wpm():
     story_lead = FakeStoryLead(make_plan())
     from planning.models import SourceBrief

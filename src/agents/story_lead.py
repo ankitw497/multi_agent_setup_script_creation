@@ -6,7 +6,7 @@ policy gate, not this agent, decides pass/fail).
 """
 from __future__ import annotations
 
-from config.loader import resolve_model
+from config.loader import resolve_model_any_lane
 from llm.client import LLMClient
 
 from .base import Agent
@@ -26,8 +26,14 @@ BASE_SYSTEM_PROMPT = (
 
 
 def make_story_lead(client: LLMClient, tier: str = "strong", alias_override: str | None = None) -> Agent:
-    """`alias_override` lets a caller pin a specific `paid_api_lane` alias
-    directly, overriding even this tier-based default.
+    """`alias_override` lets a caller pin a specific alias directly, overriding even this
+    tier-based default -- from EITHER lane (`resolve_model_any_lane` searches
+    `subscription_lane` then `paid_api_lane`), so a caller can select `openai_story_strong_
+    gpt56` (paid_api, metered) and `opus` (subscription, claude-opus-5-5, billed under the
+    Claude subscription rather than metered) through the same plain string (2026-09-24:
+    made interchangeable on explicit request; confirmed working live 2026-09-24 once the
+    local `claude` CLI was updated to 2.1.280+ -- see `opus`'s own note in models.yaml,
+    including real cost data from that confirming call).
 
     2026-09-16 (explicit user decision, STORY_IMPROVEMENT_PLAN.md Phase 4): the "strong"
     tier now resolves to `openai_story_strong_gpt56` (gpt-5.6-sol) -- previously
@@ -40,9 +46,9 @@ def make_story_lead(client: LLMClient, tier: str = "strong", alias_override: str
     `alias_override="openai_story_strong"` to roll back to it for any run
     without touching this default."""
     alias = alias_override or ("openai_story_strong_gpt56" if tier == "strong" else "openai_story_mini")
-    model_resolved, reasoning_effort, max_tokens = resolve_model("paid_api_lane", alias)
+    lane, model_resolved, reasoning_effort, max_tokens = resolve_model_any_lane(alias)
     return Agent(
-        name="story_lead", lane="paid_api", client=client,
+        name="story_lead", lane=lane, client=client,
         model_alias=alias, model_resolved=model_resolved,
         base_system_prompt=BASE_SYSTEM_PROMPT,
         default_reasoning_effort=reasoning_effort,

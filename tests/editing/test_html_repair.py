@@ -80,6 +80,19 @@ def test_repair_beat_visual_passes_render_failures_in_the_payload():
     assert sent == [{"scene_id": "s1", "code": "rendered_clipping", "detail": "text overflows"}]
 
 
+def test_repair_beat_visual_forces_the_real_beat_id_never_trusts_the_models_own():
+    """Real crash, 2026-09-27: the payload never sends beat.beat_id at all, yet BeatVisual's
+    schema requires the model to invent one from context. This caller happened to be safe by
+    accident (its result is stored keyed by the outer loop's own known-good beat_id), but the
+    returned object itself must still carry the real id, not whatever the model guessed."""
+    html_author = FakeHtmlAuthor(BeatVisual(beat_id="some_other_guessed_id", heading="h", scenes=[]))
+    plan = make_plan()
+
+    result = repair_beat_visual(plan.beats[0], plan, [], html_author, [])
+
+    assert result.beat_id == "B01"
+
+
 def test_repair_beat_visual_uses_pass_id_h_and_repair_mode():
     html_author = FakeHtmlAuthor(BeatVisual(beat_id="B01", heading="h", subheading="s", scenes=[]))
     plan = make_plan()

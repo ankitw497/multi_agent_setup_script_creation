@@ -24,6 +24,14 @@ def test_narration_lead_is_sonnet_on_the_subscription_lane():
     assert agent.model_resolved == "claude-sonnet-5"
 
 
+def test_narration_lead_picks_up_sonnets_configured_reasoning_effort():
+    """2026-09-24, explicit user decision: sonnet's config/models.yaml entry now carries
+    reasoning_effort: "high" -- this used to be silently discarded (`_, _`) by this
+    factory, never reaching narration_lead's own calls."""
+    agent = make_narration_lead(DummyClient())
+    assert agent.default_reasoning_effort == "high"
+
+
 def test_html_author_is_sonnet_on_the_subscription_lane():
     """STORY_IMPROVEMENT_PLAN.md Phase 14: this identity was always part of the original
     design (`agents/__init__.py`'s own docstring listed it from the start) but was never
@@ -34,6 +42,11 @@ def test_html_author_is_sonnet_on_the_subscription_lane():
     assert agent.name == "html_author"
     assert agent.lane == "subscription"
     assert agent.model_resolved == "claude-sonnet-5"
+
+
+def test_html_author_picks_up_sonnets_configured_reasoning_effort():
+    agent = make_html_author(DummyClient())
+    assert agent.default_reasoning_effort == "high"
 
 
 def test_story_lead_defaults_to_the_strong_tier():
@@ -95,6 +108,23 @@ def test_story_lead_gpt56_alias_pins_reasoning_effort_and_a_larger_ceiling():
 def test_story_lead_alias_override_takes_precedence_over_tier():
     agent = make_story_lead(DummyClient(), tier="mini", alias_override="openai_story_strong")
     assert agent.model_alias == "openai_story_strong"
+
+
+def test_story_lead_alias_override_can_select_a_subscription_lane_alias():
+    """2026-09-24: opus (claude-opus-5-5, subscription_lane) must be selectable through the
+    exact same `alias_override` string as any paid_api_lane alias -- the two are meant to
+    be interchangeable, even though they're billed through different lanes."""
+    agent = make_story_lead(DummyClient(), alias_override="opus")
+    assert agent.model_alias == "opus"
+    assert agent.model_resolved == "claude-opus-5-5"
+    assert agent.lane == "subscription"
+
+
+def test_story_lead_default_gpt56_alias_still_resolves_to_the_paid_api_lane():
+    """Regression guard for the lane-lookup change above -- the existing paid_api_lane
+    default must not accidentally end up on the subscription lane."""
+    agent = make_story_lead(DummyClient())
+    assert agent.lane == "paid_api"
 
 
 def test_review_lead_strong_tier_caps_reasoning_to_low():

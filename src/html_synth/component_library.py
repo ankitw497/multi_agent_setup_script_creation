@@ -17,6 +17,22 @@ BASE_STYLESHEET = """\
 html{scroll-behavior:smooth;}
 body{font-family:var(--sans);background:var(--bg);color:var(--text);line-height:1.6;font-size:16px;overflow-x:hidden;}
 
+/* Page chrome (STORY_IMPROVEMENT_PLAN.md Phase 31 item 1): a sticky nav with one
+   progress-tracker entry per beat -- pure CSS, no JS dependency (unlike an
+   IntersectionObserver-based "current section" highlight, which would go
+   silently inert in a static preview/non-JS viewer, the same class of gap the
+   .reveal fade-in fix below already avoided). Renders nothing when there are no
+   beats (assembler.py's own _render_nav already returns "" in that case). */
+nav{position:sticky;top:0;z-index:100;background:var(--bg);border-bottom:1px solid var(--border);}
+.nav-main{display:flex;align-items:center;padding:0 24px;height:44px;}
+.nav-logo{font-family:var(--sans);font-weight:600;font-size:13px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.progress-tracker{display:flex;align-items:stretch;border-top:1px solid var(--border);overflow-x:auto;}
+.prog-step{flex:1 0 auto;display:flex;align-items:center;justify-content:center;gap:5px;text-decoration:none;padding:6px 10px;border-right:1px solid var(--border);white-space:nowrap;}
+.prog-step:last-child{border-right:none;}
+.prog-step:hover{background:var(--bg3);}
+.prog-dot{width:5px;height:5px;border-radius:50%;background:var(--text3);flex-shrink:0;}
+.prog-label{font-size:10.5px;color:var(--text3);font-weight:500;}
+
 section{padding:64px 40px;max-width:1100px;margin:0 auto;}
 .sec-wrap{background:var(--bg);}
 .sec-alt{background:var(--bg3);}
@@ -71,6 +87,22 @@ section{padding:64px 40px;max-width:1100px;margin:0 auto;}
 .metric-table{width:100%;border-collapse:collapse;font-size:14px;margin-bottom:20px;}
 .metric-table th{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;color:var(--text3);padding:8px 12px;text-align:left;border-bottom:1px solid var(--border);}
 .metric-table td{padding:10px 12px;border-bottom:1px solid var(--border);color:var(--text3);}
+
+/* Phase 31 item 3: suspect_board (mystery/investigation lineup), solution_grid (a payoff
+   resolving into several concrete options), case_card (one concrete scenario/example). */
+.suspect-board{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-bottom:24px;}
+.suspect{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r-sm);padding:16px 18px;}
+.suspect-name{font-weight:600;font-size:14px;color:var(--text);margin-bottom:4px;}
+.suspect-note{font-size:13px;color:var(--text3);line-height:1.5;}
+
+.solution-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin-bottom:24px;}
+.solution-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:18px 20px;}
+.solution-name{font-weight:600;font-size:14px;color:var(--accent);margin-bottom:6px;}
+.solution-body{font-size:13.5px;color:var(--text3);line-height:1.6;}
+
+.case-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:20px 24px;margin-bottom:20px;}
+.case-title{font-weight:600;font-size:15px;color:var(--text);margin-bottom:4px;}
+.case-sub{font-size:13px;color:var(--text3);margin-bottom:10px;}
 
 /* 2026-09-11 fix (user-reported "lot of empty space"): `.reveal` elements
    used to start at opacity:0 and only become visible once an
@@ -184,11 +216,11 @@ def render_component(component_id: str, data: dict) -> str:
             # step-desc/card-* boxes in one real run. Omit the div entirely
             # when there's no real description rather than render it empty.
             desc_block = f'<div class="step-desc">{desc}</div>' if desc else ""
-            return spec["item_skeleton"].format(
-                index=index,
-                title=_esc(item["title"]) if isinstance(item, dict) else _esc(item),
-                desc_block=desc_block,
-            )
+            # item.get("title", "") (2026-09-27, real crash): same bug class as
+            # suspect_board/solution_grid just below -- a dict item missing "title" must
+            # degrade to a blank slot, not KeyError the whole page.
+            title = item.get("title", "") if isinstance(item, dict) else item
+            return spec["item_skeleton"].format(index=index, title=_esc(title), desc_block=desc_block)
 
         items_html = "".join(
             _step_item_html(i, item) for i, item in enumerate(data.get("items", []), start=1)
@@ -207,13 +239,61 @@ def render_component(component_id: str, data: dict) -> str:
         items_html = "".join(_render_grid_item(item) for item in data.get("items", []))
         return spec["skeleton"].format(items=items_html)
 
+    if component_id == "suspect_board":
+        def _suspect_item_html(item: object) -> str:
+            # item.get("name", "") (2026-09-27, real crash): a live run's first-ever
+            # solution_grid use crashed with KeyError on a dict item that omitted "name"
+            # -- every other field on these items already degraded to a blank slot when
+            # missing (see "body"/"note" just below); "name" must match, never
+            # hard-crash the whole page over one malformed item.
+            name = item.get("name", "") if isinstance(item, dict) else item
+            note = _esc(item.get("note", "")) if isinstance(item, dict) else ""
+            note_block = f'<div class="suspect-note">{note}</div>' if note else ""
+            return spec["item_skeleton"].format(name=_esc(name), note_block=note_block)
+        items_html = "".join(_suspect_item_html(item) for item in data.get("items", []))
+        return spec["skeleton"].format(items=items_html)
+
+    if component_id == "solution_grid":
+        def _solution_item_html(item: object) -> str:
+            # item.get("name", "") (2026-09-27, real crash): same fix as suspect_board
+            # just above -- a missing "name" must degrade to a blank slot, not crash.
+            name = item.get("name", "") if isinstance(item, dict) else item
+            body = _esc(item.get("body", "")) if isinstance(item, dict) else ""
+            body_block = f'<div class="solution-body">{body}</div>' if body else ""
+            return spec["item_skeleton"].format(name=_esc(name), body_block=body_block)
+        items_html = "".join(_solution_item_html(item) for item in data.get("items", []))
+        return spec["skeleton"].format(items=items_html)
+
+    if component_id == "case_card":
+        sub = _esc(data.get("sub", ""))
+        body = _esc(data.get("body", ""))
+        sub_block = f'<div class="case-sub">{sub}</div>' if sub else ""
+        body_block = f'<div class="subsection-body">{body}</div>' if body else ""
+        return spec["skeleton"].format(title=_esc(data.get("title", "")), sub_block=sub_block, body_block=body_block)
+
     if component_id == "metric_table":
+        def _metric_row_html(row: object) -> str:
+            # isinstance guard (2026-09-27, same audit that found the step_list/
+            # suspect_board/solution_grid crashes): `metric_table` is the one component
+            # whose item shape (`rows: list[list[str]]`) is documented only in a YAML
+            # comment, never sent to the model via component_slots()/TASK_PROMPT (which
+            # never mentions metric_table at all) -- so a model guessing the same
+            # dict-per-item shape every sibling component actually uses (e.g.
+            # `[{"metric": "Accuracy", "before": "62%", "after": "89%"}]`) is a real,
+            # plausible response, not just a scalar row. `for cell in row` on a dict
+            # silently renders its KEYS as cell values (wrong, not a crash); on a scalar
+            # it raises TypeError (crashes the whole page). Handle all three shapes.
+            if isinstance(row, dict):
+                cells = list(row.values())
+            elif isinstance(row, (list, tuple)):
+                cells = row
+            else:
+                cells = [row]
+            return "<tr>" + "".join(f"<td>{_esc(cell)}</td>" for cell in cells) + "</tr>"
         headers = data.get("headers", [])
         rows = data.get("rows", [])
         header_cells = "".join(f"<th>{_esc(h)}</th>" for h in headers)
-        body_rows = "".join(
-            "<tr>" + "".join(f"<td>{_esc(cell)}</td>" for cell in row) + "</tr>" for row in rows
-        )
+        body_rows = "".join(_metric_row_html(row) for row in rows)
         return spec["skeleton"].format(header_cells=header_cells, body_rows=body_rows)
 
     escaped = {slot: _esc(data.get(slot, "")) for slot in spec["slots"]}

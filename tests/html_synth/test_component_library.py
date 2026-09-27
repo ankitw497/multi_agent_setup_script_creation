@@ -91,6 +91,75 @@ def test_step_list_item_with_a_real_desc_still_renders_it():
     assert '<div class="step-desc">does the thing</div>' in out
 
 
+def test_step_list_item_missing_title_degrades_to_blank_not_a_crash():
+    """Real crash, 2026-09-27: a dict item missing "title" raised KeyError instead of
+    degrading like every other missing field on this same item already does."""
+    out = render_component("step_list", {"items": [{"desc": "does the thing"}]})
+    assert '<div class="step-title"></div>' in out
+
+
+def test_suspect_board_renders_one_suspect_per_item():
+    out = render_component("suspect_board", {"items": [
+        {"name": "Weights", "note": "the model parameters themselves"},
+        {"name": "KV Cache", "note": "stored K/V history"},
+    ]})
+    assert out.count('class="suspect"') == 2
+    assert '<div class="suspect-name">Weights</div>' in out
+    assert '<div class="suspect-note">the model parameters themselves</div>' in out
+
+
+def test_suspect_board_item_with_no_note_omits_the_note_div():
+    out = render_component("suspect_board", {"items": [{"name": "Weights"}]})
+    assert '<div class="suspect-name">Weights</div>' in out
+    assert "suspect-note" not in out
+
+
+def test_suspect_board_item_missing_name_degrades_to_blank_not_a_crash():
+    """Real crash, 2026-09-27: same bug class as step_list -- a dict item missing "name"
+    must degrade to a blank slot, not KeyError the whole page."""
+    out = render_component("suspect_board", {"items": [{"note": "stored K/V history"}]})
+    assert '<div class="suspect-name"></div>' in out
+
+
+def test_solution_grid_renders_one_option_per_item():
+    out = render_component("solution_grid", {"items": [
+        {"name": "QLoRA", "body": "quantized base weights"},
+        {"name": "Full fine-tune", "body": "every parameter updated"},
+    ]})
+    assert out.count('class="solution-card"') == 2
+    assert '<div class="solution-name">QLoRA</div>' in out
+    assert '<div class="solution-body">quantized base weights</div>' in out
+
+
+def test_solution_grid_item_with_no_body_omits_the_body_div():
+    out = render_component("solution_grid", {"items": [{"name": "QLoRA"}]})
+    assert '<div class="solution-name">QLoRA</div>' in out
+    assert "solution-body" not in out
+
+
+def test_solution_grid_item_missing_name_degrades_to_blank_not_a_crash():
+    """Real crash, 2026-09-27: a live run's first-ever solution_grid use (surfaced only
+    once the Phase 32 prompt nudge away from diagram_card's monopoly made the model
+    actually reach for this component) crashed with KeyError on a dict item that omitted
+    "name" -- must degrade to a blank slot like every other missing field already does."""
+    out = render_component("solution_grid", {"items": [{"body": "quantized base weights"}]})
+    assert '<div class="solution-name"></div>' in out
+
+
+def test_case_card_renders_title_sub_and_body():
+    out = render_component("case_card", {"title": "The T4 case", "sub": "16GB VRAM", "body": "weights alone take 15.2GB"})
+    assert '<div class="case-title">The T4 case</div>' in out
+    assert '<div class="case-sub">16GB VRAM</div>' in out
+    assert "weights alone take 15.2GB" in out
+
+
+def test_case_card_omits_blank_sub_and_body():
+    out = render_component("case_card", {"title": "The T4 case"})
+    assert '<div class="case-title">The T4 case</div>' in out
+    assert "case-sub" not in out
+    assert "subsection-body" not in out
+
+
 def test_callout_variants_use_the_right_class():
     assert 'callout-danger' in render_component("callout_danger", {"text": "x"})
     assert 'callout-success' in render_component("callout_success", {"text": "x"})
@@ -147,6 +216,29 @@ def test_metric_table_renders_headers_and_rows():
     out = render_component("metric_table", {"headers": ["A", "B"], "rows": [["1", "2"], ["3", "4"]]})
     assert "<th>A</th>" in out
     assert "<td>3</td>" in out
+
+
+def test_metric_table_scalar_row_degrades_to_a_single_cell_not_a_crash():
+    """Found live, 2026-09-27 audit: `for cell in row` on a scalar row (the model
+    returning a bare value instead of a list) would raise TypeError and crash the
+    whole page -- must degrade to a single-cell row instead."""
+    out = render_component("metric_table", {"headers": ["A"], "rows": ["just a string", ["1"]]})
+    assert "<td>just a string</td>" in out
+    assert "<td>1</td>" in out
+
+
+def test_metric_table_dict_shaped_row_renders_its_values_not_its_keys():
+    """2026-09-27 audit: metric_table's item shape is documented only in a YAML comment,
+    never sent to the model -- a model guessing the same dict-per-item shape every
+    sibling component actually uses is a real, plausible response. Must render the
+    dict's VALUES as cells, not its keys (and not crash)."""
+    out = render_component("metric_table", {
+        "headers": ["Metric", "Before", "After"],
+        "rows": [{"metric": "Accuracy", "before": "62%", "after": "89%"}],
+    })
+    assert "<td>Accuracy</td>" in out
+    assert "<td>62%</td>" in out
+    assert "metric</td>" not in out  # the dict's KEY must not leak into a cell
 
 
 def test_math_block_renders_label_and_equation():
@@ -234,6 +326,45 @@ def test_diagram_card_is_available_to_comparison_derivation_and_payoff_too():
     for role in ("comparison", "derivation", "payoff"):
         assert "diagram_card" in components_for_story_role(role), f"{role!r} still excludes diagram_card"
         assert "card" in components_for_story_role(role)  # the plain option must still remain available
+
+
+def test_diagram_card_is_available_to_problem_fix_too():
+    """2026-09-24: the one role Phase 27 item 1 missed -- confirmed live (Opus 5.5
+    story_lead comparison run) that a build-archetype plan can tag nearly half its beats
+    problem_fix (6/13), and problem_fix had zero diagram-capable options, locking a
+    build video's own problem->fix chain (very often a mechanism/pipeline/equation) out
+    of the one component built for exactly that content."""
+    assert "diagram_card" in components_for_story_role("problem_fix")
+    assert "step_list" in components_for_story_role("problem_fix")
+    assert "callout_warn" in components_for_story_role("problem_fix")
+
+
+def test_suspect_board_is_available_to_contradiction_and_investigation():
+    """STORY_IMPROVEMENT_PLAN.md Phase 31 item 3: a lineup of candidate causes is exactly
+    the shape a sustained mystery archetype needs for these two roles."""
+    for role in ("contradiction", "investigation"):
+        assert "suspect_board" in components_for_story_role(role)
+
+
+def test_solution_grid_is_available_to_payoff_only():
+    assert "solution_grid" in components_for_story_role("payoff")
+    for role in ("hook", "mechanism", "problem_fix", "derivation", "observations"):
+        assert "solution_grid" not in components_for_story_role(role)
+
+
+def test_case_card_is_available_to_observations_and_mechanism():
+    for role in ("observations", "mechanism"):
+        assert "case_card" in components_for_story_role(role)
+
+
+def test_case_card_is_available_to_problem_fix_too():
+    """Phase 32 P1: confirmed live -- problem_fix is the single most-repeated role in a
+    real build-archetype plan (3-4 of ~11-12 beats), and "here's a specific problem,
+    here's its specific fix" is a near-verbatim match for case_card's own "here's a
+    specific instance of the general rule" shape. Two real generated pages defaulted to
+    diagram_card for every single problem_fix scene with no alternative available."""
+    assert "case_card" in components_for_story_role("problem_fix")
+    assert "diagram_card" in components_for_story_role("problem_fix")  # still available too
 
 
 def test_all_component_ids_covers_every_role_in_the_plan_table():

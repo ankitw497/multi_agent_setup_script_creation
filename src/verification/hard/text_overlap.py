@@ -25,9 +25,17 @@ _STOPWORDS = {
 _WORD_RE = re.compile(r"[a-z0-9']+")
 
 
-def content_words(text: str) -> set[str]:
+def content_words(text: str, min_length: int = 3) -> set[str]:
+    # min_length is overridable (2026-09-26, Phase 32 P1) -- the default of 3
+    # is right for general prose overlap (every other caller), but it silently
+    # erases exactly the short technical shorthand a title would reuse (Q, K,
+    # V, n2) -- confirmed live: a real title scored 0.8 "unreflected" against
+    # its must_cover items purely because every one of those tokens fell below
+    # this default, not because the title was actually a poor fit. Callers
+    # checking overlap against short technical terms should pass a lower
+    # min_length explicitly; the default is unchanged for everyone else.
     words = _WORD_RE.findall(text.lower())
-    return {w for w in words if w not in _STOPWORDS and len(w) > 2}
+    return {w for w in words if w not in _STOPWORDS and len(w) >= min_length}
 
 
 def overlap(a: str, b: str) -> float:

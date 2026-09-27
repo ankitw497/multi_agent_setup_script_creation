@@ -52,6 +52,21 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from dotenv import load_dotenv
+
+# 2026-09-24, found live: a real run crashed with `openai.AuthenticationError: 401 --
+# Incorrect API key provided: sk-None-...` even though .env has a real, correct
+# OPENAI_API_KEY. Root cause: nothing in this app ever explicitly loaded .env -- litellm
+# (imported transitively below, via agents.story_lead -> llm.client -> llm.backends.
+# litellm_backend) does call load_dotenv() on its own import, but with override=False by
+# default, so a STALE key already exported in the user's shell profile (~/.zshrc,
+# ~/.bash_profile -- outside this repo, not touched here) silently wins over .env's correct
+# value on every single run, with no visible error until the first real paid-lane call.
+# override=True here makes .env authoritative, matching this project's own documented setup
+# convention ("create .env with OPENAI_API_KEY=...", README.md) -- must run before any of
+# the imports below that transitively trigger litellm's own (less reliable) load.
+load_dotenv(override=True)
+
 from agents.html_author import make_html_author
 from agents.narration_lead import make_narration_lead
 from agents.review_lead import make_review_lead
@@ -62,7 +77,7 @@ from facts.claim_extract import extract_claims
 from facts.models import Claim
 from facts.normalize import dedupe_claims, link_numeric_claims
 from facts.seeds import find_formula_claims, seed_assumption_ledger
-from facts.verify import find_claims_with_no_verdict, verify_claims
+from facts.verify import MAX_VERDICT_RETRIES, find_claims_with_no_verdict, verify_claims
 from facts.web_evidence import WebSearchBackend
 from html_synth.vertical_assembler import synthesize_short_html
 from llm.budget import BudgetCounter, BudgetTier, DEFAULT_TIERS
@@ -209,10 +224,35 @@ def run_full_pipeline(
     review_lead_flash = make_review_lead(client, tier="flash")
 
     # ---- S2a-c + C2a ----
+    def _raise_if_no_verdict(claims: list) -> None:
+        # 2026-09-25: this used to be a WARNING log line only -- the run then proceeded
+        # to build a full video on top of a claim registry with real holes in it,
+        # confirmed live to cascade into ~100 downstream grounding_policy_violation
+        # hard failures with no intermediate check. `verify_claims_with_llm` now
+        # retries a missing verdict up to MAX_VERDICT_RETRIES times BEFORE a claim can
+        # even reach here (facts/verify.py::_verify_batch_with_retry) -- a claim
+        # arriving here already survived 3 real attempts, so this is a genuine, rare
+        # residual failure worth stopping for, not routine noise to log past. Checked
+        # again on a RESUME too (2026-09-27, real gap found live): the checkpoint is now
+        # saved BEFORE this raises (see below), so a resumed run must not silently reuse
+        # a claim registry with confirmed holes just because it was already persisted --
+        # that would defeat the entire point of this check.
+        no_verdict = find_claims_with_no_verdict(claims)
+        if no_verdict:
+            raise ValueError(
+                f"S2/C2a: {len(no_verdict)} claim(s) got no verdict after "
+                f"{MAX_VERDICT_RETRIES + 1} attempts each (likely a real, persistent LLM "
+                f"response issue, not a one-off): {no_verdict} -- refusing to build a video "
+                "on a claim registry with confirmed holes in it, rather than let this "
+                "cascade into downstream grounding_policy_violation failures with no "
+                "intermediate check"
+            )
+
     if "claims" in state.completed_stages:
         claims, ledger = state.claim_registry, state.assumption_ledger
         log(f"S2/C2a: resumed from checkpoint, {len(claims)} claims, "
             f"${state.claims_spent_microusd / 1_000_000:.4f} (already spent, not re-billed)")
+        _raise_if_no_verdict(claims)
     else:
         facts_budget = BudgetCounter(tier=DEFAULT_TIERS["longform"])
         claims, ledger = _build_claim_registry(
@@ -220,14 +260,17 @@ def run_full_pipeline(
             extraction.js_literals, web_backend,
         )
         log(f"S2/C2a: {len(claims)} claims, ${facts_budget.spent_usd:.4f}")
-        no_verdict = find_claims_with_no_verdict(claims)
-        if no_verdict:
-            log(f"S2/C2a: WARNING -- {len(no_verdict)} claim(s) got no verdict at all "
-                f"(likely a truncated batch response): {no_verdict}")
+        # checkpoint saved BEFORE the no-verdict check can raise (2026-09-27, real
+        # regression found live): the raise used to happen first, so a run that failed
+        # here left NO checkpoint at all -- a subsequent --resume had nothing to resume
+        # from and had to re-pay for this entire stage (extraction + every verification
+        # retry) from scratch. The claims/ledger this run already paid for are real work,
+        # worth keeping regardless of whether this run itself is allowed to proceed.
         state.claim_registry, state.assumption_ledger = claims, ledger
         state.claims_spent_microusd = facts_budget.spent_microusd
         state.completed_stages.append("claims")
         save_checkpoint(state, run_dir)
+        _raise_if_no_verdict(claims)
 
     # ---- S1 (only above the word threshold) + A1 ----
     if "source_brief" in state.completed_stages:
@@ -484,10 +527,15 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--references-dir", type=Path, default=DEFAULT_REFERENCES_DIR)
     parser.add_argument(
         "--story-lead-alias", default=None,
-        help="paid_api_lane alias to pin story_lead to, overriding the tier's own default -- "
-             "e.g. pass openai_story_strong to roll back to gpt-4o. Default (2026-09-16, "
-             "STORY_IMPROVEMENT_PLAN.md Phase 4) is now openai_story_strong_gpt56 (gpt-5.6-sol), "
-             "never changed by this flag alone",
+        help="model alias to pin story_lead to, overriding the tier's own default -- looked "
+             "up in EITHER config/models.yaml lane (subscription_lane then paid_api_lane), so "
+             "e.g. openai_story_strong (gpt-4o, paid, metered) and opus (claude-opus-5-5, "
+             "subscription, billed under the Claude subscription) are both valid and "
+             "interchangeable through this one flag. Default (2026-09-16, STORY_IMPROVEMENT_"
+             "PLAN.md Phase 4) is still openai_story_strong_gpt56 (gpt-5.6-sol), never changed "
+             "by this flag alone. opus requires claude CLI 2.1.280+ (confirmed 2026-09-24 "
+             "via the claude-code@latest cask -- see opus's own verified note in "
+             "models.yaml)",
     )
     parser.add_argument(
         "--loop-budget-usd", type=float, default=None,

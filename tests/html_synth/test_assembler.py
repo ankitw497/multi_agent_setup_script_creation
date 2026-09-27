@@ -86,6 +86,20 @@ def test_component_renders_in_both_files_but_data_attrs_dont_leak_from_it():
     assert "card-value" in page
 
 
+def test_an_unknown_component_id_degrades_to_no_component_not_a_crash():
+    """Real gap found live, 2026-09-27 audit: `component_id` is a plain `str | None` on
+    the model's own response, not schema-restricted to a known set --
+    `render_component()` intentionally raises ValueError for a truly unknown id (a useful
+    loud failure for a programmer typo in code), but that same strictness would crash the
+    ENTIRE page synthesis on a model-hallucinated id, which is a real, reachable model
+    output, not a code bug. The scene's prose must still render."""
+    beats = make_beat_visuals(component_id="not_a_real_component", component_data={"title": "t"},
+                               screen_prose="Dot products grow large with wider vectors.")
+    vs, page = synthesize_page(make_plan(), HeroContent(), beats, make_narration())
+    assert "Dot products grow large" in vs
+    assert "Dot products grow large" in page
+
+
 def test_scene_id_and_prose_render_in_the_dom():
     vs, _ = synthesize_page(make_plan(), HeroContent(), make_beat_visuals(), make_narration())
     assert 'id="s1"' in vs
@@ -122,3 +136,37 @@ def test_narration_containing_script_close_tag_cannot_break_out_of_the_script_bl
 def test_title_appears_in_the_page_title_tag():
     vs, _ = synthesize_page(make_plan(title="My Video Title"), HeroContent(), make_beat_visuals(), make_narration())
     assert "<title>My Video Title</title>" in vs
+
+
+def test_nav_has_one_progress_step_per_beat_linking_to_its_section():
+    """STORY_IMPROVEMENT_PLAN.md Phase 31 item 1: pure deterministic page chrome, built
+    from beat_visuals/plan.title -- no new LLM call, no new content-generation risk."""
+    beat_visuals = [
+        BeatVisual(beat_id="B01", heading="The Scaling Problem", subheading="x", scenes=[]),
+        BeatVisual(beat_id="B02", heading="The Fix", subheading="x", scenes=[]),
+    ]
+    vs, _ = synthesize_page(make_plan(), HeroContent(), beat_visuals, [])
+
+    assert vs.count('class="prog-step"') == 2
+    assert 'href="#beat-B01"' in vs
+    assert 'href="#beat-B02"' in vs
+    assert "The Scaling Problem" in vs
+    assert "The Fix" in vs
+
+
+def test_beat_section_carries_the_anchor_id_the_nav_links_to():
+    beat_visuals = [BeatVisual(beat_id="B01", heading="h", subheading="x", scenes=[])]
+    vs, _ = synthesize_page(make_plan(), HeroContent(), beat_visuals, [])
+    assert 'id="beat-B01"' in vs
+
+
+def test_nav_renders_identically_in_both_files_pure_chrome_no_metadata():
+    vs, page = synthesize_page(make_plan(), HeroContent(), make_beat_visuals(), make_narration())
+    assert "<nav>" in vs and "<nav>" in page
+    assert vs[vs.index("<nav>"):vs.index("</nav>")] == page[page.index("<nav>"):page.index("</nav>")]
+
+
+def test_no_beats_renders_no_nav():
+    vs, page = synthesize_page(make_plan(), HeroContent(), [], [])
+    assert "<nav>" not in vs
+    assert "<nav>" not in page

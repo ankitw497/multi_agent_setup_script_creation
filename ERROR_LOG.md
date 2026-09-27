@@ -3542,6 +3542,175 @@ promotion.
 
 ---
 
+## ERR-083 — `claude -p` subprocess survived a SIGTERM to the whole pipeline, hung 11.5 hours as an orphan
+
+**Date:** 2026-09-25 · **Severity:** critical (a run can hang indefinitely with no error, no
+timeout, and outlive the parent process entirely) · **Status:** fixed · **Component:**
+`llm/backends/claude_cli.py`
+
+**Where:** live-verifying Phase 29 (Opus 5.5 story_lead, `video-01-attention-opus55-lead`).
+A resumed run's A2b (`SCENE_EXPANSION`) calls showed a real, growing pattern of slow
+individual calls (some 27-37 minutes) before the run went completely silent -- no new
+`usage.jsonl` entries for 11.5 hours, `ps` still showed the top-level python process alive
+but at 0% CPU (blocked, not computing). Killing the recorded process tree (`kill` on the
+python + `caffeinate` pids) did **not** end the hang: a `ps aux | grep strict-mcp-config`
+afterward found a real orphaned `claude -p` subprocess still running, its payload matching
+this exact A2 call, alive since the point it should have either completed or timed out.
+Root cause: `_call_once` used plain `subprocess.run(cmd, ..., timeout=effective_timeout)` --
+Python's implementation only kills the *immediate* child on timeout. The real `claude` CLI
+spawns its own subagents/background workers (its own JSON envelope carries a
+`subagent_stats` field), and if a detached grandchild inherits the stdout pipe's write end,
+the immediate child dying doesn't close that file descriptor -- `communicate()` can then
+hang waiting for EOF that never arrives, past the configured timeout, past every retry, and
+past the parent process's own death (a plain `kill` on the parent doesn't touch an already-
+detached grandchild either).
+
+**Fix:** `_call_once` now runs the subprocess with `start_new_session=True` (its own process
+group) via `subprocess.Popen` + manual `communicate(timeout=...)`, and on
+`TimeoutExpired`, kills the **whole process group** (`os.killpg(os.getpgid(proc.pid),
+signal.SIGKILL)`, tolerating `ProcessLookupError` if it's already gone) instead of relying
+on `subprocess.run`'s single-process kill. This is a real fix for any hang of this shape,
+not specific to Opus 5.5 or this one call site -- every subscription-lane call goes through
+`_call_once`.
+
+**Tests:** `tests/llm/test_claude_cli_backend.py` -- all 10 existing mocks (previously
+patching `subprocess.run`) migrated to a `FakePopen`/`_patch_popen` helper matching the new
+`Popen`+`communicate()` shape (this alone caught that several had silently stopped being
+mocked at all -- the full suite took 68s instead of its normal ~5s while they fell through
+to real, unmocked subprocess calls), plus 1 new test confirming the timeout path calls
+`os.killpg` on the child's own process group, not just `proc.kill()`.
+
+**A real, separate lesson worth keeping:** a test suite runtime regression (68s vs. ~5s) was
+itself the first hard confirmation that several mocks had gone stale after a refactor --
+worth treating unexplained suite slowdowns as a signal, not just noise, the next time a
+subprocess-invocation shape changes.
+
+---
+
+## ERR-084 — H's freeform `component_data` dict crashed the whole page render twice live, in two different ways; a 3-round audit found and fixed 3 more of the same bug class
+
+**Date:** 2026-09-27 · **Severity:** critical (either crash loses the entire run's spend
+mid-pipeline, after every earlier paid stage already succeeded) · **Status:** fixed ·
+**Component:** `html_synth/synthesizer.py`, `html_synth/component_library.py`,
+`html_synth/assembler.py`, `editing/html_repair.py`, `editing/targeted_rewrite.py`
+
+**Where:** live-verifying Phase 32's own fixes (Opus 5.5 story_lead, resumed run). Two
+crashes hit back to back on the same run:
+1. `apply_repairs`'s `beat_visual_by_id[b.beat_id] for b in plan.beats` raised
+   `KeyError: 'B1_hook'`. Root cause: `synthesize_beat_visual`'s payload never actually
+   sends `beat.beat_id` to the model at all, yet `BeatVisual`'s schema requires the model
+   to invent one from context -- this had silently worked on every prior run that never
+   needed a repair pass (the repair path itself was accidentally safe, keyed by the
+   caller's own known-good id, not the model's echoed one).
+2. Once fixed and re-run past that point, `component_library.py::render_component`'s
+   `solution_grid` branch raised `KeyError: 'name'` -- Phase 32's own P1 fix (the prompt
+   nudge away from `diagram_card`'s monopoly) worked exactly as intended and got the model
+   to use `solution_grid` for the first time in any live run, and one returned item simply
+   omitted "name", which every *sibling* field on the same item (`body`) already degraded
+   gracefully for via `.get()`.
+
+**Fix (first pass):** forced `beat_id` from the input on the returned `BeatVisual` in both
+`synthesizer.py::synthesize_beat_visual` and `editing/html_repair.py::repair_beat_visual`
+(never trust the model's own echo of a value it was never even given); switched
+`solution_grid`'s (and, by the same pattern, `suspect_board`'s and `step_list`'s) item
+lookups from `item["key"]` to `item.get("key", "")`.
+
+**Follow-up: 3 rounds of review, specifically hunting the SAME bug class** (a field
+Pydantic validates as "a dict"/"a string" but not its keys/values, later code assumes has
+a specific shape) before running anything else. 3 parallel audits (component rendering,
+every LLM-filled freeform `dict` field codebase-wide, and unguarded lookups keyed by an
+open `str` field) converged and found 3 more real instances, all fixed:
+- `metric_table`'s `rows` iteration (`for cell in row`) crashed with `TypeError` on a
+  scalar row, and silently rendered a dict row's KEYS instead of its values -- its item
+  shape was documented only in a YAML comment, never sent to the model at all (unlike
+  every sibling component). Now handles list/dict/scalar row shapes explicitly, and the
+  prompt documents the expected flat-list shape.
+- `assembler.py::_render_scene` called `render_component(scene.component_id, ...)` with no
+  check that the model's freely-chosen `component_id` (`str | None`, not schema-restricted
+  to the offered set) is actually a real component -- `render_component` itself
+  intentionally raises `ValueError` for an unknown id (a useful loud failure for a
+  programmer typo in code, kept as-is and still tested), but that same strictness would
+  crash the whole page on a model-hallucinated id. Now falls back to no component (the
+  scene's prose still renders) the same way a genuinely blank `component_id` already did.
+- `editing/targeted_rewrite.py::_hook_last_scene_id` (added by Phase 32 itself) found the
+  hook beat by `archetype_role == "hook"` -- a plain, model-filled string, not a `Literal`
+  -- instead of the safer, already-established positional convention
+  `verification/diagnostics/pacing.py` uses for the exact same question (the FIRST beat is
+  the hook, by construction). A beat that IS the hook but whose label the model tagged
+  differently would have silently disabled the whole CTA/hook guardrail with no signal.
+
+**Tests:** 7 new (`tests/html_synth/test_synthesizer.py`, `test_html_repair.py`,
+`test_component_library.py` x4, `test_assembler.py`, `test_targeted_rewrite.py`).
+
+**A real, separate lesson worth keeping:** the SECOND crash only became reachable BECAUSE
+the first fix (and Phase 32's own diagram_card nudge) worked -- fixing a bug can unlock a
+code path that was never live-exercised before and was hiding its own separate bug. Worth
+treating "the fix worked, and something new broke" as a reason to keep auditing the same
+class of defect nearby, not just move on once the one crash in front of you is silenced.
+
+---
+
+## ERR-085 — Independent diff review (pre-commit) found 4 more real bugs across this session's own uncommitted changes
+
+**Date:** 2026-09-27 · **Severity:** mixed (one real cost/resume regression, one silent
+budget-guardrail weakening, two low-impact hygiene gaps) · **Status:** fixed ·
+**Component:** `orchestration/run_pipeline.py`, `html_synth/synthesizer.py`,
+`agents/base.py`, `llm/backends/claude_cli.py`
+
+**Where:** before committing this session's accumulated changes, 3 parallel independent
+code reviews (not looking for the ERR-084 crash class specifically -- a general
+correctness pass over the whole diff) were run against `git diff` for every changed
+area. Two came back clean; two found real, confirmed issues:
+
+1. **`run_pipeline.py`'s no-verdict check raised BEFORE saving the checkpoint** (Phase
+   30's own fix, ERR-081-adjacent): a claim registry with a confirmed, un-retryable
+   verification hole correctly refuses to proceed, but the `raise` fired before
+   `state.claim_registry`/`completed_stages`/`save_checkpoint` -- a run that hit this had
+   NOTHING to `--resume` from, forcing a full re-pay of claim extraction + every
+   verification retry from scratch. **Fix:** save the checkpoint first, then raise;
+   the resume branch now re-runs the same no-verdict check against the loaded claims too
+   (so persisting the checkpoint can't silently reintroduce the exact bug this check
+   exists to prevent).
+2. **`synthesizer.py::_screen_text_word_budget_by_beat`'s 20-word floor wasn't charged
+   against the running total**: `allocations[bid] = max(words, 20)` but
+   `allocated_so_far += words` (the UNCLAMPED value) -- whenever a non-last beat's
+   proportional share rounded below the floor, the shortfall silently let the last
+   beat's "absorb the remainder" share push the SUM past `_SCREEN_TEXT_TARGET_WORDS`,
+   undermining the exact guardrail this function exists to provide (bounding H's total
+   screen text, added after a real run overflowed `render.py`'s verified word ceiling).
+   Verified by hand: a 4-beat plan (150/1/1/150 scenes) summed to 2622 before the fix,
+   exactly 2600 after. **Fix:** `allocated_so_far` now accumulates the clamped value.
+3. **`default_max_tokens` was dead on the subscription lane**: threaded through `Agent`
+   construction from config, but `call_structured_subscription`/the Claude CLI backend
+   never forwards it anywhere -- confirmed against `claude -p --help`, the CLI has no
+   output-token-limiting flag at all (only `--autocompact` for context-window compaction
+   and `--max-budget-usd` for cost). Currently harmless (no `subscription_lane` alias in
+   `config/models.yaml` sets it), but silently doing nothing is worse than failing loudly
+   the moment it's ever configured. **Fix:** `Agent.run()`'s subscription branch now
+   raises `ValueError` for a non-`None` `max_tokens` (from either an explicit argument or
+   `default_max_tokens`), matching the existing `images`/`enable_web_search`
+   fail-loud-not-silently-drop precedent on the same lane.
+4. **Minor FD leak on the subprocess timeout path** (`claude_cli.py`, the ERR-083 fix's
+   own code): `os.killpg(...)` + `proc.wait()` on `TimeoutExpired` never closed
+   `proc.stdout`/`proc.stderr` (the PIPE file objects) -- only `communicate()` completing
+   normally, or an explicit close, does that. Each timeout leaked 2 open FDs; with
+   retries across a full run's many calls, repeated timeouts could accumulate them.
+   **Fix:** explicit `proc.stdout.close()`/`proc.stderr.close()` added to the except
+   branch.
+
+**Tests:** 6 new (`test_run_pipeline.py` x2, `test_synthesizer.py`, `test_base.py` x2,
+`test_claude_cli_backend.py`, which also needed its `FakePopen` stand-in extended with
+closeable `stdout`/`stderr` attributes to even exercise finding #4's fix).
+
+**A real, separate lesson worth keeping:** none of these 4 were found by the earlier,
+narrowly-scoped ERR-084 audit (which specifically hunted "unsafe access to LLM-generated
+freeform data") -- a SEPARATE, general correctness review of the same diff, not looking
+for that one bug class, caught a genuinely different set of issues. A narrow audit
+answers the question it was scoped to ask; it doesn't substitute for a broader review
+before committing a large accumulated diff.
+
+---
+
 ## Open items (not yet bugs, flagged for future attention)
 
 - **`check_grounding_policy`'s docstring names 5 protected locations, the function only

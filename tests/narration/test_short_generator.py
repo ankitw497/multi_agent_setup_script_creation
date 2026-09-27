@@ -56,6 +56,15 @@ def test_prompt_treats_word_band_as_a_real_ceiling_not_a_soft_suggestion():
     assert "SLOWER" in TASK_PROMPT
 
 
+def test_naive_attempt_reaches_the_payload_explicitly():
+    """2026-09-25, Phase 30 P1 item 2: sent as its own payload key rather than relying on
+    it being folded into `setup` -- planning/short_planner.py's own plan_shorts() already
+    guarantees a non-blank value here for any problem_fix short that reaches this call."""
+    narration_lead = FakeNarrationLead(GeneratedShortNarration(segments=[]))
+    generate_short_narration(make_plan(naive_attempt="tried lowering the learning rate first"), [], narration_lead)
+    assert narration_lead.calls[0]["payload"]["naive_attempt"] == "tried lowering the learning rate first"
+
+
 def test_prompt_warns_against_jargon_first_and_flat_hooks():
     """2026-09-15: confirmed live -- 4 of 5 real shorts had their hook flagged as
     opening on unexplained jargon or flatly stating the outcome before any tension
@@ -214,3 +223,16 @@ def test_prompt_carries_the_shared_factual_invariants():
 
     assert NARRATION_FACTUAL_INVARIANTS in TASK_PROMPT
     assert "NEVER UPGRADE" in TASK_PROMPT
+
+
+def test_claim_importance_reaches_the_payload():
+    """Phase 32 P0: the shared factual-invariants fragment gates narration on `importance`
+    + `verification_status` together, but this pass's claim payload used to send only
+    `verification_status` -- structurally impossible to obey."""
+    narration_lead = FakeNarrationLead(GeneratedShortNarration(segments=[]))
+    claims = [Claim(claim_id="C001", source_unit="u1", claim="x", type="mechanism", importance="CORE")]
+
+    generate_short_narration(make_plan(), claims, narration_lead)
+
+    offered = narration_lead.calls[0]["payload"]["available_claims"]
+    assert offered[0]["importance"] == "CORE"

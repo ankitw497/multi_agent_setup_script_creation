@@ -285,6 +285,20 @@ def test_a_short_title_cannot_cover_a_long_item_via_one_incidental_shared_word()
     assert result.band == "AMBER"
 
 
+def test_short_technical_shorthand_counts_toward_coverage():
+    """Phase 32 P1: confirmed live -- content_words()'s default min_length=3 silently erased
+    exactly the shorthand a technical title reuses (Q, K, V), so a title that genuinely does
+    share its must_cover items' own real vocabulary still scored as unreflected. A title
+    naming "Q, K, V" now counts against a must_cover item built from the same shorthand."""
+    plan = make_plan(
+        [beat("B01")],
+        title=TitleContract(chosen="Why Q, K, V and Softmax Exist", promise="p"),
+        scope_contract=StoryScopeContract(must_cover=["distinct q k v roles"]),
+    )
+    result = check_title_scope_coverage(plan)
+    assert result.band == "GREEN"
+
+
 def test_a_short_title_that_genuinely_reflects_a_longer_item_is_still_green():
     """The fix must not become overly strict -- a title containing MOST of a longer
     item's own words should still count as covered."""

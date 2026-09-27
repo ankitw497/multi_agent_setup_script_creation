@@ -20,6 +20,25 @@ def test_covers_the_never_hedge_a_verified_claim_direction():
     assert "VERIFIED" in NARRATION_FACTUAL_INVARIANTS
 
 
+def test_covers_the_importance_gating_rule_not_just_generators_own_copy():
+    """2026-09-25, Phase 30 P2 item 5/P0 item 4: found live -- this shared fragment (the
+    ONLY factual-safety text short_generator.py ever sees) never carried the CORE/
+    SUPPORTING-must-be-omitted rule at all, even though generator.py (B1) has its own
+    separate copy. A real short hedged UNVERIFIED+CORE claims instead of omitting them,
+    exactly what this rule exists to prevent -- and shorts had never actually been told."""
+    assert "UNVERIFIED with importance CORE or SUPPORTING" in NARRATION_FACTUAL_INVARIANTS
+    assert "no hedge makes it acceptable" in NARRATION_FACTUAL_INVARIANTS
+    assert "REJECTED: never narrate this claim" in NARRATION_FACTUAL_INVARIANTS
+
+
+def test_covers_a_hard_cap_on_hedge_phrase_repetition():
+    """2026-09-25: confirmed live -- a real short used 6 different hedge phrases in a
+    ~200-word script, technically compliant one at a time but reading as an uncertain
+    narrator overall. Mirrors the connector-repetition cap's own hard-number treatment."""
+    assert "do not reuse the same hedge phrase" in NARRATION_FACTUAL_INVARIANTS
+    assert "hedged sentences total regardless of phrasing" in NARRATION_FACTUAL_INVARIANTS
+
+
 def test_covers_explanatory_elaboration_as_needing_grounding_too():
     """STORY_IMPROVEMENT_PLAN.md Phase 25 (mitigation only): confirmed live -- narration
     can invent a WHY/HOW explanation that never passed through claim extraction/C2a

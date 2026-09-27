@@ -219,22 +219,40 @@ def test_shorts_receive_the_same_in_memory_plan_narration_claims(patched):
     assert a2s_args[2] is patched.claims
 
 
-def test_no_verdict_claims_reaches_the_log(patched):
-    """STORY_IMPROVEMENT_PLAN.md: a truncated C2a batch response silently dropped 21/80
-    claims from verification with no error and no log line. find_claims_with_no_verdict's
-    own logic is unit-tested in tests/facts/test_verify.py -- this is a pure wiring test
-    confirming a real finding it returns actually reaches log()."""
+def test_no_verdict_claims_now_raises_instead_of_only_logging(patched):
+    """2026-09-25: this used to be a WARNING log line only, letting the run proceed and
+    build a full video on a claim registry with confirmed holes in it (STORY_IMPROVEMENT_
+    PLAN.md Phase 30 P0 -- cascaded into ~100 downstream grounding_policy_violation
+    failures on a real run). find_claims_with_no_verdict's own logic is unit-tested in
+    tests/facts/test_verify.py -- this is a pure wiring test confirming a real finding it
+    returns now actually stops the run, by the time it reaches here a claim has already
+    survived facts/verify.py's own retries, so this is a rare, genuine failure worth
+    stopping for."""
     rp.find_claims_with_no_verdict.return_value = ["C037", "C038"]
-    logged = []
-    _run(patched, log=logged.append)
-    assert any("C037" in line and "C038" in line for line in logged)
+    with pytest.raises(ValueError, match="C037.*C038"):
+        _run(patched)
 
 
-def test_no_dropped_claims_logs_nothing_extra(patched):
+def test_no_dropped_claims_does_not_raise(patched):
     rp.find_claims_with_no_verdict.return_value = []
-    logged = []
-    _run(patched, log=logged.append)
-    assert not any("WARNING" in line for line in logged)
+    _run(patched)  # must not raise
+
+
+def test_no_verdict_still_saves_the_checkpoint_before_raising(patched):
+    """Real regression found live 2026-09-27: the raise used to fire BEFORE the checkpoint
+    was ever saved, so a run that failed here left nothing at all to --resume from, and a
+    subsequent attempt had to re-pay for this entire stage (extraction + every verification
+    retry) from scratch. The claims/ledger this run already paid for must be persisted
+    regardless of whether this run itself is allowed to proceed past this check."""
+    rp.find_claims_with_no_verdict.return_value = ["C037"]
+
+    with pytest.raises(ValueError, match="C037"):
+        _run(patched)
+
+    assert "save_checkpoint" in patched.calls
+    saved_state = patched.calls["save_checkpoint"][0][0][0]
+    assert "claims" in saved_state.completed_stages
+    assert saved_state.claim_registry is patched.claims
 
 
 def test_bridge_selection_check_runs_on_the_same_candidates_and_plans(patched):
@@ -642,6 +660,20 @@ class TestResume:
         html_args = patched.calls["synthesize_and_repair_video_html"][0][0]
         assert html_args[0] is checkpoint.plan
         assert html_args[1] is checkpoint.narration
+
+    def test_resuming_a_claim_registry_with_confirmed_holes_still_raises(self, patched, monkeypatch):
+        """Companion to test_no_verdict_still_saves_the_checkpoint_before_raising: since a
+        no-verdict failure now saves its checkpoint before raising (2026-09-27 fix), a
+        --resume of that exact checkpoint must re-check and refuse the same way a fresh
+        run would -- otherwise persisting the checkpoint would silently reintroduce the
+        original bug this whole check exists to prevent (building a video on a claim
+        registry with confirmed holes)."""
+        checkpoint = self._fake_checkpoint(patched, ["claims"])
+        monkeypatch.setattr(rp, "load_checkpoint", lambda run_dir: checkpoint)
+        rp.find_claims_with_no_verdict.return_value = ["C037"]
+
+        with pytest.raises(ValueError, match="C037"):
+            _run(patched, resume_from=patched.tmp_path / "old_run")
 
     def test_partially_completed_checkpoint_only_skips_what_it_actually_has(self, patched, monkeypatch):
         checkpoint = self._fake_checkpoint(patched, ["claims"])  # source_brief/story_loop still needed

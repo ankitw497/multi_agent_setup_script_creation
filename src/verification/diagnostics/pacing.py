@@ -108,11 +108,25 @@ def check_beat_airtime_outliers(plan: StoryPlan, claims: list[Claim]) -> Diagnos
     for claim in claims:
         claims_per_unit[claim.source_unit] = claims_per_unit.get(claim.source_unit, 0) + 1
 
+    # already_attributed (2026-09-26, Phase 32 P1): a later beat whose source_unit_ids
+    # overlap an EARLIER beat's (a deliberate callback/synthesis beat, e.g. one that
+    # unifies concepts two earlier beats already taught) used to get those units' claims
+    # counted again in its own denominator, deflating its words-per-claim ratio and
+    # flagging it as an airtime outlier for doing exactly what a callback beat should --
+    # fewer new words needed because the claims aren't new. Confirmed live: a real
+    # cross-attention beat whose source_unit_ids overlapped two earlier beats' scored
+    # 0.29x median purely from this double-count, not from a genuine imbalance. Each
+    # source unit's claims now count toward only the FIRST beat (in story order,
+    # including the excluded hook) that actually touches it.
+    already_attributed: set[str] = set(plan.beats[0].source_unit_ids) if plan.beats else set()
+
     ratios: dict[str, float] = {}
     for beat in plan.beats:
         if beat.beat_id == hook_beat_id:
             continue
-        claim_count = sum(claims_per_unit.get(u, 0) for u in beat.source_unit_ids)
+        new_units = [u for u in beat.source_unit_ids if u not in already_attributed]
+        already_attributed.update(beat.source_unit_ids)
+        claim_count = sum(claims_per_unit.get(u, 0) for u in new_units)
         if claim_count == 0:
             continue
         allocated_words = sum(s.word_budget for s in plan.scene_plan if s.beat_id == beat.beat_id)

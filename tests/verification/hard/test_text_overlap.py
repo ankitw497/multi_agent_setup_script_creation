@@ -29,3 +29,17 @@ def test_short_words_are_excluded():
 def test_empty_text_has_zero_overlap():
     assert overlap("", "something real") == 0.0
     assert overlap("something real", "") == 0.0
+
+
+def test_min_length_default_still_excludes_short_words():
+    """Every existing caller of content_words() relies on the default -- must be unchanged."""
+    assert content_words("q k v attention") == {"attention"}
+
+
+def test_min_length_override_admits_short_technical_shorthand():
+    """Phase 32 P1: a technical title legitimately reuses short shorthand (Q, K, V) that
+    the default silently erased -- confirmed live as the actual reason two real titles from
+    two different models both scored as failing to reflect their own must_cover items.
+    Only callers that explicitly opt in (a lower min_length) get this behavior; the default
+    is unchanged (see test above), so no other overlap check's behavior shifts."""
+    assert content_words("q k v attention", min_length=1) == {"q", "k", "v", "attention"}

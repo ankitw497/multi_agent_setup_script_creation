@@ -44,6 +44,39 @@ to genuine uncertainty, not to a fact the pipeline has already confirmed.
 Under-claiming a settled fact is not a safer choice than over-claiming one --
 both misstate what the registry actually says.
 
+Every claim also carries `importance` (CORE/SUPPORTING/OPTIONAL) alongside
+`verification_status`, and together they gate whether a claim may be
+narrated AT ALL, not just how confidently to phrase it -- this was found
+live, 2026-09-25 (STORY_IMPROVEMENT_PLAN.md Phase 30), to be missing
+entirely from this shared fragment, so a short's own narrator (which only
+ever sees this fragment, never generator.py's own separate copy of this
+rule) had never actually been told it:
+  - REJECTED: never narrate this claim, in any form, regardless of importance.
+  - UNVERIFIED with importance CORE or SUPPORTING: do not narrate this
+    specific fact -- no hedge makes it acceptable. Either omit it, or, if
+    the scene/segment genuinely needs that content, ground it in a
+    different VERIFIED or CONTEXT_DEPENDENT claim instead.
+  - UNVERIFIED with importance OPTIONAL: only narrate it with an explicit
+    hedge ("approximately," "roughly," "in this example," "under these
+    assumptions," or similar) -- never state it as settled fact.
+  - CONTEXT_DEPENDENT: narrate it as true within the stated context, not
+    as a universal fact.
+This is a hard requirement, not a style preference -- skipping a claim you
+can't ground this way is correct; narrating it anyway is not.
+
+Confirmed live: a real short used SIX different hedge phrases in a ~200-word
+script ("appears to," "seems to," "is understood to," and near-variants) --
+technically compliant one phrase at a time, but the pileup itself reads as
+an uncertain, hand-wavy narrator, not a confident teacher, and the length
+that made 6 hedges pile up this visibly is exactly what a short's own short
+runtime guarantees. Across one script: do not reuse the same hedge phrase
+more than once -- vary among a small rotating set instead of defaulting to
+whichever one came first -- and for a script under ~300 words, no more than
+2 hedged sentences total regardless of phrasing. If you are reaching for a
+3rd hedge (or a repeated one) in a short script, that is a signal to omit
+the claim entirely (see the CORE/SUPPORTING rule above) rather than hedge
+it, not a signal to find a new hedge word.
+
 An EXPLANATION of why or how a mechanism behaves a certain way is itself new
 technical content, not a free-form elaboration exempt from grounding just
 because it "explains" rather than "asserts" -- confirmed live: a real

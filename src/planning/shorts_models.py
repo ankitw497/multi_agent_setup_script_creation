@@ -97,6 +97,16 @@ class ShortPlan(BaseModel):
     micro_arc: MicroArc
     hook: HookEvent
     setup: str = ""  # minimum_context
+    # 2026-09-25: STORY_IMPROVEMENT_PLAN.md Phase 30 P1 item 2. `setup` used to carry BOTH
+    # "minimum context" and, for a `problem_fix` micro_arc, the arc's own required naive-
+    # attempt beat -- overloaded, with nothing forcing the second half to actually be
+    # populated. Confirmed live: 3 of 4 real `problem_fix` shorts shipped a `setup` that
+    # was a bare rhetorical question, silently skipping the naive attempt this TASK_PROMPT
+    # already explicitly requires ("if you cannot name that specific failed attempt... this
+    # candidate is NOT a problem_fix short"). A dedicated field lets `plan_shorts()` check
+    # the requirement deterministically instead of hoping a free-text field complied.
+    # Required (non-empty) when `micro_arc == "problem_fix"`; left blank for every other arc.
+    naive_attempt: str = ""
     mechanism: str = ""
     payoff_central: str = ""
     micro_payoffs: list[str] = Field(default_factory=list)

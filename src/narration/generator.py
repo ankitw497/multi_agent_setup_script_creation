@@ -34,12 +34,47 @@ the script's default move. Real variety, not a rotating cast of the same
 few constructions, is what makes narration sound spoken rather than
 templated.
 
+Confirmed live, twice, on real full-length narration from two different
+models: "so" opening sentence after sentence across the WHOLE script (not
+just within one scene) is a real, recurring failure mode this instruction
+alone has not been enough to prevent -- so it needs a hard number, not
+just a qualitative warning. Across the ENTIRE narration you write in this
+one call: no more than 2 sentences total may open with "so", no more than
+2 may open with "because"/"since", and no two sentences in a row --
+including across a scene boundary -- may open with the same connector
+word or the same rhetorical device (e.g. two "not X, but Y" contrasts back
+to back). If a sentence's logic would naturally lead with "so", first try
+stating the consequence directly instead ("So the scores blow up" ->
+"The scores blow up") -- reserve the connector for the few places its own
+causal weight actually earns it.
+
+One specific device confirmed live (2026-09-25) as a repeat offender in its
+own right: "The fix:" (and near-variants like "So the fix:") used to open
+the sentence that pivots from a problem to its solution -- a real script
+used it 3 times, clustered across 3 consecutive beats. It counts against
+the SAME cap as any other rhetorical device above (at most 2 uses total
+across the whole script, never twice in a row) -- vary the pivot instead
+(name the mechanism directly, state what changes, or ask what the fix
+would need to do) rather than reaching for this exact phrase by default.
+
 Each sentence carries exactly ONE idea. If a sentence needs "and" or
 "because" to link two separate claims, or a claim plus its own
 consequence, split it into two sentences instead -- a single 50+ word
 sentence stacking cause, mechanism, and a numeric example together is
 harder to follow out loud than the same content in two or three shorter
 ones, even though the total information is the same.
+
+"One idea per sentence" is not "one length per sentence" -- confirmed
+live (STORY_IMPROVEMENT_PLAN.md Phase 30 P2 item 7), this instruction's
+own side effect can flatten every sentence toward the same medium length,
+measurably (a real script's rhythm/burstiness diagnostic landed AMBER,
+outside its target band, meaning sentence lengths clustered too tightly
+around the average instead of genuinely varying). Deliberately mix
+sentence lengths within each scene: at least one short (under 8 words)
+punch sentence alongside the longer explanatory ones -- a landed
+conclusion, a flat statement of what just happened, a single-clause
+transition -- not every sentence built out to the same comfortable
+medium length just because each one only carries one idea.
 
 For each scene:
 - Stay within its word_budget (target the middle of 30-100 words; err toward
@@ -54,6 +89,20 @@ For each scene:
   transition / question / payoff / cta. This is your own bookkeeping, not a
   security boundary -- classify accurately rather than to avoid scrutiny.
 - Do not merely describe what a visual shows -- explain its consequence.
+- The beat whose `archetype_role` is `hook` is the video's very first beat --
+  its LAST scene must end on `hook.open_loop`, voiced as a genuine,
+  unresolved QUESTION (a close paraphrase is fine, it need not be verbatim).
+  Never let the hook's own closing line already state or imply the
+  mechanism/answer, even partially -- that resolves the exact curiosity a
+  hook exists to create instead of sustaining it. Confirmed live on a real
+  comparison between two full scripts on the same source: one hook closed
+  by stating its own conclusion in declarative form, the other closed on
+  its `open_loop` field's literal question -- the question was the
+  stronger hook, and it's exactly what `open_loop` was written to hand
+  you, not just plan-internal bookkeeping. `hook.tension` (plus any
+  concrete illustration) is what builds the tension; `open_loop` is what
+  should still be ringing in the viewer's ear as the video moves past the
+  hook.
 - A scene is the CTA scene ONLY when it matches `plan.cta.primary_after_beat`
   -- full stop, never because it happens to be the final scene. There, write
   the CTA sentence in the plan's chosen intent, ≤18 words, naming the payoff
@@ -78,8 +127,16 @@ scene as a standalone article. Each scene carries `scene_function`,
   even briefly, as if for the first time. If `must_not_repeat` names an
   EXACT value (a specific number or outcome, not just a general concept)
   the viewer already saw during an earlier preview, frame reaching it here
-  as CONFIRMING what was already shown ("that's the same 0.88 we already
-  saw -- here's why") rather than presenting it as a fresh discovery.
+  as CONFIRMING what was already shown rather than presenting it as a fresh
+  discovery -- vary how you signal that across the script instead of
+  reaching for the same construction every time (e.g. "that's the same
+  0.88 we already saw -- here's why", "0.88 again -- and now we know why",
+  "the number hasn't moved: still 0.88"). Confirmed live: a real script's
+  contraction rate landed AMBER against the fitted voice bands, driven
+  disproportionately by "that's"/"it's" used as the default confirming-
+  callback opener in scene after scene -- treat this the same as any other
+  rhetorical device in this prompt (the "so"/"because"/"The fix:" caps
+  above): effective once, a tell once it becomes the reflexive default.
   `must_not_repeat` now also names concepts your OWN earlier scenes in this
   SAME beat already covered, not just other beats -- confirmed live: a real
   script re-derived the same underlying assumptions across 3 consecutive

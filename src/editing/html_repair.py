@@ -142,10 +142,16 @@ def repair_beat_visual(
         "render_failures": [_render_failure_payload(i) for i in render_failures],
         "running_example": plan.running_example.model_dump(),
     }
-    return html_author.run(
+    result = html_author.run(
         pass_id="H", mode="BEAT_VISUAL_REPAIR", task_prompt=REPAIR_TASK_PROMPT,
         payload=payload, schema=BeatVisual, timeout_s=180,
     )
+    # beat_id forced from the input, matching synthesizer.py::synthesize_beat_visual's own
+    # fix (2026-09-27) -- this caller happened to be safe by accident (its result is stored
+    # keyed by the outer loop's own known-good beat_id, not by result.beat_id), but forcing
+    # it here too removes the same fragile reliance on the model echoing a field it was
+    # never even given the correct value for.
+    return result.model_copy(update={"beat_id": beat.beat_id})
 
 
 def repair_hero(plan: StoryPlan, html_author: Agent, render_failures: list[RenderIssue]) -> HeroContent:

@@ -68,10 +68,29 @@ story_roles:
   # a scene_id, making it permanently unrepairable. A page-singleton component must never
   # also be a per-scene choice -- "card" alone covers the hook role correctly.
   hook: [card]
-  contradiction: [callout_danger, grid_2]
-  investigation: [step_list, grid_3]
-  problem_fix: [step_list, callout_warn]
-  mechanism: [card, diagram_card, math_block]
+  # suspect_board added 2026-09-26 (Phase 31 item 3): a lineup of candidate causes is
+  # exactly the shape a contradiction/investigation beat needs for a sustained mystery
+  # archetype, matching Phase 31 item 2's sustained-narrative-heading fix for the same
+  # archetype family -- previously only a plain callout/grid was available.
+  contradiction: [callout_danger, grid_2, suspect_board]
+  investigation: [step_list, grid_3, suspect_board]
+  # 2026-09-24: diagram_card added here too -- confirmed live (Opus 5.5 story_lead
+  # comparison run) that a "build"-archetype plan can tag NEARLY HALF its beats
+  # problem_fix (6/13 in the real plan), and this was the one role Phase 27's own fix
+  # below missed: it had zero diagram-capable options, so a build-archetype video's
+  # problem->fix chain -- which very often IS a mechanism/pipeline/equation, the exact
+  # content diagram_card exists for -- got locked into step_list/callout_warn only,
+  # regardless of what the "fix" actually was. Same reasoning as Phase 27 item 1 below,
+  # just the one role that fix didn't reach.
+  # case_card added 2026-09-26 (Phase 32 P1): confirmed live -- problem_fix is the
+  # single most-repeated role in a real build-archetype plan (3-4 of ~11-12 beats),
+  # and "here's a specific problem, here's its specific fix" is a near-verbatim match
+  # for case_card's own "here's a specific instance of the general rule" shape (already
+  # offered to mechanism/observations). Two real generated pages used diagram_card for
+  # every single problem_fix scene (31-33 uses each) and never had this alternative
+  # available at all.
+  problem_fix: [step_list, callout_warn, diagram_card, case_card]
+  mechanism: [card, diagram_card, math_block, case_card]
   # STORY_IMPROVEMENT_PLAN.md Phase 27 item 1: diagram_card added to comparison/derivation/
   # payoff -- confirmed live (v05) that H picks diagram_card 83% of the time where it's
   # actually offered (5/6 mechanism-role scenes), so the real gap was never H avoiding it;
@@ -83,8 +102,12 @@ story_roles:
   # payoff's allowlist excluded diagrams.
   comparison: [grid_2, metric_table, card, diagram_card]
   derivation: [math_block, card, diagram_card]
-  observations: [grid_3, defbox]
-  payoff: [callout_success, card, diagram_card]
+  # case_card added 2026-09-26 (Phase 31 item 3): "here's a specific instance of the
+  # general rule" is a real, distinct shape from a raw observations grid.
+  observations: [grid_3, defbox, case_card]
+  # solution_grid added 2026-09-26 (Phase 31 item 3): a payoff that resolves into several
+  # concrete options (not one) is a real, distinct shape from a single callout/card.
+  payoff: [callout_success, card, diagram_card, solution_grid]
 
 components:
   hero:
@@ -188,3 +211,31 @@ components:
         <thead><tr>{header_cells}</tr></thead>
         <tbody>{body_rows}</tbody>
       </table>
+
+  # 2026-09-26: STORY_IMPROVEMENT_PLAN.md Phase 31 item 3 -- 3 devices real reference pages
+  # used with no equivalent here, each mapping to a real narrative shape this project's
+  # own archetypes already support but previously rendered with a generic card/grid.
+  suspect_board:
+    description: "A lineup of candidate causes, each with a one-line description -- sustained mystery/investigation beats (contradiction, investigation roles). Never a resolution -- the reveal belongs in a later scene's own component."
+    slots: [items]  # list of {name, note} -- one suspect per item
+    skeleton: |
+      <div class="suspect-board">{items}</div>
+    item_skeleton: |
+      <div class="suspect"><div class="suspect-name">{name}</div>{note_block}</div>
+
+  solution_grid:
+    description: "N labeled fix-options compared side by side -- a payoff that resolves into multiple concrete options rather than one (payoff role only)."
+    slots: [items]  # list of {name, body} -- one option per item
+    skeleton: |
+      <div class="solution-grid">{items}</div>
+    item_skeleton: |
+      <div class="solution-card"><div class="solution-name">{name}</div>{body_block}</div>
+
+  case_card:
+    description: "One labeled concrete scenario/example -- 'here's a specific instance of the general rule' (observations, mechanism roles)."
+    slots: [title, sub, body]
+    skeleton: |
+      <div class="case-card">
+        <div class="case-title">{title}</div>
+        {sub_block}{body_block}
+      </div>

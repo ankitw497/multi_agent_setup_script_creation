@@ -41,9 +41,10 @@ the strongest one.
 Design each selected candidate as its own short:
 - `title`: a SHORT title (3-8 words, a real title, never a full sentence
   copied verbatim from the hook or payoff) that still REUSES 2-3 actual
-  concrete words or phrases from the hook event, the central payoff, or
-  `central_insight` -- not just a thematically-related abstract label. A
-  title checked mechanically for shared words against those three; an
+  concrete words or phrases from the hook event, the central payoff,
+  `central_insight`, OR `visual.states`/`visual.dominant_object` -- not
+  just a thematically-related abstract label. A title checked mechanically
+  for shared words against those four; an
   abstract technical label ("Pronoun Resolution in Language Models") that
   never says any of their own concrete words fails that check even when
   it's thematically on-topic -- but copying an entire sentence verbatim
@@ -59,6 +60,19 @@ Design each selected candidate as its own short:
   cards" shared almost no words with either the hook or its own payoff --
   reach into the HOOK's concrete language too, not just `central_insight`'s
   technical framing.
+  A fourth, related failure (2026-09-25, Phase 30 P1 item 3): this
+  recurred even when the title DID pass the mechanical word-overlap check
+  -- a real title "Self-Attention and Permutation" pulled its words
+  straight from `central_insight`'s own abstract framing, while the SAME
+  short's `visual.states` held a genuinely concrete, memorable anchor
+  (two contrasted example sentences) the title never touched at all,
+  because `visual` wasn't even in the reuse pool. Prefer pulling from the
+  single most concrete, surprising detail actually available -- a specific
+  example, number, or named object -- over a topic label, even when the
+  topic label would pass the word-overlap check on a technicality. When
+  `visual.states`/`dominant_object` holds a real concrete example, it is
+  usually the stronger source to pull from than `central_insight`'s own
+  abstract restatement of the same idea.
   This check matches EXACT words, never a different grammatical form of
   the same root (no stemming) -- "equivariant" and "Equivariance" count as
   completely different words even though a person reads them as the same
@@ -93,18 +107,30 @@ Design each selected candidate as its own short:
   ungrounded or silently drops the requirement:
   - `contradiction_resolution`: `setup` states two facts from the source
     that genuinely conflict or are in tension.
-  - `problem_fix`: `setup` names a real naive/intuitive attempt (grounded
-    in the source, not invented) and states that it fails or falls short
-    -- distinct from just stating the problem. `problem_fix` is the arc
-    this pass defaults to reaching for even when it doesn't fit -- do NOT
-    pick it just because a candidate has a problem-then-mechanism shape
-    (almost every candidate does). Pick it ONLY when the source material
-    gives you a genuine, nameable naive/intuitive attempt that actually
-    fails -- not merely "the problem" restated. If you cannot name that
-    specific failed attempt as a concrete sentence right now, this
-    candidate is NOT a `problem_fix` short -- use `before_after` or
-    `mini_derivation` instead, which fit a plain problem-then-mechanism
-    shape without requiring a failed attempt at all.
+  - `problem_fix`: fill in the dedicated `naive_attempt` field (NOT `setup`
+    -- see below) with a real naive/intuitive attempt (grounded in the
+    source, not invented) and state that it fails or falls short there --
+    distinct from just stating the problem. `problem_fix` is the arc this
+    pass defaults to reaching for even when it doesn't fit -- do NOT pick
+    it just because a candidate has a problem-then-mechanism shape (almost
+    every candidate does). Pick it ONLY when the source material gives you
+    a genuine, nameable naive/intuitive attempt that actually fails -- not
+    merely "the problem" restated. If you cannot name that specific failed
+    attempt as a concrete sentence right now, this candidate is NOT a
+    `problem_fix` short -- use `before_after` or `mini_derivation` instead,
+    which fit a plain problem-then-mechanism shape without requiring a
+    failed attempt at all, and leave `naive_attempt` blank. Confirmed live
+    (STORY_IMPROVEMENT_PLAN.md Phase 30 P1 item 2): 3 of 4 real `problem_fix`
+    shorts shipped with this requirement silently unmet -- `naive_attempt`
+    left blank on a `problem_fix` selection now drops the short entirely
+    rather than reaching the writer with nothing true to narrate, so an
+    empty field here is not a safe default. The naive attempt must be
+    something a real practitioner would actually try first, not a strawman
+    invented to make the arc fit -- and it must be ENACTED (shown concretely
+    failing), not explained away conceptually ("that wouldn't really work
+    because...") -- a fabricated or merely-conceptual "fix" reads as
+    contrived, the same bar `narration/short_generator.py`'s own writer
+    prompt already holds the actual narration to.
   - `before_after`: `setup` states the concrete "before" state.
   - `question_answer`: `setup` poses the actual question explicitly.
   - `prediction_explanation`: `setup` states the specific prediction.
@@ -117,7 +143,11 @@ Design each selected candidate as its own short:
   it before narration does.
 - `setup`: the minimum context needed (should read as roughly a 3-10
   second beat, not a preamble) -- see the micro_arc requirement above for
-  what else it must contain.
+  what else it must contain. For `problem_fix`, the naive attempt goes in
+  `naive_attempt`, not here -- `setup` still carries whatever minimum
+  context the naive attempt itself needs to make sense.
+- `naive_attempt`: ONLY for `problem_fix` (see above) -- leave blank for
+  every other `micro_arc`.
 - `mechanism`: ONE mechanism, not a tour of several.
 - `payoff_central`: the central payoff; `micro_payoffs` for any smaller
   ones along the way.
@@ -167,6 +197,7 @@ class ShortPlanDraft(BaseModel):
     micro_arc: MicroArc
     hook: HookEvent
     setup: str = ""
+    naive_attempt: str = ""  # required (non-empty) when micro_arc == "problem_fix"
     mechanism: str = ""
     payoff_central: str = ""
     micro_payoffs: list[str] = Field(default_factory=list)
@@ -217,6 +248,14 @@ def plan_shorts(
         source_beat_ids = [bid for bid in draft.source_beat_ids if bid in known_beat_ids]
         if not source_beat_ids:
             continue  # every referenced beat was invalid -- nothing real to scope this short to
+        # 2026-09-25 (Phase 30 P1 item 2): a `problem_fix` selection with no `naive_attempt`
+        # violates this module's own TASK_PROMPT ("if you cannot name that specific failed
+        # attempt... this candidate is NOT a problem_fix short") -- confirmed live 3 of 4
+        # real cases shipped anyway. Drop it here, deterministically, rather than send the
+        # writer a setup with nothing true to enact -- same "arithmetic is deterministic,
+        # not model-voted" precedent as the invalid-beat check just above.
+        if draft.micro_arc == "problem_fix" and not draft.naive_attempt.strip():
+            continue
         source_unit_ids = {
             uid for bid in source_beat_ids for uid in next(b for b in plan.beats if b.beat_id == bid).source_unit_ids
         }
@@ -229,6 +268,7 @@ def plan_shorts(
             ),
             title=draft.title, goal=draft.goal, central_insight=draft.central_insight,
             micro_arc=draft.micro_arc, hook=draft.hook, setup=draft.setup,
+            naive_attempt=draft.naive_attempt,
             mechanism=draft.mechanism, payoff_central=draft.payoff_central,
             micro_payoffs=draft.micro_payoffs, bridge=draft.bridge,
             visual=draft.visual, narration=draft.narration,

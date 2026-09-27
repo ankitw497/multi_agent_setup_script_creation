@@ -201,9 +201,14 @@ def test_no_web_backend_given_keeps_v1a_exact_local_only_behavior(tmp_path):
 
 
 def test_a_claim_the_model_never_returned_a_verdict_for_is_not_silently_dropped():
+    """2026-09-25: a missing verdict is now retried (MAX_VERDICT_RETRIES=2 extra attempts,
+    3 total) -- this test confirms the ORIGINAL fallback still holds once retries are
+    genuinely exhausted (all 3 attempts omit C002), not that retrying was removed."""
     claims = [make_claim("C001"), make_claim("C002")]
     review_lead = FakeReviewLead([
         ClaimVerdicts(verdicts=[ClaimVerdict(claim_id="C001", verification_status="VERIFIED", reasoning="ok")]),
+        ClaimVerdicts(verdicts=[]),
+        ClaimVerdicts(verdicts=[]),
     ])
     from llm.budget import BudgetCounter, DEFAULT_TIERS
 
@@ -212,6 +217,48 @@ def test_a_claim_the_model_never_returned_a_verdict_for_is_not_silently_dropped(
     assert len(result) == 2
     assert result[1].claim_id == "C002"
     assert result[1].verification_status == "UNVERIFIED"  # untouched default
+    assert len(review_lead.calls) == 3  # first attempt + 2 retries, all for the shrinking missing set
+
+
+def test_a_missing_verdict_is_recovered_on_retry():
+    """The real new behavior: a batch that comes back count-incomplete (2026-09-25's
+    confirmed live bug -- schema-valid, nowhere near the token ceiling, just missing
+    entries) gets the missing claim re-asked, and a verdict that arrives on the retry is
+    used, not discarded."""
+    claims = [make_claim("C001"), make_claim("C002")]
+    review_lead = FakeReviewLead([
+        ClaimVerdicts(verdicts=[ClaimVerdict(claim_id="C001", verification_status="VERIFIED", reasoning="ok")]),
+        ClaimVerdicts(verdicts=[ClaimVerdict(claim_id="C002", verification_status="VERIFIED", reasoning="recovered")]),
+    ])
+    from llm.budget import BudgetCounter, DEFAULT_TIERS
+
+    result = verify_claims_with_llm(claims, review_lead, BudgetCounter(tier=DEFAULT_TIERS["longform"]),
+                                      __import__("pathlib").Path("/nonexistent"))
+
+    by_id = {c.claim_id: c for c in result}
+    assert by_id["C002"].verification_status == "VERIFIED"
+    assert by_id["C002"].evidence[0].verdict == "recovered"
+    assert len(review_lead.calls) == 2  # first attempt (missed C002) + one retry (recovered it)
+
+
+def test_retry_only_re_asks_the_missing_claims_not_the_whole_batch():
+    """A retry must never re-send a claim that already got a verdict -- confirms the
+    second call's payload contains only the missing subset."""
+    claims = [make_claim("C001"), make_claim("C002"), make_claim("C003")]
+    review_lead = FakeReviewLead([
+        ClaimVerdicts(verdicts=[
+            ClaimVerdict(claim_id="C001", verification_status="VERIFIED", reasoning="ok"),
+            ClaimVerdict(claim_id="C003", verification_status="VERIFIED", reasoning="ok"),
+        ]),
+        ClaimVerdicts(verdicts=[ClaimVerdict(claim_id="C002", verification_status="VERIFIED", reasoning="ok")]),
+    ])
+    from llm.budget import BudgetCounter, DEFAULT_TIERS
+
+    verify_claims_with_llm(claims, review_lead, BudgetCounter(tier=DEFAULT_TIERS["longform"]),
+                            __import__("pathlib").Path("/nonexistent"))
+
+    retry_payload_ids = [c["claim_id"] for c in review_lead.calls[1]["payload"]["claims"]]
+    assert retry_payload_ids == ["C002"]
 
 
 def test_initial_verdict_call_uses_a_generous_max_tokens():
@@ -254,6 +301,8 @@ def test_finds_a_claim_that_never_got_a_verdict():
     claims = [make_claim("C001"), make_claim("C002")]
     review_lead = FakeReviewLead([
         ClaimVerdicts(verdicts=[ClaimVerdict(claim_id="C001", verification_status="VERIFIED", reasoning="ok")]),
+        ClaimVerdicts(verdicts=[]),
+        ClaimVerdicts(verdicts=[]),
     ])
     from llm.budget import BudgetCounter, DEFAULT_TIERS
 

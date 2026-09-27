@@ -1,5 +1,7 @@
 """Tests for config/loader.py -- reads the real config/models.yaml (plan §16)."""
-from config.loader import resolve_model
+import pytest
+
+from config.loader import resolve_model, resolve_model_any_lane
 
 
 def test_resolve_model_returns_resolved_reasoning_effort_and_max_tokens():
@@ -42,3 +44,25 @@ def test_resolve_model_for_gemini_review_strong_has_a_max_tokens_floor():
     assert resolved == "gemini/gemini-3.1-pro-preview"
     assert reasoning_effort == "low"
     assert max_tokens == 12000
+
+
+def test_resolve_model_any_lane_finds_a_subscription_lane_alias():
+    """2026-09-24: story_lead's --story-lead-alias must accept an alias from EITHER
+    lane (e.g. opus, subscription_lane) without the caller knowing in advance which
+    lane it lives in."""
+    lane, resolved, reasoning_effort, max_tokens = resolve_model_any_lane("opus")
+    assert lane == "subscription"
+    assert resolved == "claude-opus-5-5"
+
+
+def test_resolve_model_any_lane_finds_a_paid_api_lane_alias():
+    lane, resolved, reasoning_effort, max_tokens = resolve_model_any_lane("openai_story_strong_gpt56")
+    assert lane == "paid_api"
+    assert resolved == "gpt-5.6-sol"
+    assert reasoning_effort == "medium"
+    assert max_tokens == 10000
+
+
+def test_resolve_model_any_lane_raises_a_clear_error_for_an_unknown_alias():
+    with pytest.raises(KeyError, match="not_a_real_alias"):
+        resolve_model_any_lane("not_a_real_alias")

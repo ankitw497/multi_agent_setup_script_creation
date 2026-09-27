@@ -8,6 +8,7 @@ technical_fixes, delete_or_compress) actually reaches the model.
 """
 from editing.models import DeleteOrCompress, RevisionPlan, RewriteBeat, RewriteScene, TechnicalFix
 from editing.targeted_rewrite import B2_BATCH_SIZE, apply_targeted_rewrite
+from facts.models import Claim
 from narration.generator import GeneratedNarration
 from narration.models import SceneNarration, SentenceNarration
 from planning.models import (
@@ -226,6 +227,18 @@ def test_prompt_warns_against_overusing_causal_connectors_and_repeated_devices()
     assert "not X, but Y" in TASK_PROMPT
 
 
+def test_prompt_names_the_fix_opener_and_sentence_length_variety():
+    """2026-09-25, Phase 30 P2 item 7: STORY_IMPROVEMENT_PLAN.md Phase 24 already
+    root-caused a real propagation gap -- the connector cap's fix never made it into this
+    module, so a revised scene wasn't held to the same repetition/rhythm bar as a first
+    draft. Confirms this pass now names "The fix:" specifically and gives the same
+    sentence-length-variety guidance generator.py's own first-draft prompt has."""
+    from editing.targeted_rewrite import TASK_PROMPT
+
+    assert '"The fix:"' in TASK_PROMPT
+    assert "one length per sentence" in TASK_PROMPT
+
+
 def test_prompt_has_no_hardcoded_topic_vocabulary():
     """Overfitting guard (STORY_IMPROVEMENT_PLAN.md's own Phase 3 precedent):
     this prompt runs on every future video's revision cycles regardless of
@@ -344,3 +357,114 @@ def test_prompt_carries_the_shared_factual_invariants():
 
     assert NARRATION_FACTUAL_INVARIANTS in TASK_PROMPT
     assert "NEVER UPGRADE" in TASK_PROMPT
+
+
+# ---- Phase 32 P0: importance/mechanism_scope/cta/hook reaching B2 -------------------------
+
+def test_claim_importance_reaches_the_payload():
+    """A real gap found live 2026-09-26: the shared factual-invariants fragment tells this
+    pass to gate narration on `importance` + `verification_status` together, but the claim
+    payload used to send only `verification_status` -- structurally impossible to obey."""
+    narration_lead = FakeNarrationLead(GeneratedNarration(scenes=[]))
+    revision_plan = RevisionPlan(run_id="r", rewrite_beats=[RewriteBeat(beat_id="B01", reason="x", intent="tighten")])
+    claims = [Claim(claim_id="C1", source_unit="u1", claim="x", type="mechanism", importance="CORE")]
+
+    apply_targeted_rewrite(make_plan(), make_narration(), claims, revision_plan, narration_lead)
+
+    payload_scene = narration_lead.calls[0]["payload"]["scenes"][0]
+    assert payload_scene["available_claims"][0]["importance"] == "CORE"
+
+
+def test_mechanism_scope_reaches_the_payload():
+    plan = make_plan(scene_plan=[
+        ScenePlan(scene_id="s1", beat_id="B01", word_budget=40, mechanism_scope={"causal_masking": False}),
+        ScenePlan(scene_id="s2", beat_id="B01", word_budget=40),
+        ScenePlan(scene_id="s3", beat_id="B02", word_budget=40),
+    ])
+    narration_lead = FakeNarrationLead(GeneratedNarration(scenes=[]))
+    revision_plan = RevisionPlan(run_id="r", rewrite_scenes=[RewriteScene(scene_id="s1", reason="x", intent="fix")])
+
+    apply_targeted_rewrite(plan, make_narration(), [], revision_plan, narration_lead)
+
+    payload_scene = narration_lead.calls[0]["payload"]["scenes"][0]
+    assert payload_scene["mechanism_scope"] == {"causal_masking": False}
+
+
+def test_cta_beat_hook_last_scene_and_true_final_scene_flags():
+    """B01 is the hook beat (s1, s2 -- s2 is its LAST scene); B02 is the cta beat (s3, the
+    plan's true final scene too). A rewrite touching all three scenes must correctly flag
+    exactly one scene for each of the three booleans B2 needs but never received before."""
+    plan = make_plan(
+        beats=[
+            StoryBeat(beat_id="B01", purpose="x", archetype_role="hook", source_unit_ids=["u1"]),
+            StoryBeat(beat_id="B02", purpose="y", source_unit_ids=["u2"]),
+        ],
+        cta=CTAContract(primary_after_beat="B02"),
+        scene_plan=[
+            ScenePlan(scene_id="s1", beat_id="B01", word_budget=40),
+            ScenePlan(scene_id="s2", beat_id="B01", word_budget=40),
+            ScenePlan(scene_id="s3", beat_id="B02", word_budget=40),
+        ],
+    )
+    narration_lead = FakeNarrationLead(GeneratedNarration(scenes=[]))
+    revision_plan = RevisionPlan(run_id="r", rewrite_scenes=[
+        RewriteScene(scene_id="s1", reason="x", intent="fix"),
+        RewriteScene(scene_id="s2", reason="x", intent="fix"),
+        RewriteScene(scene_id="s3", reason="x", intent="fix"),
+    ])
+
+    apply_targeted_rewrite(plan, make_narration(), [], revision_plan, narration_lead)
+
+    by_id = {s["scene_id"]: s for s in narration_lead.calls[0]["payload"]["scenes"]}
+    assert by_id["s1"]["is_hook_last_scene"] is False
+    assert by_id["s2"]["is_hook_last_scene"] is True
+    assert by_id["s3"]["is_hook_last_scene"] is False
+    assert by_id["s1"]["is_cta_beat"] is False
+    assert by_id["s3"]["is_cta_beat"] is True
+    assert by_id["s3"]["is_true_final_scene"] is True
+    assert by_id["s1"]["is_true_final_scene"] is False
+
+
+def test_hook_last_scene_is_found_positionally_even_without_archetype_role_hook():
+    """Found live, 2026-09-27: archetype_role is a plain, model-filled string, not a
+    Literal -- a beat that IS the hook by construction (the video's very first beat) but
+    whose archetype_role the model tagged differently (or left blank) must not silently
+    disable this guardrail. Matches pacing.py's own established convention: the FIRST
+    beat is the hook, by construction, regardless of its own archetype_role label."""
+    plan = make_plan(
+        beats=[
+            StoryBeat(beat_id="B01", purpose="x", archetype_role="", source_unit_ids=["u1"]),  # no "hook" label
+            StoryBeat(beat_id="B02", purpose="y", source_unit_ids=["u2"]),
+        ],
+        scene_plan=[
+            ScenePlan(scene_id="s1", beat_id="B01", word_budget=40),
+            ScenePlan(scene_id="s2", beat_id="B01", word_budget=40),
+            ScenePlan(scene_id="s3", beat_id="B02", word_budget=40),
+        ],
+    )
+    narration_lead = FakeNarrationLead(GeneratedNarration(scenes=[]))
+    revision_plan = RevisionPlan(run_id="r", rewrite_scenes=[RewriteScene(scene_id="s2", reason="x", intent="fix")])
+
+    apply_targeted_rewrite(plan, make_narration(), [], revision_plan, narration_lead)
+
+    payload_scene = narration_lead.calls[0]["payload"]["scenes"][0]
+    assert payload_scene["is_hook_last_scene"] is True
+
+
+def test_cta_and_hook_contracts_reach_the_outer_payload():
+    narration_lead = FakeNarrationLead(GeneratedNarration(scenes=[]))
+    revision_plan = RevisionPlan(run_id="r", rewrite_beats=[RewriteBeat(beat_id="B01", reason="x", intent="tighten")])
+
+    apply_targeted_rewrite(make_plan(), make_narration(), [], revision_plan, narration_lead)
+
+    payload = narration_lead.calls[0]["payload"]
+    assert payload["cta"]["primary_after_beat"] == "B01"
+    assert "hook" in payload and "open_loop" in payload["hook"]
+
+
+def test_prompt_names_cta_hook_and_mechanism_scope_rules():
+    from editing.targeted_rewrite import TASK_PROMPT
+
+    assert "is_cta_beat" in TASK_PROMPT
+    assert "is_hook_last_scene" in TASK_PROMPT
+    assert "mechanism_scope" in TASK_PROMPT

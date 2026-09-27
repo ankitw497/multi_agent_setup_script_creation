@@ -84,6 +84,23 @@ def test_a_title_matching_neither_hook_nor_central_insight_is_still_flagged():
     assert "title_hook_mismatch" in codes
 
 
+def test_a_title_matching_only_the_visual_anchor_is_not_flagged():
+    """2026-09-25, Phase 30 P1 item 3: confirmed live -- a real title ("Self-Attention and
+    Permutation") passed this check against central_insight alone while a genuinely more
+    concrete anchor sat untouched in visual.states/dominant_object. `visual` (ShortVisual,
+    the concrete states list) is distinct from `hook.visual` (a prose description) --
+    confirms a title built from the states list alone now clears the hook-side check."""
+    from planning.shorts_models import ShortVisual
+
+    plan = make_plan(
+        title="Cat Chased Dog, Then Dog Chased Cat", central_insight="self-attention is permutation equivariant",
+        hook=HookEvent(narration="watch the output scramble", starts_at_seconds=1.0),
+        visual=ShortVisual(dominant_object="word order", states=["cat chased dog", "dog chased cat"]),
+    )
+    codes = {i.code for i in check_title_hook_payoff_alignment(plan)}
+    assert "title_hook_mismatch" not in codes
+
+
 def test_payoff_mismatch_also_falls_back_to_central_insight():
     plan = make_plan(
         title="Scaling keeps softmax stable", central_insight="scaling keeps softmax stable under d_k growth",

@@ -72,17 +72,19 @@ its own explicit sentence -- not implied, not skipped:
   that genuinely conflict, in tension with each other, BEFORE `mechanism`
   resolves it. If your setup only states one fact, this arc is not
   satisfied -- add the second, conflicting one.
-- `problem_fix`: the `setup` segment MUST describe a naive, intuitive
-  first attempt at fixing the problem, AND say that it fails or falls
-  short -- as its own sentence, distinct from stating the problem itself.
-  Only THEN does `mechanism` introduce the real fix. Writing "here's the
-  problem" followed immediately by "here's the fix" -- with no failed
-  attempt in between -- is THE single most common miss on this pass and
-  does not satisfy `problem_fix`; if you cannot state a concrete failed
-  attempt, this is not actually a `problem_fix` short.
+- `problem_fix`: `naive_attempt` (given separately in the payload, already
+  checked non-blank by the planning layer before this short ever reached
+  you) is the specific naive/intuitive attempt this short must narrate --
+  narrate it, and its failure, in `setup` as its own sentence, distinct
+  from stating the problem itself. Use what `naive_attempt` actually says;
+  do not substitute a different, invented attempt. Only THEN does
+  `mechanism` introduce the real fix. Writing "here's the problem"
+  followed immediately by "here's the fix" -- with no failed attempt in
+  between -- is THE single most common miss on this pass and does not
+  satisfy `problem_fix`.
   The naive attempt must be something a real practitioner would actually try first,
-  not a strawman invented to make the arc fit -- confirmed live: a fabricated "fix"
-  that isn't a real, recognizable first instinct reads as contrived, and an attempt
+  not a strawman -- confirmed live: a fabricated "fix" that isn't a real,
+  recognizable first instinct reads as contrived, and an attempt
   that gets explained away conceptually ("that wouldn't really work because...") is
   not the same as ENACTING a failed attempt and showing the concrete way it falls short.
   Confirmed live across multiple shorts, in multiple runs, about completely different
@@ -195,7 +197,15 @@ class GeneratedShortNarration(BaseModel):
 
 
 def _claim_payload(claim: Claim) -> dict:
-    return {"claim_id": claim.claim_id, "claim": claim.claim, "verification_status": claim.verification_status}
+    # importance included (2026-09-26, Phase 32 P0): the shared
+    # NARRATION_FACTUAL_INVARIANTS fragment below tells this pass to gate
+    # narration on `importance` + `verification_status` together -- an
+    # instruction this payload used to make impossible to follow, since it
+    # never actually sent `importance` at all.
+    return {
+        "claim_id": claim.claim_id, "claim": claim.claim,
+        "verification_status": claim.verification_status, "importance": claim.importance,
+    }
 
 
 def generate_short_narration(
@@ -206,7 +216,13 @@ def generate_short_narration(
 
     payload = {
         "central_insight": plan.central_insight, "micro_arc": plan.micro_arc,
-        "hook": plan.hook.model_dump(), "setup": plan.setup, "mechanism": plan.mechanism,
+        "hook": plan.hook.model_dump(), "setup": plan.setup,
+        # naive_attempt (2026-09-25, Phase 30 P1 item 2): A2s's own dedicated field for a
+        # problem_fix short's required failed attempt -- sent explicitly rather than relying
+        # on it being folded into `setup` (planning/short_planner.py's own plan_shorts()
+        # already drops a problem_fix selection with this blank, so a non-blank value here
+        # means the planner actually named a real one). Empty for every other micro_arc.
+        "naive_attempt": plan.naive_attempt, "mechanism": plan.mechanism,
         "payoff_central": plan.payoff_central, "micro_payoffs": plan.micro_payoffs,
         "bridge": plan.bridge.model_dump(), "target_duration_seconds": plan.narration.target_duration_seconds,
         # word_band (2026-09-15): existed on ShortNarration since before this pass was

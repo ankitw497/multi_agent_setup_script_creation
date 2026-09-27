@@ -150,6 +150,37 @@ def _apply_verdict(claim: Claim, verdict: ClaimVerdict, evidence: list[Verificat
     })
 
 
+MAX_VERDICT_RETRIES = 2  # extra re-asks for whatever's still missing, on top of the first attempt
+
+
+def _verify_batch_with_retry(
+    batch: list[Claim], review_lead: Agent, budget: BudgetCounter, remaining_retries: int,
+) -> dict[str, ClaimVerdict]:
+    """Real bug found live 2026-09-25: a 40-claim batch call to Gemini came back
+    schema-valid but count-incomplete -- 10 of 40 verdicts, nowhere near the max_tokens
+    ceiling (confirmed via usage.jsonl: well under budget, no truncation) -- Gemini just
+    stopped early. `ClaimVerdicts.verdicts` has no count constraint tying it to the batch
+    sent, so this passed schema validation silently; nothing compared the response count
+    against the batch size before moving on, and the 30 un-verdicted claims fell back to
+    `Claim`'s pristine UNVERIFIED/no-evidence defaults, riding along into the checkpoint
+    unchanged. Re-asks ONLY the still-missing subset (never the whole batch again -- it's
+    already smaller each retry) up to `remaining_retries` times; merges whatever verdicts
+    were actually returned across every attempt."""
+    if not batch:
+        return {}
+    payload = {"claims": [_claim_payload(c) for c in batch]}
+    verdicts = review_lead.run(
+        pass_id="C2a", mode="VERIFY_SOURCE_CLAIMS", task_prompt=TASK_PROMPT,
+        payload=payload, schema=ClaimVerdicts, budget=budget, estimated_usd=0.07,
+        enable_web_search=True, max_tokens=12000,
+    )
+    result = {v.claim_id: v for v in verdicts.verdicts}
+    missing = [c for c in batch if c.claim_id not in result]
+    if missing and remaining_retries > 0:
+        result.update(_verify_batch_with_retry(missing, review_lead, budget, remaining_retries - 1))
+    return result
+
+
 def verify_claims_with_llm(
     claims: list[Claim], review_lead: Agent, budget: BudgetCounter,
     references_dir: Path, batch_size: int = DEFAULT_BATCH_SIZE,
@@ -169,34 +200,29 @@ def verify_claims_with_llm(
     pending_requests: list[EvidenceRequest] = []
     claims_by_id = {c.claim_id: c for c in claims}
 
+    # enable_web_search (STORY_IMPROVEMENT_PLAN.md Phase 23, 2026-09-16): this pipeline's
+    # local/web-backend evidence broker below (fulfil_evidence_requests /
+    # fulfil_evidence_requests_via_web) has never actually had a real evidence source --
+    # references_dir is empty and web_backend is never passed by the real CLI (confirmed
+    # by direct read of run_pipeline.py) -- so a real, easily-verifiable claim (e.g. a
+    # well-documented mathematical property) had no path to ever become VERIFIED. Native
+    # Gemini web search on THIS call lets the model search for itself while forming its
+    # very first verdict, rather than depending on a second pass through a broker that
+    # was never actually wired to anything.
+    #
+    # max_tokens (found live, 2026-09-16): enabling web search above made each claim's
+    # verdict far more verbose (search + reasoning per claim), and a real 40-claim batch
+    # came back at output_tokens=4092 -- 4 short of LiteLLMBackend's hardcoded 4096
+    # default -- silently truncating the JSON response and dropping verdicts for the tail
+    # of the batch (confirmed live: 21/80 claims across 2 batches never got a verdict at
+    # all). Raised generously (not just past 4096) mirroring openai_story_strong_gpt56's
+    # own precedent -- for a reasoning model this is a COMBINED ceiling over hidden
+    # reasoning + visible output, not just the visible JSON. `_verify_batch_with_retry`
+    # (2026-09-25) covers the OTHER way a batch can come back incomplete -- a schema-valid
+    # but count-incomplete response nowhere near this ceiling -- which this max_tokens fix
+    # alone does not address.
     for batch in _batch_claims(claims, batch_size):
-        payload = {"claims": [_claim_payload(c) for c in batch]}
-        # enable_web_search (STORY_IMPROVEMENT_PLAN.md Phase 23, 2026-09-16): this pipeline's
-        # local/web-backend evidence broker below (fulfil_evidence_requests /
-        # fulfil_evidence_requests_via_web) has never actually had a real evidence source --
-        # references_dir is empty and web_backend is never passed by the real CLI (confirmed
-        # by direct read of run_pipeline.py) -- so a real, easily-verifiable claim (e.g. a
-        # well-documented mathematical property) had no path to ever become VERIFIED. Native
-        # Gemini web search on THIS call lets the model search for itself while forming its
-        # very first verdict, rather than depending on a second pass through a broker that
-        # was never actually wired to anything. `estimated_usd` bumped slightly (from 0.05)
-        # to account for the real, separate per-search billing (see litellm_backend.py).
-        verdicts = review_lead.run(
-            pass_id="C2a", mode="VERIFY_SOURCE_CLAIMS", task_prompt=TASK_PROMPT,
-            payload=payload, schema=ClaimVerdicts, budget=budget, estimated_usd=0.07,
-            enable_web_search=True,
-            # max_tokens (found live, 2026-09-16): enabling web search above made each
-            # claim's verdict far more verbose (search + reasoning per claim), and a real
-            # 40-claim batch came back at output_tokens=4092 -- 4 short of
-            # LiteLLMBackend's hardcoded 4096 default -- silently truncating the JSON
-            # response and dropping verdicts for the tail of the batch (confirmed live:
-            # 21/80 claims across 2 batches never got a verdict at all). Raised generously
-            # (not just past 4096) mirroring openai_story_strong_gpt56's own precedent --
-            # for a reasoning model this is a COMBINED ceiling over hidden reasoning +
-            # visible output, not just the visible JSON.
-            max_tokens=12000,
-        )
-        for verdict in verdicts.verdicts:
+        for verdict in _verify_batch_with_retry(batch, review_lead, budget, MAX_VERDICT_RETRIES).values():
             claim = claims_by_id.get(verdict.claim_id)
             if claim is None:
                 continue

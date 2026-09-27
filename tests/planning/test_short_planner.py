@@ -43,10 +43,47 @@ def make_budget():
 def make_draft(**overrides) -> dict:
     base = dict(
         title="t", goal="DISCOVERY", central_insight="x", micro_arc="problem_fix",
+        # naive_attempt (2026-09-25, Phase 30 P1 item 2): default micro_arc is
+        # "problem_fix", which plan_shorts() now drops when naive_attempt is blank --
+        # a real, non-blank default here keeps every OTHER test's fixture valid;
+        # tests of the drop behavior itself override this back to "".
+        naive_attempt="tried lowering the learning rate first",
         hook={"starts_at_seconds": 1.0}, source_beat_ids=["B01"],
     )
     base.update(overrides)
     return base
+
+
+def test_problem_fix_with_blank_naive_attempt_is_dropped():
+    """2026-09-25, Phase 30 P1 item 2: confirmed live -- 3 of 4 real problem_fix shorts
+    shipped with no real naive attempt at all, violating this module's own TASK_PROMPT.
+    A blank naive_attempt on a problem_fix selection must never reach the writer."""
+    story_lead = FakeStoryLead(ShortPlanSelection(shorts=[make_draft(naive_attempt="")]))
+
+    plans = plan_shorts(make_candidates(), make_plan(), [], story_lead, make_budget(), run_id="r1")
+
+    assert plans == []
+
+
+def test_problem_fix_with_a_real_naive_attempt_is_kept():
+    story_lead = FakeStoryLead(ShortPlanSelection(
+        shorts=[make_draft(naive_attempt="tried lowering the learning rate first")]
+    ))
+
+    plans = plan_shorts(make_candidates(), make_plan(), [], story_lead, make_budget(), run_id="r1")
+
+    assert len(plans) == 1
+    assert plans[0].naive_attempt == "tried lowering the learning rate first"
+
+
+def test_non_problem_fix_arc_never_needs_a_naive_attempt():
+    story_lead = FakeStoryLead(ShortPlanSelection(
+        shorts=[make_draft(micro_arc="before_after", naive_attempt="")]
+    ))
+
+    plans = plan_shorts(make_candidates(), make_plan(), [], story_lead, make_budget(), run_id="r1")
+
+    assert len(plans) == 1  # blank naive_attempt is fine outside problem_fix
 
 
 def test_no_candidates_short_circuits_with_no_call():

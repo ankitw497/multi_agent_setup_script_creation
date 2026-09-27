@@ -195,6 +195,44 @@ def test_beats_with_zero_claims_are_excluded_not_treated_as_infinite_ratio():
     assert result.band == "GREEN"
 
 
+def test_a_callback_beat_reusing_earlier_source_units_is_not_double_counted():
+    """STORY_IMPROVEMENT_PLAN.md Phase 32 P1: a deliberate callback/synthesis beat whose
+    source_unit_ids overlap EARLIER beats' (e.g. unifying two mechanisms already taught)
+    used to have those units' claims counted again in its own denominator, deflating its
+    words-per-claim ratio and falsely flagging it as an airtime outlier for doing exactly
+    what a callback should -- fewer new words because the claims aren't new. Confirmed
+    live on a real cross-attention beat whose source_unit_ids overlapped two earlier
+    beats' and scored 0.29x median purely from this double-count.
+
+    B04 here reuses B02's and B03's source units entirely (zero genuinely NEW claims) --
+    it must be excluded from the distribution the same way a beat with zero claims
+    already is, never scored (and never crash) on claims that were already spent."""
+    beats = [
+        StoryBeat(beat_id="B01", purpose="hook", source_unit_ids=["u0"]),
+        StoryBeat(beat_id="B02", purpose="x", source_unit_ids=["u2"]),
+        StoryBeat(beat_id="B03", purpose="x", source_unit_ids=["u3"]),
+        StoryBeat(beat_id="B04", purpose="x", source_unit_ids=["u4"]),
+        StoryBeat(beat_id="B05", purpose="callback, unifies B02+B03", source_unit_ids=["u2", "u3"]),
+    ]
+    scenes = [
+        ScenePlan(scene_id="s1", beat_id="B01", word_budget=60),
+        *[ScenePlan(scene_id=f"s2{i}", beat_id="B02", word_budget=60) for i in range(3)],  # 180w / 3 claims
+        *[ScenePlan(scene_id=f"s3{i}", beat_id="B03", word_budget=60) for i in range(3)],  # 180w / 3 claims
+        *[ScenePlan(scene_id=f"s4{i}", beat_id="B04", word_budget=60) for i in range(3)],  # 180w / 3 claims
+        ScenePlan(scene_id="s5", beat_id="B05", word_budget=45),  # small, deliberately -- a callback needs less
+    ]
+    claims = [
+        *[make_claim(f"C2{i}", "u2") for i in range(3)],
+        *[make_claim(f"C3{i}", "u3") for i in range(3)],
+        *[make_claim(f"C4{i}", "u4") for i in range(3)],
+    ]
+
+    result = check_beat_airtime_outliers(make_plan(beats, scenes), claims)
+
+    assert result.band == "GREEN"
+    assert "B05" not in result.evidence
+
+
 # ---- check_time_to_primary_payoff (STORY_IMPROVEMENT_PLAN.md Phase 23) --------------------
 
 

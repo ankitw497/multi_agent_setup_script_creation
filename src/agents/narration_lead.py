@@ -29,9 +29,15 @@ BASE_SYSTEM_PROMPT = (
 
 
 def make_narration_lead(client: LLMClient) -> Agent:
-    model_resolved, _, _ = resolve_model("subscription_lane", "sonnet")
+    # 2026-09-24: used to discard reasoning_effort/max_tokens (`_, _`) -- config's own
+    # sonnet alias carrying a real reasoning_effort (the CLI's `--effort` flag) would have
+    # silently never reached this agent's calls. Now threaded through like every other
+    # config-driven default (see llm/backends/claude_cli.py for the `--effort` mapping).
+    model_resolved, reasoning_effort, max_tokens = resolve_model("subscription_lane", "sonnet")
     return Agent(
         name="narration_lead", lane="subscription", client=client,
         model_alias="sonnet", model_resolved=model_resolved,
         base_system_prompt=BASE_SYSTEM_PROMPT,
+        default_reasoning_effort=reasoning_effort,
+        default_max_tokens=max_tokens,
     )

@@ -55,6 +55,21 @@ class Agent:
         user_payload = json.dumps(payload, default=str)
 
         if self.lane == "subscription":
+            if max_tokens is not None:
+                # Found live, 2026-09-27 audit: `default_max_tokens`/`call_structured_
+                # subscription` never actually forwards this anywhere -- `claude -p` (the
+                # CLI this lane shells out to) has no output-token-limiting flag at all
+                # (confirmed against `claude -p --help`; only `--autocompact` for context-
+                # window compaction and `--max-budget-usd` for cost exist), unlike the
+                # paid-API lane's litellm call, which supports it natively. Silently
+                # dropping it would let a future config value do nothing with no signal --
+                # same "refuse rather than silently no-op" precedent as images/
+                # enable_web_search just below, for the same reason.
+                raise ValueError(
+                    f"{self.name}.{pass_id}: max_tokens given for a subscription-lane call -- "
+                    "the Claude CLI backend has no output-token-limiting flag (paid_api "
+                    "lane only)"
+                )
             if images:
                 raise ValueError(
                     f"{self.name}.{pass_id}: images given for a subscription-lane call -- "
@@ -76,6 +91,7 @@ class Agent:
                 model_alias=self.model_alias, model_resolved=self.model_resolved,
                 system_prompt=system_prompt, user_payload=user_payload,
                 schema=schema, revision_cycle=revision_cycle, timeout_s=timeout_s,
+                reasoning_effort=reasoning_effort,
             )
         else:
             if budget is None:

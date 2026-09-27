@@ -229,10 +229,14 @@ def _item_reflected_in_title(title: str, item: str) -> bool:
     overall topic word), exactly the failure mode that threshold was raised to prevent.
     This computes containment against the ITEM's own word count specifically, regardless of
     which text is shorter."""
-    item_words = content_words(item)
+    # min_length=1 (2026-09-26, Phase 32 P1): a technical title legitimately reuses
+    # short shorthand (Q, K, V, n2) that the default min_length=3 silently erased --
+    # confirmed live, this was the actual reason two real titles from two different
+    # models both scored as failing to reflect their own must_cover items.
+    item_words = content_words(item, min_length=1)
     if not item_words:
         return True  # nothing to reflect
-    return len(content_words(title) & item_words) / len(item_words) >= TITLE_ITEM_OVERLAP_THRESHOLD
+    return len(content_words(title, min_length=1) & item_words) / len(item_words) >= TITLE_ITEM_OVERLAP_THRESHOLD
 
 
 def check_title_scope_coverage(plan: StoryPlan) -> DiagnosticResult:

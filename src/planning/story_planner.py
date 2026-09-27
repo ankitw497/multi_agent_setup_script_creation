@@ -153,6 +153,18 @@ expansion (A2b) and narration will be told to reuse -- do not leave it
 blank if the hook has a real concrete illustration, and never invent a
 second, different example for the same underlying concept.
 
+`hook.promise` must reuse `title.chosen`/`title.promise`'s own concrete
+terms -- not just thematically, but by actually echoing the SAME technical
+nouns/objects the title names, the same discipline `ending.resolve_hook`
+is already held to against `hook.promise` itself (see below). Confirmed
+live, caught by the mechanical word-overlap check this exact pairing has:
+a real plan's `title.promise` listed a full inventory of technical pieces
+while `hook.promise` promised only to watch one concrete example compute
+its answer -- barely the same video on paper, even though both were
+individually reasonable. A title free to promise anything and a hook free
+to promise anything else is not two good promises, it's one broken chain
+before the video has even started.
+
 If pacing genuinely matters for a specific structural role this archetype
 gives one of your beats (e.g. the central problem should be unmistakable
 to the viewer within the first 20-40 seconds, or a key mechanism should be

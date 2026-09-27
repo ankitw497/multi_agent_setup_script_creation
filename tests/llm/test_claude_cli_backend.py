@@ -35,6 +35,57 @@ class FakeCompletedProcess:
         self.stderr = stderr
 
 
+class _FakePipe:
+    def __init__(self):
+        self.closed = False
+
+    def close(self):
+        self.closed = True
+
+
+class FakePopen:
+    """Stand-in for subprocess.Popen (2026-09-25: _call_once moved off
+    subprocess.run to a manual Popen + communicate(), so a timeout can kill the
+    whole process group -- see claude_cli.py's own comment). `pid` is set well
+    above macOS's real pid ceiling (~99998) so os.getpgid(pid) in the
+    timeout-handling path reliably raises ProcessLookupError and is caught as
+    "already gone", with no need to mock os.killpg/getpgid separately."""
+
+    def __init__(self, result: "FakeCompletedProcess | Exception"):
+        self.pid = 999_999_999
+        self.returncode = 0
+        self._result = result
+        # stdout/stderr as closeable stand-ins (2026-09-27, real FD-leak fix): the real
+        # `proc.stdout`/`proc.stderr` are PIPE file objects that only communicate() (or an
+        # explicit close) actually closes -- proc.wait() alone does not. Tracks whether
+        # close() was called so a test can confirm the timeout path closes them.
+        self.stdout = _FakePipe()
+        self.stderr = _FakePipe()
+
+    def communicate(self, timeout=None):
+        if isinstance(self._result, Exception):
+            raise self._result
+        self.returncode = self._result.returncode
+        return self._result.stdout, self._result.stderr
+
+    def wait(self):
+        pass
+
+
+def _patch_popen(monkeypatch, results):
+    """`results`: a list of FakeCompletedProcess/Exception, one per subprocess.Popen(...)
+    construction (i.e. per attempt) -- mirrors the old per-call subprocess.run mocks."""
+    calls = {"n": 0}
+
+    def fake_popen(cmd, **kw):
+        i = min(calls["n"], len(results) - 1)
+        calls["n"] += 1
+        return FakePopen(results[i])
+
+    monkeypatch.setattr("subprocess.Popen", fake_popen)
+    return calls
+
+
 def test_strip_fences_handles_fenced_and_bare_json():
     assert strip_fences('```json\n{"a": 1}\n```') == '{"a": 1}'
     assert strip_fences('{"a": 1}') == '{"a": 1}'
@@ -47,11 +98,11 @@ def test_anthropic_api_key_is_never_passed_to_the_subprocess(monkeypatch):
 
     captured = {}
 
-    def fake_run(cmd, env, cwd, capture_output, text, timeout):
+    def fake_popen(cmd, env, cwd, stdout, stderr, text, start_new_session):
         captured["env"] = env
-        return FakeCompletedProcess(stdout=json.dumps(make_envelope()))
+        return FakePopen(FakeCompletedProcess(stdout=json.dumps(make_envelope())))
 
-    monkeypatch.setattr("subprocess.run", fake_run)
+    monkeypatch.setattr("subprocess.Popen", fake_popen)
 
     backend = ClaudeCliBackend()
     backend.call("haiku", "system", "payload")
@@ -67,12 +118,45 @@ def test_stripped_flags_are_present_in_the_command():
         assert flag in cmd
 
 
+def test_reasoning_effort_none_omits_the_effort_flag():
+    """sonnet/haiku carry no reasoning_effort in config -- must stay a no-op flag
+    omission for them, same "unset means provider default" rule the paid lane uses."""
+    backend = ClaudeCliBackend()
+    cmd = backend._build_command("haiku", "sys", "payload")
+    assert "--effort" not in cmd
+
+
+def test_reasoning_effort_given_adds_the_effort_flag():
+    """2026-09-24: `--effort <low|medium|high|xhigh|max>`, confirmed live against
+    claude-opus-5-5 (config/models.yaml's `opus` alias, "medium")."""
+    backend = ClaudeCliBackend()
+    cmd = backend._build_command("claude-opus-5-5", "sys", "payload", reasoning_effort="medium")
+    assert "--effort" in cmd
+    assert cmd[cmd.index("--effort") + 1] == "medium"
+
+
+def test_call_threads_reasoning_effort_through_to_the_subprocess_command(monkeypatch):
+    envelope = make_envelope(model="claude-opus-5-5", result="OK", input_tokens=2, output_tokens=4, cost=0.09)
+    captured = {}
+
+    def fake_popen(cmd, **kw):
+        captured["cmd"] = cmd
+        return FakePopen(FakeCompletedProcess(stdout=json.dumps(envelope)))
+
+    monkeypatch.setattr("subprocess.Popen", fake_popen)
+    backend = ClaudeCliBackend()
+    backend.call("claude-opus-5-5", "system", "payload", reasoning_effort="medium")
+
+    assert "--effort" in captured["cmd"]
+    assert captured["cmd"][captured["cmd"].index("--effort") + 1] == "medium"
+
+
 def test_call_parses_envelope_and_returns_notional_cost(monkeypatch):
     envelope = make_envelope(model="haiku", result='{"ok": true}', input_tokens=170,
                               output_tokens=53, cost=0.0180378)
 
     monkeypatch.setattr(
-        "subprocess.run", lambda *a, **kw: FakeCompletedProcess(stdout=json.dumps(envelope))
+        "subprocess.Popen", lambda *a, **kw: FakePopen(FakeCompletedProcess(stdout=json.dumps(envelope)))
     )
 
     backend = ClaudeCliBackend()
@@ -115,7 +199,7 @@ def test_identifies_resolved_model_from_multi_model_envelope(monkeypatch):
         },
     }
     monkeypatch.setattr(
-        "subprocess.run", lambda *a, **kw: FakeCompletedProcess(stdout=json.dumps(envelope))
+        "subprocess.Popen", lambda *a, **kw: FakePopen(FakeCompletedProcess(stdout=json.dumps(envelope)))
     )
 
     backend = ClaudeCliBackend()
@@ -145,7 +229,7 @@ def test_resolved_model_mismatch_raises(monkeypatch):
     envelope = make_envelope(model="claude-haiku-4-5-20251001")  # not the literal "haiku" alias
 
     monkeypatch.setattr(
-        "subprocess.run", lambda *a, **kw: FakeCompletedProcess(stdout=json.dumps(envelope))
+        "subprocess.Popen", lambda *a, **kw: FakePopen(FakeCompletedProcess(stdout=json.dumps(envelope)))
     )
 
     backend = ClaudeCliBackend()
@@ -158,8 +242,8 @@ def test_nonzero_exit_raises_invocation_error(monkeypatch):
     3x by default, which is correct in production but pointless (and slow)
     for a test whose only point is confirming the failure surfaces."""
     monkeypatch.setattr(
-        "subprocess.run",
-        lambda *a, **kw: FakeCompletedProcess(returncode=1, stderr="boom"),
+        "subprocess.Popen",
+        lambda *a, **kw: FakePopen(FakeCompletedProcess(returncode=1, stderr="boom")),
     )
     backend = ClaudeCliBackend(max_attempts=1)
     with pytest.raises(ClaudeCliInvocationError, match="boom"):
@@ -167,7 +251,9 @@ def test_nonzero_exit_raises_invocation_error(monkeypatch):
 
 
 def test_non_json_stdout_raises_invocation_error(monkeypatch):
-    monkeypatch.setattr("subprocess.run", lambda *a, **kw: FakeCompletedProcess(stdout="not json"))
+    monkeypatch.setattr(
+        "subprocess.Popen", lambda *a, **kw: FakePopen(FakeCompletedProcess(stdout="not json"))
+    )
     backend = ClaudeCliBackend(max_attempts=1)
     with pytest.raises(ClaudeCliInvocationError, match="non-JSON"):
         backend.call("haiku", "system", "payload")
@@ -180,17 +266,11 @@ def test_a_transient_failure_is_retried_and_can_still_succeed(monkeypatch):
     had no retry logic at all. wait_min/max are shrunk to keep this test
     fast -- the retry COUNT and eventual success is what's being proven,
     not real backoff timing."""
-    calls = {"n": 0}
-
     envelope = make_envelope(model="claude-haiku-4-5-20251001", result="OK")
-
-    def flaky_run(*a, **kw):
-        calls["n"] += 1
-        if calls["n"] < 2:
-            return FakeCompletedProcess(returncode=1, stderr="transient hiccup")
-        return FakeCompletedProcess(stdout=json.dumps(envelope))
-
-    monkeypatch.setattr("subprocess.run", flaky_run)
+    calls = _patch_popen(monkeypatch, [
+        FakeCompletedProcess(returncode=1, stderr="transient hiccup"),
+        FakeCompletedProcess(stdout=json.dumps(envelope)),
+    ])
     backend = ClaudeCliBackend(max_attempts=3, retry_wait_min_s=0.01, retry_wait_max_s=0.01)
 
     result = backend.call("claude-haiku-4-5-20251001", "system", "payload")
@@ -207,16 +287,11 @@ def test_a_timeout_is_retried_and_can_still_succeed(monkeypatch):
     ClaudeCliInvocationError), killing the whole pipeline run on one
     slow-but-transient call instead of retrying it -- the exact class of
     failure this backend's retry logic exists to handle."""
-    calls = {"n": 0}
     envelope = make_envelope(model="claude-haiku-4-5-20251001", result="OK")
-
-    def flaky_run(*a, **kw):
-        calls["n"] += 1
-        if calls["n"] < 2:
-            raise subprocess.TimeoutExpired(cmd="claude", timeout=300)
-        return FakeCompletedProcess(stdout=json.dumps(envelope))
-
-    monkeypatch.setattr("subprocess.run", flaky_run)
+    calls = _patch_popen(monkeypatch, [
+        subprocess.TimeoutExpired(cmd="claude", timeout=300),
+        FakeCompletedProcess(stdout=json.dumps(envelope)),
+    ])
     backend = ClaudeCliBackend(max_attempts=3, retry_wait_min_s=0.01, retry_wait_max_s=0.01)
 
     result = backend.call("claude-haiku-4-5-20251001", "system", "payload")
@@ -226,13 +301,55 @@ def test_a_timeout_is_retried_and_can_still_succeed(monkeypatch):
 
 
 def test_a_timeout_that_never_recovers_raises_invocation_error(monkeypatch):
-    monkeypatch.setattr(
-        "subprocess.run",
-        lambda *a, **kw: (_ for _ in ()).throw(subprocess.TimeoutExpired(cmd="claude", timeout=300)),
-    )
+    _patch_popen(monkeypatch, [subprocess.TimeoutExpired(cmd="claude", timeout=300)])
     backend = ClaudeCliBackend(max_attempts=1)
     with pytest.raises(ClaudeCliInvocationError, match="timed out"):
         backend.call("haiku", "system", "payload")
+
+
+def test_a_timeout_kills_the_whole_process_group_not_just_the_child(monkeypatch):
+    """2026-09-25, found live: a real `claude -p` subprocess survived not just its own
+    configured timeout but a SIGTERM to the whole recorded pipeline process tree,
+    discovered ~11.5 hours later still running (matching this exact call's own payload) --
+    plain subprocess.run(timeout=...) only kills the immediate child, and a detached
+    grandchild holding the stdout pipe open can leave communicate() hanging past that.
+    Confirms the timeout path calls os.killpg on the child's own process group."""
+    killed = {}
+
+    def fake_getpgid(pid):
+        return pid  # pretend the pgid equals the pid, as it does for start_new_session=True
+
+    def fake_killpg(pgid, sig):
+        killed["pgid"] = pgid
+        killed["sig"] = sig
+
+    monkeypatch.setattr("os.getpgid", fake_getpgid)
+    monkeypatch.setattr("os.killpg", fake_killpg)
+    _patch_popen(monkeypatch, [subprocess.TimeoutExpired(cmd="claude", timeout=300)])
+    backend = ClaudeCliBackend(max_attempts=1)
+
+    with pytest.raises(ClaudeCliInvocationError, match="timed out"):
+        backend.call("haiku", "system", "payload")
+
+    assert killed["pgid"] == 999_999_999  # FakePopen's own pid
+    import signal
+    assert killed["sig"] == signal.SIGKILL
+
+
+def test_a_timeout_closes_the_stdout_and_stderr_pipes(monkeypatch):
+    """Real FD-leak found live, 2026-09-27 audit: communicate() never completed on a
+    timeout (that's the whole point of this path), and only communicate()/an explicit
+    close() ever closes the PIPE file objects -- proc.wait() alone does not. Each timeout
+    without this leaked 2 open FDs."""
+    fake_proc = FakePopen(subprocess.TimeoutExpired(cmd="claude", timeout=300))
+    monkeypatch.setattr("subprocess.Popen", lambda cmd, **kw: fake_proc)
+    backend = ClaudeCliBackend(max_attempts=1)
+
+    with pytest.raises(ClaudeCliInvocationError, match="timed out"):
+        backend.call("haiku", "system", "payload")
+
+    assert fake_proc.stdout.closed is True
+    assert fake_proc.stderr.closed is True
 
 
 def test_a_deterministic_model_mismatch_is_never_retried(monkeypatch):
@@ -240,14 +357,8 @@ def test_a_deterministic_model_mismatch_is_never_retried(monkeypatch):
     different model than requested) -- retrying can never fix it, so it
     must surface on the very first attempt, not be masked by 3 identical
     failures first."""
-    calls = {"n": 0}
     envelope = make_envelope(model="claude-haiku-4-5-20251001")  # not the literal "haiku" alias
-
-    def always_wrong_model(*a, **kw):
-        calls["n"] += 1
-        return FakeCompletedProcess(stdout=json.dumps(envelope))
-
-    monkeypatch.setattr("subprocess.run", always_wrong_model)
+    calls = _patch_popen(monkeypatch, [FakeCompletedProcess(stdout=json.dumps(envelope))])
     backend = ClaudeCliBackend(max_attempts=3, retry_wait_min_s=0.01, retry_wait_max_s=0.01)
 
     with pytest.raises(ModelMismatch):
